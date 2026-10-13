@@ -468,7 +468,7 @@ other windows in that application; this is not isolation of one window's audio.
 Leech's own playback remains excluded. No microphone is captured by screen sharing.
 The native picker has not been opened during synthetic verification.
 
-Source discovery alone does not start streaming. Closing or minimizing a selected source may pause frames or end capture, according to the native API. The initial Windows adapter accepts source dimensions up to 3840×2160. Changes to screen-server metadata, lost video permission, leaving the call and logout stop sharing. The sender never starts itself after reconnection.
+Source discovery alone does not start streaming. Closing or minimizing a selected source may pause frames or end capture, according to the native API. The initial Windows adapter accepts any source whose pixels fit one 3840×2160 frame (so 5120×1440 and portrait 2160×3840 pass; 3840×2400 and 5K do not); this bound is unverified on such monitors. Changes to screen-server metadata, lost video permission, leaving the call and logout stop sharing. The sender never starts itself after reconnection.
 
 Windows capture requests border removal when the native `IsBorderRequired` API is
 supported (Windows 11), and keeps the system's default border on Windows 10 builds

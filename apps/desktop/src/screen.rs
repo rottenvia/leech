@@ -15,6 +15,8 @@ use tokio::{runtime::Runtime, sync::watch, task::JoinHandle};
 use zeroize::Zeroizing;
 
 const SIGNAL_TIMEOUT: Duration = Duration::from_secs(30);
+/// Status while the user's own stop waits for Discord's acknowledgement.
+const STOPPING: &str = "Stopping screen sharing…";
 
 /// Names why a share ended, under the same opt-in variable as the voice reports. A share
 /// that stops by itself otherwise leaves only the latest status, which the stop overwrites.
@@ -190,9 +192,15 @@ impl Screen {
 			screen::Event::Deleted { reason } => {
 				self.pending = None;
 				self.retire_live();
-				self.closing = None;
 				// A server-side end names its cause, so it is never mistaken for a local stop.
-				self.status = reason.unwrap_or("Screen sharing stopped");
+				// When this is only Discord acknowledging our own close, the status already
+				// says why the share ended; replacing it would hide every capture failure.
+				let ours = self.closing.take().is_some();
+				if let Some(reason) = reason {
+					self.status = reason;
+				} else if !ours || self.status == STOPPING {
+					self.status = "Screen sharing stopped";
+				}
 			}
 			screen::Event::Failed(message) => self.request_stop(message),
 		}
@@ -372,7 +380,7 @@ impl Screen {
 						self.status = "Screen sharing requires the current connected call";
 					}
 				}
-				ui::screen::Request::Stop => self.request_stop("Stopping screen sharing…"),
+				ui::screen::Request::Stop => self.request_stop(STOPPING),
 			}
 		}
 
