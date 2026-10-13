@@ -19,7 +19,7 @@ drawn mockups, OS window-capture evidence, or proof of live interoperability.
 Reproduce from that Serein revision, replacing `ID` with the package's manifest ID:
 
 ```sh
-cargo run --locked -p serein --features demo --example profile_preview -- --demo --extension=ID --width=1280 --height=720 --thumbnail --output=preview.png
+cargo run --locked -p leech --features demo --example profile_preview -- --demo --extension=ID --width=1280 --height=720 --thumbnail --output=preview.png
 ```
 
 Synthetic UI previews use the repository's MIT OR Apache-2.0 license. Package
@@ -33,5 +33,5 @@ No account or proxy credentials are used in this preview. Reproduce using a Sere
 revision with the API Proxy host support:
 
 ```sh
-SEREIN_PREVIEW_PACKAGE=/path/to/plugins/packages/api-proxy.serein-extension cargo run --locked -p serein --features demo --example profile_preview -- --demo --extension=api-proxy --width=1280 --height=720 --thumbnail --output=api-proxy.png
+LEECH_PREVIEW_PACKAGE=/path/to/plugins/packages/api-proxy.serein-extension cargo run --locked -p leech --features demo --example profile_preview -- --demo --extension=api-proxy --width=1280 --height=720 --thumbnail --output=api-proxy.png
 ```

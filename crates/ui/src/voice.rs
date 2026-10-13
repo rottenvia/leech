@@ -1287,7 +1287,7 @@ impl MessagingUi {
 				let content = fit_rect(rect, texture.size_vec2());
 				ui.put(
 					content,
-					egui::Image::from_texture((texture.id(), content.size())).corner_radius(8),
+					egui::Image::from_texture((texture.id(), content.size())).corner_radius(10),
 				);
 				content
 			})
@@ -1314,12 +1314,13 @@ impl MessagingUi {
 				let content = fit_rect(rect, texture.size);
 				ui.put(
 					content,
-					egui::Image::from_texture((texture.id, content.size())).corner_radius(8),
+					egui::Image::from_texture((texture.id, content.size())).corner_radius(10),
 				);
 				content
 			}
 			None => {
-				ui.painter().rect_filled(rect, 8, TILE_FILL);
+				ui.painter()
+					.rect(rect, 10, TILE_FILL, STAGE_EDGE, egui::StrokeKind::Inside);
 				if rect.height() >= 132.0 {
 					let status = if self.voice_stream_status.is_empty() {
 						"Connecting to the stream…"
@@ -1441,7 +1442,8 @@ impl MessagingUi {
 		compact: bool,
 	) -> bool {
 		let colors = design::palette(ui);
-		ui.painter().rect_filled(rect, 8, PILL_FILL);
+		ui.painter()
+			.rect(rect, 10, PILL_FILL, STAGE_EDGE, egui::StrokeKind::Inside);
 		let name = participant_user(state, channel, streamer)
 			.map_or("Participant", |user| user.name.as_str());
 		let (pill, font, margin) = if compact {
@@ -1588,7 +1590,8 @@ impl MessagingUi {
 			None
 		};
 		if !frameless {
-			ui.painter().rect_filled(rect, 8, TILE_FILL);
+			ui.painter()
+				.rect(rect, 10, TILE_FILL, STAGE_EDGE, egui::StrokeKind::Inside);
 		}
 		if let Some((id, image, mirror)) = video {
 			cover_image(ui, rect, id, image, mirror);
@@ -4194,12 +4197,18 @@ fn split_chevron(
 	response.on_hover_text(label)
 }
 
-/// Discord's call stage is black in every appearance; pills and tiles sit on it in fixed greys.
-const STAGE_FILL: egui::Color32 = egui::Color32::BLACK;
-const TILE_FILL: egui::Color32 = egui::Color32::from_rgb(0x2b, 0x2d, 0x31);
-const PILL_FILL: egui::Color32 = egui::Color32::from_rgb(0x1e, 0x1f, 0x22);
-const STAGE_TEXT: egui::Color32 = egui::Color32::from_rgb(0xdb, 0xde, 0xe1);
-const STAGE_MUTED: egui::Color32 = egui::Color32::from_rgb(0x9a, 0x9b, 0xa1);
+/// The call stage is dark in every appearance, like Discord's, but in the house plum cast
+/// instead of black and neutral grey; pills and tiles sit on it in fixed tones.
+const STAGE_FILL: egui::Color32 = egui::Color32::from_rgb(0x0a, 0x06, 0x08);
+const TILE_FILL: egui::Color32 = egui::Color32::from_rgb(0x24, 0x18, 0x1e);
+const PILL_FILL: egui::Color32 = egui::Color32::from_rgb(0x1d, 0x13, 0x18);
+const STAGE_TEXT: egui::Color32 = egui::Color32::from_rgb(0xec, 0xe2, 0xe6);
+const STAGE_MUTED: egui::Color32 = egui::Color32::from_rgb(0xa3, 0x93, 0x9b);
+/// Hairline around stage tiles and pills, the stage's share of the house edge.
+const STAGE_EDGE: egui::Stroke = egui::Stroke {
+	width: 1.0,
+	color: egui::Color32::from_rgba_premultiplied(18, 18, 18, 18),
+};
 const STAGE_MARGIN: f32 = 16.0;
 const TILE_GAP: f32 = 8.0;
 /// Frameless DM tile height and the horizontal room beside each avatar for its name.
@@ -4330,7 +4339,7 @@ fn cover_image(
 		rect,
 		egui::Image::from_texture((id, rect.size()))
 			.uv(uv)
-			.corner_radius(8),
+			.corner_radius(10),
 	);
 }
 
@@ -4451,7 +4460,7 @@ fn call_failure(ui: &mut egui::Ui, error: Option<&str>, color: egui::Color32) {
 			.clicked()
 			{
 				ui.ctx()
-					.copy_text(format!("Serein call failed\nReason: {error}"));
+					.copy_text(format!("Leech call failed\nReason: {error}"));
 			}
 			ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
 				ui.add(
@@ -4487,13 +4496,8 @@ fn stage_notices(ui: &mut egui::Ui, notices: &[(String, bool)]) {
 /// tall and `width` wide so the groups and the hang-up button share one baseline.
 fn pill<R>(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
 	let (rect, _) = ui.allocate_exact_size(egui::vec2(width, CONTROL_HEIGHT), egui::Sense::hover());
-	ui.painter().rect_filled(rect, 12, PILL_FILL);
-	ui.painter().rect_stroke(
-		rect,
-		12,
-		egui::Stroke::new(1.0, egui::Color32::from_white_alpha(18)),
-		egui::StrokeKind::Inside,
-	);
+	ui.painter()
+		.rect(rect, 12, PILL_FILL, STAGE_EDGE, egui::StrokeKind::Inside);
 	let mut inner = ui.new_child(
 		egui::UiBuilder::new()
 			.max_rect(rect)

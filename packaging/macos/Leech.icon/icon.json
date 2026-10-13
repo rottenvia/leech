@@ -1,0 +1,35 @@
+{
+  "fill": {
+    "linear-gradient": [
+      "srgb:0.96863,0.54118,0.67451,1.00000",
+      "srgb:0.83922,0.20000,0.42353,1.00000"
+    ]
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "fill": {
+            "solid": "srgb:1.00000,1.00000,1.00000,1.00000"
+          },
+          "image-name": "01-mark.svg",
+          "name": "01-mark"
+        }
+      ],
+      "lighting": "individual",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.3
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.3
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

@@ -40,7 +40,7 @@ impl Hider {
 }
 
 #[cfg(target_os = "linux")]
-const WORKSPACE: &str = "special:serein-tray";
+const WORKSPACE: &str = "special:leech-tray";
 #[cfg(target_os = "linux")]
 const TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 
@@ -203,7 +203,7 @@ mod tests {
 		.enumerate()
 		{
 			let pid = std::process::id();
-			let path = std::env::temp_dir().join(format!("serein-move-{pid}-{index}.sock"));
+			let path = std::env::temp_dir().join(format!("leech-move-{pid}-{index}.sock"));
 			let listener = UnixListener::bind(&path).unwrap();
 			let server = std::thread::spawn(move || {
 				let mut commands = vec![format!(

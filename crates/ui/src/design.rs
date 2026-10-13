@@ -1,7 +1,7 @@
-//! Serein theme tokens, presets and typography shared by every native view.
+//! Leech theme tokens, presets and typography shared by every native view.
 //!
 //! The palette is resolved from egui's light/dark mode plus a process-wide [`Variant`]
-//! (the cool Serein neutrals, deep black, blue-grey, or a gradient recolour). Gradient
+//! (the cool Leech neutrals, deep black, blue-grey, or a gradient recolour). Gradient
 //! variants paint a backdrop under translucent surfaces; see [`paint_backdrop`].
 use egui::{Color32, FontFamily, FontId, RichText, Stroke, epaint::FontColorTransferFunction};
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
@@ -104,7 +104,7 @@ impl Variant {
 	];
 	pub fn label(self) -> &'static str {
 		match self {
-			Variant::Standard => "Serein",
+			Variant::Standard => "Leech",
 			Variant::Eclipse => "Eclipse",
 			Variant::Slate => "Slate",
 			Variant::Nightfall => "Nightfall",
@@ -979,7 +979,7 @@ pub fn paint_backdrop(ctx: &egui::Context) {
 
 pub const SEMIBOLD: &str = "semibold";
 pub const MEDIUM: &str = "medium";
-const WEIGHTS_KEY: &str = "serein-font-weights";
+const WEIGHTS_KEY: &str = "leech-font-weights";
 // Called by `fonts::install` for one context; until then the weight families resolve to
 // the default face so headless contexts (tests) never reference an unknown family.
 thread_local! {
@@ -1514,11 +1514,9 @@ fn wide_button(
 	} else {
 		fill
 	};
-	let text = if enabled {
-		text
-	} else {
-		text.gamma_multiply(0.6)
-	};
+	// A disabled fill is dim, so its label takes the strong text colour, not the accent's own
+	// ink, which would vanish on it; the disabled fade then quiets it.
+	let text = if enabled { text } else { p.text_strong };
 	let painter = ui.painter();
 	painter.rect(rect, 10, fill, stroke, egui::StrokeKind::Inside);
 	if response.has_focus() {
@@ -1556,7 +1554,7 @@ fn wide_button(
 	}
 	response
 }
-/// Deterministic fallback avatar colours drawn from the Serein palette, keyed by the display name.
+/// Deterministic fallback avatar colours drawn from the Leech palette, keyed by the display name.
 fn fallback_avatar_color(name: &str) -> Color32 {
 	const COLORS: [u32; 5] = [DEFAULT_PRIMARY_RGB, 0x6b7a94, 0x2fb87a, 0xe8a33d, 0xef5561];
 	let hash = name
@@ -1978,33 +1976,66 @@ pub struct Build {
 	pub channel: Channel,
 	pub version: &'static str,
 }
-/// Gradient release pill with a glow, a channel glyph and the version. None for stable builds.
+/// Height of the title bar's status chips.
+const CHIP_HEIGHT: f32 = 20.0;
+
+/// Paints a tinted chip: a faint fill of `tint` inside a hairline of it. Returns the ink for
+/// the content, which is `tint` pulled toward the strong text colour so it stays readable.
+fn paint_chip(ui: &egui::Ui, rect: egui::Rect, tint: Color32) -> Color32 {
+	ui.painter().rect(
+		rect,
+		rect.height() / 2.0,
+		tint.gamma_multiply(0.14),
+		Stroke::new(1.0, tint.gamma_multiply(0.4)),
+		egui::StrokeKind::Inside,
+	);
+	mix(tint, palette(ui).text_strong, 0.3)
+}
+
+/// Small capitalised status chip, tinted like the account labels.
+pub fn chip(ui: &mut egui::Ui, text: &str, tint: Color32) -> egui::Response {
+	let font = FontId::new(10.0, semibold_family(ui.ctx()));
+	let galley = ui
+		.painter()
+		.layout_no_wrap(text.to_owned(), font, Color32::PLACEHOLDER);
+	let (rect, response) = ui.allocate_exact_size(
+		egui::vec2(galley.size().x + 18.0, CHIP_HEIGHT),
+		egui::Sense::hover(),
+	);
+	let ink = paint_chip(ui, rect, tint);
+	ui.painter()
+		.galley(rect.center() - galley.size() / 2.0, galley, ink);
+	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, text));
+	response
+}
+
+/// Tinted release chip with a channel glyph and the version. None for stable builds.
 pub fn build_badge(ui: &mut egui::Ui, build: Build) -> Option<egui::Response> {
-	let (label, hint, stops) = match build.channel {
+	let colors = palette(ui);
+	let (label, hint, tint) = match build.channel {
 		Channel::Stable => return None,
 		Channel::Nightly => (
 			"NIGHTLY",
 			"Nightly build from the latest main. Unofficial client; live compatibility is unverified.",
-			[rgb(DEFAULT_PRIMARY_RGB), rgb(0x7bd0ff)],
+			colors.accent,
 		),
 		Channel::Dev => (
 			"DEV",
 			"Local development build. Unofficial client; live compatibility is unverified.",
-			[rgb(0xe8a33d), rgb(0xe8590c)],
+			colors.warning,
 		),
 	};
 	let font = FontId::new(10.0, semibold_family(ui.ctx()));
 	let title = ui
 		.painter()
-		.layout_no_wrap(label.to_owned(), font, Color32::WHITE);
+		.layout_no_wrap(label.to_owned(), font, Color32::PLACEHOLDER);
 	let version = (!build.version.is_empty()).then(|| {
 		ui.painter().layout_no_wrap(
 			format!("v{}", build.version),
 			FontId::monospace(10.0),
-			Color32::from_white_alpha(210),
+			Color32::PLACEHOLDER,
 		)
 	});
-	const HEIGHT: f32 = 20.0;
 	const PAD: f32 = 8.0;
 	const GLYPH: f32 = 12.0;
 	let width = PAD
@@ -2012,65 +2043,43 @@ pub fn build_badge(ui: &mut egui::Ui, build: Build) -> Option<egui::Response> {
 		+ 5.0 + title.size().x
 		+ version.as_ref().map_or(0.0, |v| 13.0 + v.size().x)
 		+ PAD;
-	let (rect, response) = ui.allocate_exact_size(egui::vec2(width, HEIGHT), egui::Sense::hover());
+	let (rect, response) =
+		ui.allocate_exact_size(egui::vec2(width, CHIP_HEIGHT), egui::Sense::hover());
+	let ink = paint_chip(ui, rect, tint);
 	let painter = ui.painter();
-	let radius = HEIGHT / 2.0;
-	// Soft glow, then a pill whose caps carry the gradient end colours.
-	painter.rect_filled(
-		rect.expand(3.0),
-		radius + 3.0,
-		stops[0].gamma_multiply(0.14),
-	);
-	painter.rect_filled(
-		rect.expand(1.0),
-		radius + 1.0,
-		stops[0].gamma_multiply(0.22),
-	);
-	let left = egui::pos2(rect.left() + radius, rect.center().y);
-	let right = egui::pos2(rect.right() - radius, rect.center().y);
-	painter.circle_filled(left, radius, stops[0]);
-	painter.circle_filled(right, radius, stops[1]);
-	let mut mesh = egui::Mesh::default();
-	mesh.colored_vertex(egui::pos2(left.x, rect.top()), stops[0]);
-	mesh.colored_vertex(egui::pos2(right.x, rect.top()), stops[1]);
-	mesh.colored_vertex(egui::pos2(right.x, rect.bottom()), stops[1]);
-	mesh.colored_vertex(egui::pos2(left.x, rect.bottom()), stops[0]);
-	mesh.add_triangle(0, 1, 2);
-	mesh.add_triangle(0, 2, 3);
-	painter.add(egui::Shape::mesh(mesh));
-	// Top highlight line for a glassy edge.
-	painter.line_segment(
-		[
-			egui::pos2(rect.left() + radius, rect.top() + 1.0),
-			egui::pos2(rect.right() - radius, rect.top() + 1.0),
-		],
-		Stroke::new(1.0, Color32::from_white_alpha(56)),
-	);
 	let glyph = egui::Rect::from_center_size(
 		egui::pos2(rect.left() + PAD + GLYPH / 2.0, rect.center().y),
 		egui::Vec2::splat(GLYPH),
 	);
+	let stroke = Stroke::new(1.5, ink);
+	let c = glyph.center();
 	match build.channel {
+		// A ring for the nightly moon.
 		Channel::Nightly => {
-			// Crescent moon: a white disc with a pill-coloured bite.
-			painter.circle_filled(glyph.center(), 4.6, Color32::WHITE);
-			painter.circle_filled(glyph.center() + egui::vec2(2.4, -1.8), 4.0, stops[0]);
+			painter.circle_stroke(c, 3.8, stroke);
 		}
 		Channel::Dev | Channel::Stable => {
 			// Code chevrons: < >
-			let s = Stroke::new(1.5, Color32::WHITE);
-			let c = glyph.center();
-			painter.line_segment([c + egui::vec2(-1.5, -3.5), c + egui::vec2(-4.5, 0.0)], s);
-			painter.line_segment([c + egui::vec2(-4.5, 0.0), c + egui::vec2(-1.5, 3.5)], s);
-			painter.line_segment([c + egui::vec2(1.5, -3.5), c + egui::vec2(4.5, 0.0)], s);
-			painter.line_segment([c + egui::vec2(4.5, 0.0), c + egui::vec2(1.5, 3.5)], s);
+			painter.line_segment(
+				[c + egui::vec2(-1.5, -3.5), c + egui::vec2(-4.5, 0.0)],
+				stroke,
+			);
+			painter.line_segment(
+				[c + egui::vec2(-4.5, 0.0), c + egui::vec2(-1.5, 3.5)],
+				stroke,
+			);
+			painter.line_segment(
+				[c + egui::vec2(1.5, -3.5), c + egui::vec2(4.5, 0.0)],
+				stroke,
+			);
+			painter.line_segment([c + egui::vec2(4.5, 0.0), c + egui::vec2(1.5, 3.5)], stroke);
 		}
 	}
 	let mut x = glyph.right() + 5.0;
 	painter.galley(
 		egui::pos2(x, rect.center().y - title.size().y / 2.0),
 		title.clone(),
-		Color32::WHITE,
+		ink,
 	);
 	x += title.size().x;
 	if let Some(version) = version {
@@ -2080,13 +2089,13 @@ pub fn build_badge(ui: &mut egui::Ui, build: Build) -> Option<egui::Response> {
 				egui::pos2(x, rect.top() + 5.0),
 				egui::pos2(x, rect.bottom() - 5.0),
 			],
-			Stroke::new(1.0, Color32::from_white_alpha(90)),
+			Stroke::new(1.0, ink.gamma_multiply(0.4)),
 		);
 		x += 7.0;
 		painter.galley(
 			egui::pos2(x, rect.center().y - version.size().y / 2.0),
 			version,
-			Color32::WHITE,
+			ink.gamma_multiply(0.85),
 		);
 	}
 	Some(response.on_hover_text(hint))
@@ -2094,7 +2103,7 @@ pub fn build_badge(ui: &mut egui::Ui, build: Build) -> Option<egui::Response> {
 
 /// Discord-style settings row with a pill switch on the right. Clicking anywhere on the row
 /// toggles `enabled`; the accessible label is `label`.
-/// Blur control. Every compositor Serein targets (macOS, DWM acrylic, KDE and Wayland blur)
+/// Blur control. Every compositor Leech targets (macOS, DWM acrylic, KDE and Wayland blur)
 /// only turns its own fixed blur on or off, so a strength slider would promise control that
 /// does not exist. The stored percentage stays for themes: zero is off, anything else on.
 pub fn blur_control(ui: &mut egui::Ui, label: &str, hint: &str, blur: &mut u8) -> egui::Response {
@@ -2246,11 +2255,8 @@ pub fn button(ui: &mut egui::Ui, label: &str, kind: ButtonKind) -> egui::Respons
 	} else {
 		fill
 	};
-	let text = if enabled {
-		text
-	} else {
-		text.gamma_multiply(0.5)
-	};
+	// See `wide_button`: the accent's ink would vanish on a dimmed fill.
+	let text = if enabled { text } else { p.text_strong };
 	let painter = ui.painter();
 	painter.rect(rect, 10, fill, stroke, egui::StrokeKind::Inside);
 	if response.has_focus() {
@@ -2740,7 +2746,7 @@ pub fn text_action(ui: &mut egui::Ui, label: &str) -> egui::Response {
 	};
 	let painter = ui.painter();
 	if hot {
-		painter.rect_filled(rect, 6, p.hover);
+		painter.rect_filled(rect, 8, p.hover);
 	}
 	let pos = rect.center() - galley.size() * 0.5;
 	painter.galley_with_override_text_color(pos, galley.clone(), color);
@@ -3375,7 +3381,7 @@ mod sign_in_widget_tests {
 						ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
 							ui.spacing_mut().item_spacing.y = 0.0;
 							clicks.0 = account_row(ui, "Riley Quinn", "@riley").clicked();
-							clicks.1 = disclosure(ui, "About Serein", false).clicked();
+							clicks.1 = disclosure(ui, "About Leech", false).clicked();
 						});
 					},
 				);
@@ -3398,7 +3404,7 @@ mod sign_in_widget_tests {
 				(text, clicks)
 			};
 			let (text, _) = run(vec![]);
-			for expected in ["Riley Quinn", "@riley", "About Serein", "RQ"] {
+			for expected in ["Riley Quinn", "@riley", "About Leech", "RQ"] {
 				assert!(text.iter().any(|value| value == expected), "{expected}");
 			}
 			// The row owns the full width; the expander sits directly beneath it.

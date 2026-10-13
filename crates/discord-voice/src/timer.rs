@@ -5,7 +5,7 @@
 //! during calls, raise the resolution to 1 ms only while a media loop is running.
 //!
 //! Windows 11 also drops that request, and may run the process on efficiency cores, once
-//! every Serein window is minimized or covered (a streamer's game). Media loops opt the
+//! every Leech window is minimized or covered (a streamer's game). Media loops opt the
 //! process out of that power throttling until the last one ends.
 use std::future::Future;
 

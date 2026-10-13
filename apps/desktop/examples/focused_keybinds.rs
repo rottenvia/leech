@@ -1,4 +1,4 @@
-//! Offline check: cargo run --locked -p serein --example focused_keybinds
+//! Offline check: cargo run --locked -p leech --example focused_keybinds
 use eframe::egui;
 
 fn main() {

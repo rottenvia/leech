@@ -159,7 +159,7 @@ impl Downloads {
 		let context = context.clone();
 		// One dedicated owner keeps all file work and cleanup away from the render/runtime threads.
 		let spawn = std::thread::Builder::new()
-			.name("serein-download".into())
+			.name("leech-download".into())
 			.spawn(move || {
 				if let Some(previous) = previous {
 					let _ = previous.join();
@@ -309,7 +309,7 @@ impl CopyFile {
 		let mut random = [0u8; 16];
 		getrandom::fill(&mut random).map_err(|_| "Temporary file unavailable")?;
 		let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
-		let root = std::env::temp_dir().join(format!("serein-clipboard-{suffix}"));
+		let root = std::env::temp_dir().join(format!("leech-clipboard-{suffix}"));
 		#[allow(unused_mut)] // Unix permissions require the mutable builder.
 		let mut directory = fs::DirBuilder::new();
 		#[cfg(unix)]
@@ -456,7 +456,7 @@ impl<'a> Partial<'a> {
 		let mut random = [0u8; 16];
 		getrandom::fill(&mut random).map_err(|_| "Temporary file unavailable")?;
 		let random: String = random.iter().map(|b| format!("{b:02x}")).collect();
-		let path = parent.join(format!(".serein-{random}.partial"));
+		let path = parent.join(format!(".leech-{random}.partial"));
 		let mut options = OpenOptions::new();
 		options.write(true).create_new(true);
 		#[cfg(unix)]
@@ -1108,7 +1108,7 @@ mod tests {
 			assert!(original_url(&image).is_none());
 		}
 		let root =
-			std::env::temp_dir().join(format!("serein-download-tests-{}", std::process::id()));
+			std::env::temp_dir().join(format!("leech-download-tests-{}", std::process::id()));
 		fs::create_dir_all(&root).unwrap();
 		let destination = root.join("chosen.bin");
 		let client = reqwest::Client::builder()

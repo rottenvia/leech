@@ -196,7 +196,7 @@ fn one_page_shares_activity_and_lists_detected_games_that_can_be_hidden() {
 	// A hidden detection stays listed so it can be restored.
 	view.registered_games[1].hidden = true;
 	let texts = frame(&ctx, &mut view, &mut state, vec![]);
-	find(&texts, "Hidden. Serein will not detect this game.");
+	find(&texts, "Hidden. Leech will not detect this game.");
 	frame(&ctx, &mut view, &mut state, click(find(&texts, "Restore")));
 	assert!(!view.registered_games[1].hidden);
 	assert_eq!(view.registered_games.len(), 2);

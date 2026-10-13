@@ -2460,17 +2460,17 @@ mod tests {
 
 	/// Run the emitted test executable directly under `/usr/bin/time -l`; use release
 	/// builds for timing comparisons. Fixture generation is excluded from peak RSS.
-	/// Set SEREIN_IMAGE_DECODE_FIXTURE to a prebuilt synthetic 4096x4096 RGBA PNG,
-	/// and SEREIN_IMAGE_DECODE_LEGACY=1 only for the original decoder comparison.
+	/// Set LEECH_IMAGE_DECODE_FIXTURE to a prebuilt synthetic 4096x4096 RGBA PNG,
+	/// and LEECH_IMAGE_DECODE_LEGACY=1 only for the original decoder comparison.
 	#[test]
 	#[ignore = "isolated large-image RSS workload; requires a prebuilt synthetic PNG fixture"]
 	fn image_decode_memory_workload() {
-		let path = std::env::var_os("SEREIN_IMAGE_DECODE_FIXTURE")
-			.expect("set SEREIN_IMAGE_DECODE_FIXTURE to a synthetic 4096x4096 RGBA PNG");
+		let path = std::env::var_os("LEECH_IMAGE_DECODE_FIXTURE")
+			.expect("set LEECH_IMAGE_DECODE_FIXTURE to a synthetic 4096x4096 RGBA PNG");
 		let bytes = fs::read(path).unwrap();
 		let budget =
 			budget("media:vs:4096x4096:https://cdn.discordapp.com/attachments/1/2/synthetic.png");
-		let legacy = std::env::var_os("SEREIN_IMAGE_DECODE_LEGACY").is_some();
+		let legacy = std::env::var_os("LEECH_IMAGE_DECODE_LEGACY").is_some();
 		let decode = if legacy { legacy_decode } else { decode };
 		let started = Instant::now();
 		let image = decode(&bytes, &budget).expect("synthetic image decodes");
@@ -2635,7 +2635,7 @@ mod tests {
 	async fn decoded_result_queue_workload() {
 		use std::future::Future;
 		// Explicit comparator reproduces the old item-only admission using the same results.
-		let legacy = std::env::var_os("SEREIN_IMAGE_QUEUE_LEGACY").is_some();
+		let legacy = std::env::var_os("LEECH_IMAGE_QUEUE_LEGACY").is_some();
 		let (sender, mut receive) = result_channel(egui::Context::default());
 		for _ in 0..128 {
 			let result = queued_image(1024);
@@ -2998,7 +2998,7 @@ mod tests {
 			assert_eq!(partition(key), Media, "{key}");
 		}
 		let root = std::env::temp_dir().join(format!(
-			"serein-artwork-test-{}-{}",
+			"leech-artwork-test-{}-{}",
 			std::process::id(),
 			SystemTime::now()
 				.duration_since(SystemTime::UNIX_EPOCH)
@@ -3319,7 +3319,7 @@ mod tests {
 		let bytes = png(256, 256);
 		assert_eq!(decode(&bytes, &legacy(128)).unwrap().size, [128, 128]);
 		let root = std::env::temp_dir().join(format!(
-			"serein-avatar-test-{}-{}",
+			"leech-avatar-test-{}-{}",
 			std::process::id(),
 			SystemTime::now()
 				.duration_since(SystemTime::UNIX_EPOCH)

@@ -142,7 +142,7 @@ impl Audio {
 			let runtime = runtime.clone();
 			let context = context.clone();
 			std::thread::Builder::new()
-				.name("serein-attachment-audio".into())
+				.name("leech-attachment-audio".into())
 				.spawn(move || {
 					worker(receiver, status, gate, worker_wake, runtime, context);
 				})
@@ -163,8 +163,8 @@ impl Audio {
 		};
 		let worker = self.worker.as_ref().expect("worker created");
 		if worker.requests.is_closed() {
-			self.status.state = State::Failed("Audio worker stopped; restart Serein");
-			return Err("Audio worker stopped; restart Serein");
+			self.status.state = State::Failed("Audio worker stopped; restart Leech");
+			return Err("Audio worker stopped; restart Leech");
 		}
 		worker.requests.send_replace(Some(Request {
 			generation,

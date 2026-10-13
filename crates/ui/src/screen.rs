@@ -251,7 +251,7 @@ impl ScreenUi {
 				ui,
 				"screen-body-share-system-audio",
 				Some(if cfg!(target_os = "macos") {
-					"screen-body-send-what-your-mac-plays-along-with-the-screen-serein"
+					"screen-body-send-what-your-mac-plays-along-with-the-screen-leech"
 				} else {
 					"screen-body-share-sound-from-other-apps-even-when-sharing-one-window"
 				}),

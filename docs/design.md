@@ -1,6 +1,6 @@
-# Serein interface direction
+# Leech interface direction
 
-Serein follows the familiar three-column messaging layout and density of a modern desktop chat
+Leech follows the familiar three-column messaging layout and density of a modern desktop chat
 client, but it is not a visual clone: it uses its own plum-cast neutrals, a rose accent,
 hairline edges, softer corner radii and its own server-rail selection language. The palette, typography
 and spacing live in `crates/ui/src/design.rs`; every view resolves colours through
@@ -19,7 +19,7 @@ A process-wide `Variant` recolours the whole application on top of egui's light/
 
 | Preset | Surfaces |
 |---|---|
-| Serein | House plum-cast neutrals: dark (`#0f090c` / `#150d11` / `#191015` / `#22161c`) or light (`#ece4e8` / `#f6f1f3` / white), following System/Light/Dark |
+| Leech | House plum-cast neutrals: dark (`#0f090c` / `#150d11` / `#191015` / `#22161c`) or light (`#ece4e8` / `#f6f1f3` / white), following System/Light/Dark |
 | Eclipse | Deep black surfaces for OLED displays |
 | Slate | Lighter blue-grey surfaces (`#1b1f2a` / `#262b38` / `#2c3140`) |
 | Nightfall, Ember, Verdant, Afterglow | Gradient backdrop painted under translucent dark surfaces |
@@ -27,7 +27,7 @@ A process-wide `Variant` recolours the whole application on top of egui's light/
 Gradient presets paint a full-window mesh in the background layer each frame and use
 translucent panel fills; they always use dark text. Presets are chosen from the account card's
 settings menu (swatch row) and persist in the application-wide SQLite `theme_variant` row next
-to the light/dark appearance; unknown keys fall back to Serein. The keys written by earlier
+to the light/dark appearance; unknown keys fall back to Leech. The keys written by earlier
 builds (`onyx`, `ash`, `midnight-blurple`, `crimson-moon`, `forest`, `sunset`) still resolve to
 their renamed presets, so a stored preference survives the rename. `--demo --demo-theme=<key>` and
 `--demo-light` open fixtures in a preset for screenshots.
@@ -39,8 +39,8 @@ palette surfaces in both message and forum composers, independently of chat tran
 
 ## Brand mark and server rail
 
-The application mark is the Serein chat-wave (`assets/brand/`), not a third-party logo. Its
-silhouette is rasterized into the shared icon atlas as `serein-mark` and painted wherever the
+The application mark is a leech bent into a lowercase L (`assets/brand/`), not a third-party logo. Its
+silhouette is rasterized into the shared icon atlas as `leech-mark` and painted wherever the
 client identifies itself: the loading screen, the sign-in card and its button, the login header
 and the Direct Messages tile at the top of the server rail.
 
@@ -59,7 +59,12 @@ on every surface. Cards, the composer and the account card take the same hairlin
 Icon buttons come from `crates/ui/src/icons.rs`: bare (plate on hover), framed (resting
 hairline, the composer's attach) and accent (filled while enabled, the composer's send). Their
 hover and pressed plates are veils of the text colour with an 8px radius. Toggles keep a faint
-plate while on. Account labels (APP, BOT) are tinted accent chips, not solid blocks.
+plate while on. Account labels (APP, BOT) are tinted accent chips, not solid blocks. The title
+bar's status chips (OFFLINE PREVIEW, the DEV and NIGHTLY build chips) share that treatment at
+one 20px height: a faint fill of their tint inside a hairline of it, with no gradient or glow.
+Row actions in lists (friends, roles) are the same rounded squares as every other button, not
+circles. A disabled filled button keeps a dimmed fill and takes the strong text colour, so its
+label stays legible.
 
 ## Typography
 
@@ -141,22 +146,23 @@ command are in `assets/icons/README.md`. The profile popout keeps its 300px Disc
 Shortcut capture also accepts egui's browser, media and system keys, including Caps Lock,
 Pause and the macOS Fn key, when the OS delivers them to the focused window. These bindings
 persist through the existing device settings. Global availability remains limited by the
-native shortcut adapter; unsupported global bindings continue to work while Serein is focused.
+native shortcut adapter; unsupported global bindings continue to work while Leech is focused.
 
-Voice follows Discord's call screens: a black stage with 80px participant avatars (DM calls,
-above the conversation) or 16:9 tiles with name badges (guild channels), a bottom control bar
-of dark pills (mute with settings chevron, camera, screen share, activities, soundboard, more)
+Voice follows Discord's call screens in placement: a stage that stays dark in every appearance,
+in the house plum cast rather than black and neutral grey, with 80px participant avatars (DM
+calls, above the conversation) or hairlined 16:9 tiles with name badges (guild channels), a
+bottom control bar of dark pills (mute with settings chevron, camera, screen share, more)
 and a red hang-up button, a green "In a call" badge in the header, mute/deafen toggles in the
 account card, and a "Voice Connected" panel above it while connected. The panel follows
 Discord's: noise suppression and a red disconnect beside the title, then two equal cells for
 camera (split with its settings chevron) and screen share, filled with the accent while on.
 Each mute/deafen toggle shares one plate with its settings chevron and turns red while latched;
 the call bar tints its microphone half the same way. Activities and soundboard are absent:
-Serein has no such features.
+Leech has no such features.
 
 ## Verification notes
 
-Native macOS captures at 1120×760 in Serein dark, Eclipse, Slate, Nightfall and light were
+Native macOS captures at 1120×760 in Leech dark, Eclipse, Slate, Nightfall and light were
 inspected on September 10, 2026 with the offline fixtures (`--demo`, `--demo-chat`,
 `--demo-notifications`, `--demo-voice`). Keyboard reachability of channel rows, the forum row,
 toolbar actions and members is covered by headless egui tests. Screen-reader/IME behaviour and
@@ -183,7 +189,7 @@ a question above stacked, left-aligned answer rows, right-edge selection circles
 and checkmarks, separate vote counts and percentages, and a compact vote/expiry
 footer. The card spans up to 472px including padding. Long answers wrap while
 their selection markers stay aligned; narrow result rows put tallies beneath the
-answer. Colors continue to resolve from the active Serein palette.
+answer. Colors continue to resolve from the active Leech palette.
 
 Open poll creation from Create a poll in the composer's `+` menu.
 The creation dialog uses uppercase field labels, inset question/answer fields,

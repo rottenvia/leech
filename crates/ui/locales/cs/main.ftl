@@ -3,7 +3,7 @@
 language-system = Systém
 language-group = Jazyk
 language-label = Jazyk zobrazení
-language-description = Zvolte jazyk aplikace Serein. Obsah Discordu se nepřekládá.
+language-description = Zvolte jazyk aplikace Leech. Obsah Discordu se nepřekládá.
 section-user = Uživatelská nastavení
 section-app = Nastavení aplikace
 section-customization = Přizpůsobení
@@ -28,11 +28,11 @@ description-appearance = Motiv, barvy, efekty okna a rozvržení.
 description-chat = Chování zpráv, médií, odkazů a posouvání.
 description-messaging-permissions = Určete, kdo vás může kontaktovat a jak se filtrují zprávy.
 description-notifications = Zvolte, která oznámení dostáváte a jak se zobrazují.
-description-registered-games = Sdílejte, co hrajete, a opravte nebo přidejte hry, které Serein rozpozná.
+description-registered-games = Sdílejte, co hrajete, a opravte nebo přidejte hry, které Leech rozpozná.
 description-voice = Mikrofon, reproduktory, kamera a zpracování hlasu.
-description-keybinds = Klávesové zkratky aplikace Serein.
-description-storage = Co Serein uchovává na tomto zařízení.
-description-updates = Udržujte Serein na tomto zařízení aktuální.
+description-keybinds = Klávesové zkratky aplikace Leech.
+description-storage = Co Leech uchovává na tomto zařízení.
+description-updates = Udržujte Leech na tomto zařízení aktuální.
 description-extensions = Správa komunitních pluginů.
 description-themes = Výběr komunitního motivu.
 theme-maker = Tvůrce motivů
@@ -45,30 +45,30 @@ log-out = Odhlásit se
 unofficial = Neoficiální · bez podpory Discordu
 offline-preview = Offline náhled · změny zůstanou v této relaci a nikdy se neodešlou.
 general-startup = Spouštění
-general-open-at-startup = Otevřít Serein při spuštění počítače
-general-open-at-startup-description = Serein se přihlásí a připojí na pozadí.
+general-open-at-startup = Otevřít Leech při spuštění počítače
+general-open-at-startup-description = Leech se přihlásí a připojí na pozadí.
 general-start-minimized = Spustit minimalizovaně
 general-start-minimized-description = Spustí se na pozadí, aby vám nepřekážel.
 general-startup-unavailable = Automatické spuštění je dostupné ve Windows a macOS.
 general-window = Okno
 general-hide-decorations = Skrýt dekorace okna
 general-hide-decorations-description = Odebere systémový titulní pruh a okraje. K přesunu, změně velikosti nebo zavření použijte správce oken.
-general-hide-title-bar = Skrýt titulní pruh Sereinu
+general-hide-title-bar = Skrýt titulní pruh Leechu
 general-hide-title-bar-description = Místo něj použije systémový titulní pruh a tlačítka okna.
-general-keep-menu-bar = Ponechat Serein v řádku nabídek
-general-keep-system-tray = Ponechat Serein v oznamovací oblasti
-general-menu-bar-description = Zavřením okna zůstane Serein v řádku nabídek. Ukončíte ho z jeho nabídky.
-general-linux-tray-description = Po zavření zůstane Serein spuštěný. Pomocí ikony ho zobrazíte, minimalizujete nebo ukončíte.
-general-windows-tray-description = Zavřením okna zůstane Serein v oznamovací oblasti. Ukončíte ho z její nabídky.
+general-keep-menu-bar = Ponechat Leech v řádku nabídek
+general-keep-system-tray = Ponechat Leech v oznamovací oblasti
+general-menu-bar-description = Zavřením okna zůstane Leech v řádku nabídek. Ukončíte ho z jeho nabídky.
+general-linux-tray-description = Po zavření zůstane Leech spuštěný. Pomocí ikony ho zobrazíte, minimalizujete nebo ukončíte.
+general-windows-tray-description = Zavřením okna zůstane Leech v oznamovací oblasti. Ukončíte ho z její nabídky.
 general-tray-unavailable = Oznamovací oblast není na této platformě dostupná.
 general-graphics = Grafika
 general-render-with = Vykreslovat pomocí
-general-gpu-restart = Projeví se při příštím spuštění Sereinu.
+general-gpu-restart = Projeví se při příštím spuštění Leechu.
 general-gpu-current-prefix = Aktuálně vykresluje
 gpu-automatic = Automaticky
 gpu-high-performance = Vysoký výkon
 gpu-power-saving = Úspora energie
-gpu-automatic-description = Nechá Serein vybrat grafický procesor, který dokáže vykreslit toto okno.
+gpu-automatic-description = Nechá Leech vybrat grafický procesor, který dokáže vykreslit toto okno.
 gpu-high-performance-description = Použije samostatnou grafickou kartu, pokud je dostupná.
 gpu-power-saving-description = Použije integrovanou grafiku a šetří baterii.
 direct-messages = Přímé zprávy
@@ -212,7 +212,7 @@ account-menu-custom-status-editor-clear-after = Po vymazání
 # Context: custom_status_editor
 account-menu-custom-status-editor-no-custom-status = Žádný vlastní stav
 # Context: custom_status_editor
-account-menu-custom-status-editor-serein-clears-it = Serein jej vymaže
+account-menu-custom-status-editor-leech-clears-it = Leech jej vymaže
 # Context: custom_status_editor
 account-menu-custom-status-editor-status-text = Stavový text
 # Context: custom_status_editor
@@ -1043,7 +1043,7 @@ fonts-show-none-installed = V tomto systému nebyla nalezena žádná nainstalov
 # Context: show
 fonts-show-the-quick-brown-fox-jumps-over-the-lazy-dog-0123456789 = Rychlá hnědá liška přeskakuje líného psa. 0123456789
 # Context: show
-fonts-show-ttf-or-otf-up-to-32-mib-saved-on-this = Písma nainstalovaná v tomto zařízení, až 32 MiB. Kopie se uloží pro Serein. Kód si zachovává jednoprostorové písmo.
+fonts-show-ttf-or-otf-up-to-32-mib-saved-on-this = Písma nainstalovaná v tomto zařízení, až 32 MiB. Kopie se uloží pro Leech. Kód si zachovává jednoprostorové písmo.
 # Context: show
 fonts-show-typography = Typografie
 
@@ -1553,7 +1553,7 @@ keybinds-show-voice-enable-global-keybinds = Povolit globální klávesové zkra
 # Context: show_voice
 keybinds-show-voice-global-availability = Globální dostupnost
 # Context: show_voice
-keybinds-show-voice-use-voice-shortcuts-while-another-app-is-focused-when-off = Používejte hlasové zkratky, když je zaměřena jiná aplikace. Když je vypnuto, zkratky fungují pouze při zaostření Serein.
+keybinds-show-voice-use-voice-shortcuts-while-another-app-is-focused-when-off = Používejte hlasové zkratky, když je zaměřena jiná aplikace. Když je vypnuto, zkratky fungují pouze při zaostření Leech.
 
 ## crates/ui/src/lib.rs
 # Context: account_card
@@ -1631,7 +1631,7 @@ main-restoring-checking-your-saved-login = Kontrola uložených přihlašovacíc
 # Context: restoring
 main-restoring-connecting-to-discord = Připojování k Discordu
 # Context: restoring_screen
-main-restoring-screen-serein = Serein
+main-restoring-screen-leech = Leech
 # Context: restoring_screen
 main-restoring-screen-use-a-different-account = Použijte jiný účet
 # Context: restoring_screen
@@ -1643,11 +1643,11 @@ main-sign-in-consent-i-own-this-account-and-authorize-this-session = Vlastním t
 # Context: sign_in_consent
 main-sign-in-consent-passwords-and-2fa-stay-on-discord-s-own-login-page = Hesla a 2FA zůstávají na vlastní přihlašovací stránce Discordu; ve vašem úložišti pověření OS je zachován pouze token relace.
 # Context: sign_in_disclosures
-main-sign-in-disclosures-about-serein = O Serein
+main-sign-in-disclosures-about-leech = O Leech
 # Context: sign_in_disclosures
 main-sign-in-disclosures-connect-with-this-token = Spojte se s tímto tokenem
 # Context: sign_in_disclosures
-main-sign-in-disclosures-for-owners-who-already-hold-a-valid-discord-session-token = Pro vlastníky, kteří již mají platný token relace Discord, například z jiné přihlášené instalace Serein. Hesla a 2FA se zde nikdy nepoužívají; to zcela obchází hostovanou přihlašovací stránku Discordu.
+main-sign-in-disclosures-for-owners-who-already-hold-a-valid-discord-session-token = Pro vlastníky, kteří již mají platný token relace Discord, například z jiné přihlášené instalace Leech. Hesla a 2FA se zde nikdy nepoužívají; to zcela obchází hostovanou přihlašovací stránku Discordu.
 # Context: sign_in_disclosures
 main-sign-in-disclosures-forget-saved-login = Zapomeňte uložené přihlašovací údaje
 # Context: sign_in_disclosures
@@ -1661,7 +1661,7 @@ main-sign-in-header-sign-in-with-your-discord-account-to-get-started = Chcete-li
 # Context: sign_in_header
 main-sign-in-header-welcome-back = Vítejte zpět
 # Context: sign_in_header
-main-sign-in-header-welcome-to-serein = Vítejte v destinaci Serein
+main-sign-in-header-welcome-to-leech = Vítejte v destinaci Leech
 # Context: sign_in_preview
 main-sign-in-status-copy-failure-details = Kopírovat podrobnosti o chybě
 main-sign-in-preview-explore-the-offline-preview = Prozkoumejte offline náhled
@@ -1670,7 +1670,7 @@ main-sign-in-preview-sample-conversations-no-discord-connection = Ukázkové roz
 # Context: sign_in_screen
 main-sign-in-screen-independent-and-open-source-not-affiliated-with-discord = Nezávislý a otevřený zdroj. Není spojen s Discordem.
 # Context: sign_in_screen
-main-sign-in-screen-serein = Serein
+main-sign-in-screen-leech = Leech
 # Context: ui
 main-ui-cancel = Zrušit
 # Context: ui
@@ -2257,9 +2257,9 @@ screen-body-refresh = Obnovit
 # Context: body
 screen-body-screen-or-window = Obrazovka nebo okno
 # Context: body
-screen-body-send-what-your-mac-plays-along-with-the-screen-serein = Odesílejte, co váš Mac hraje, spolu s obrazovkou. Serein vlastní zvuk hovoru je vynechán.
+screen-body-send-what-your-mac-plays-along-with-the-screen-leech = Odesílejte, co váš Mac hraje, spolu s obrazovkou. Leech vlastní zvuk hovoru je vynechán.
 # Context: body
-screen-body-share-sound-from-other-apps-even-when-sharing-one-window = Sdílejte zvuk z jiných aplikací, i když sdílíte jedno okno. Serein vlastní zvuk je vynechán.
+screen-body-share-sound-from-other-apps-even-when-sharing-one-window = Sdílejte zvuk z jiných aplikací, i když sdílíte jedno okno. Leech vlastní zvuk je vynechán.
 # Context: body
 screen-body-share-system-audio = Sdílejte systémový zvuk
 # Context: body
@@ -3418,7 +3418,7 @@ settings-activity-added-games = Přidané hry
 # Context: activity_settings
 settings-activity-no-games-added = Žádné přidané hry
 # Context: activity_settings
-settings-activity-hidden = Skryto. Serein tuto hru nebude rozpoznávat.
+settings-activity-hidden = Skryto. Leech tuto hru nebude rozpoznávat.
 # Context: activity_settings
 settings-activity-detected = Rozpoznáno automaticky
 # Context: activity_settings
@@ -3440,7 +3440,7 @@ settings-activity-click-to-rename = Kliknutím přejmenujete
 # Context: activity_settings
 settings-activity-add-a-game = Přidat hru
 # Context: activity_settings
-settings-activity-choose-program = Vyberte spuštěný program. Serein ho zobrazí jako vaši hru, kdykoli poběží.
+settings-activity-choose-program = Vyberte spuštěný program. Leech ho zobrazí jako vaši hru, kdykoli poběží.
 # Context: activity_settings
 settings-activity-search-programs = Hledat spuštěné programy
 # Context: activity_settings
@@ -3468,7 +3468,7 @@ settings-appearance-settings-primary-color = Základní barva
 # Context: appearance_settings
 settings-appearance-settings-reset = Resetovat
 # Context: appearance_settings
-settings-appearance-settings-restart-serein-after-changing-this-themes-can-customize-effects-while = Po změně restartujte Serein. Motivy mohou upravovat efekty, když jsou povoleny.
+settings-appearance-settings-restart-leech-after-changing-this-themes-can-customize-effects-while = Po změně restartujte Leech. Motivy mohou upravovat efekty, když jsou povoleny.
 # Context: appearance_settings
 settings-appearance-settings-the-active-theme-brings-its-own-accent-it-takes-over = Aktivní téma přináší svůj vlastní akcent; přebírá to, když se téma používá.
 # Context: appearance_settings
@@ -3505,11 +3505,11 @@ settings-storage-page-clear-cache = Vymazat mezipaměť
 # Context: storage_page
 settings-storage-page-local-storage = Místní úložiště
 # Context: storage_page
-settings-storage-page-messages-and-drafts-are-cached-on-this-device-inside-bounded = Zprávy a koncepty se v tomto zařízení ukládají do mezipaměti v ohraničených souborech izolovaných na účtech. Data mezipaměti nejsou zašifrována Sereinem; uložené přihlašovací tokeny používají úložiště pověření OS.
+settings-storage-page-messages-and-drafts-are-cached-on-this-device-inside-bounded = Zprávy a koncepty se v tomto zařízení ukládají do mezipaměti v ohraničených souborech izolovaných na účtech. Data mezipaměti nejsou zašifrována Leechem; uložené přihlašovací tokeny používají úložiště pověření OS.
 # Context: storage_page
 settings-storage-page-removes-cached-messages-and-media-drafts-and-your-login-stay = Odstraní zprávy a média z mezipaměti. Koncepty a vaše přihlášení zůstávají.
 # Context: storage_page
-settings-storage-page-serein-does-not-collect-telemetry-or-upload-diagnostics-discord-retains = Serein neshromažďuje telemetrii ani nenahrává diagnostiku. Discord uchovává data na straně služeb podle svých vlastních zásad.
+settings-storage-page-leech-does-not-collect-telemetry-or-upload-diagnostics-discord-retains = Leech neshromažďuje telemetrii ani nenahrává diagnostiku. Discord uchovává data na straně služeb podle svých vlastních zásad.
 # Context: storage_page
 settings-storage-page-your-privacy = Vaše soukromí
 # Context: cosmetic_settings
@@ -3960,7 +3960,7 @@ updates-update-settings-could-not-load-or-save-update-preferences-changes-may-no
 # Context: update_settings
 updates-update-settings-download-update = Stáhnout aktualizaci
 # Context: update_settings
-updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Stahujte aktualizace na pozadí. Restartujte, až budete připraveni. Serein stále kontroluje při spuštění a pravidelně, když je vypnutý.
+updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Stahujte aktualizace na pozadí. Restartujte, až budete připraveni. Leech stále kontroluje při spuštění a pravidelně, když je vypnutý.
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = Brzy staví s nejnovějšími změnami. Noční vydání může být méně spolehlivé.
 # Context: update_settings
@@ -3986,7 +3986,7 @@ updates-update-settings-release-channel = Uvolněte kanál
 # Context: update_settings
 updates-update-settings-restart-to-update = Pro aktualizaci restartujte
 # Context: update_settings
-updates-update-settings-serein-was-installed-via-your-distribution-run-this-in-a = Serein byl nainstalován prostřednictvím vaší distribuce. Spusťte to v terminálu pro aktualizaci.
+updates-update-settings-leech-was-installed-via-your-distribution-run-this-in-a = Leech byl nainstalován prostřednictvím vaší distribuce. Spusťte to v terminálu pro aktualizaci.
 # Context: update_settings
 updates-update-settings-support-diagnostics = Podpora a diagnostika
 # Context: update_log
@@ -4465,7 +4465,7 @@ onboarding-rules-heading = Pravidla serveru
 # Context: rules
 onboarding-rules-review = Než budeš moct psát, moderátor tyto odpovědi zkontroluje.
 # Context: field
-onboarding-field-unsupported = Tento server klade otázku, kterou Serein zatím neumí zobrazit. Dokonči připojení v aplikaci Discord.
+onboarding-field-unsupported = Tento server klade otázku, kterou Leech zatím neumí zobrazit. Dokonči připojení v aplikaci Discord.
 # Context: field
 onboarding-field-agree = Přečetl(a) jsem si pravidla a souhlasím s nimi
 
@@ -4504,7 +4504,7 @@ public-upload-host-catbox = Až 200 MB (GIF 20 MB) · může být odstraněn po 
 public-upload-host-litterbox = Až 1 GB · dočasné, smazáno po 72 hodinách
 public-upload-over-limit = { $size } · nad vaším limitem nahrávání na Discord ({ $limit })
 public-upload-uploading = Nahrávání na { $host } · { $sent } z { $total }
-public-upload-privacy = Kdokoli s odkazem může soubor otevřít. Nahraje se beze změny včetně metadat mimo Discord a Serein jej později nemůže smazat.
+public-upload-privacy = Kdokoli s odkazem může soubor otevřít. Nahraje se beze změny včetně metadat mimo Discord a Leech jej později nemůže smazat.
 public-upload-review = Zatím se nic neodesílá. Přidejte odkaz do konceptu nebo jej zkopírujte a pak jej sami odešlete.
 public-upload-return = Pro přidání odkazu se vraťte do původní konverzace.
 public-upload-preparing = Příprava veřejného nahrávání…
@@ -4643,7 +4643,7 @@ reading-double-click-reaction = Double-click reaction
 
 ## crates/platform/src/app_menu.rs
 # Context: macos_menu_bar
-app-menu-about = O aplikaci Serein
+app-menu-about = O aplikaci Leech
 # Context: macos_menu_bar
 app-menu-updates = Vyhledat aktualizace…
 # Context: macos_menu_bar
@@ -4651,13 +4651,13 @@ app-menu-settings = Nastavení…
 # Context: macos_menu_bar
 app-menu-services = Služby
 # Context: macos_menu_bar
-app-menu-hide = Skrýt Serein
+app-menu-hide = Skrýt Leech
 # Context: macos_menu_bar
 app-menu-hide-others = Skrýt ostatní
 # Context: macos_menu_bar
 app-menu-show-all = Zobrazit vše
 # Context: macos_menu_bar
-app-menu-quit = Ukončit Serein
+app-menu-quit = Ukončit Leech
 # Context: macos_menu_bar
 app-menu-file = Soubor
 # Context: macos_menu_bar
@@ -4699,7 +4699,7 @@ app-menu-bring-all-to-front = Převést vše do popředí
 # Context: macos_menu_bar
 app-menu-help = Nápověda
 # Context: macos_menu_bar
-app-menu-github = Serein na GitHubu
+app-menu-github = Leech na GitHubu
 # Context: macos_menu_bar
 app-menu-report-issue = Nahlásit problém…
 

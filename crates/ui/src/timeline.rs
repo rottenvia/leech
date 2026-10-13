@@ -1164,7 +1164,7 @@ fn copy_action_button(
 	let age = if clicked { Some(0.0) } else { age };
 	let colors = crate::design::palette(ui);
 	if response.hovered() || response.has_focus() {
-		ui.painter().rect_filled(rect, 6, colors.hover);
+		ui.painter().rect_filled(rect, 8, colors.hover);
 	}
 	let label = crate::i18n::translate(if age.is_some() {
 		"updates-update-settings-copied"
@@ -3856,7 +3856,7 @@ impl TimelineView {
 							toolbar.spacing_mut().interact_size.y = 28.0;
 							toolbar
 								.painter()
-								.rect_filled(toolbar_rect, 6.0, colors.raised);
+								.rect_filled(toolbar_rect, 8.0, colors.raised);
 							toolbar.painter().rect_stroke(
 								toolbar_rect,
 								6.0,
@@ -3945,7 +3945,7 @@ impl TimelineView {
 							toolbar.spacing_mut().interact_size.y = 28.0;
 							toolbar
 								.painter()
-								.rect_filled(toolbar_rect, 6.0, colors.raised);
+								.rect_filled(toolbar_rect, 8.0, colors.raised);
 							toolbar.painter().rect_stroke(
 								toolbar_rect,
 								6.0,
@@ -4178,7 +4178,7 @@ impl TimelineView {
 							egui::Shape::rect_filled(
 								rect,
 								0.0,
-								crate::design::row_highlight(ui, colors.accent, 0.25),
+								crate::design::row_highlight(ui, colors.accent, 0.12),
 							),
 						);
 					}

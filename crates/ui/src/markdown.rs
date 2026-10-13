@@ -4655,7 +4655,7 @@ mod tests {
 	fn selecting_across_images_copies_unicode_and_custom_markup() {
 		let ctx = egui::Context::default();
 		crate::emoji::install(&ctx).unwrap();
-		let source = "A 👩🏽‍💻 ❤️ <:serein_wave:9001> Z";
+		let source = "A 👩🏽‍💻 ❤️ <:leech_wave:9001> Z";
 		let parsed = Formatted::parse(source);
 		let mut avatars = crate::avatars::Avatars::default();
 		let mut clock = 0.0;
@@ -4776,7 +4776,7 @@ mod tests {
 			assert!(
 				matches!(
 					copied.map(str::trim_end),
-					Some("<:serein_wave:9001> Z" | " Z")
+					Some("<:leech_wave:9001> Z" | " Z")
 				),
 				"partial emoji copied: {copied:?}"
 			);
@@ -4804,7 +4804,7 @@ mod tests {
 				),
 				(
 					"<:old_name:9001>",
-					":serein_wave:",
+					":leech_wave:",
 					"From Emoji source server",
 				),
 				(

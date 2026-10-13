@@ -380,7 +380,7 @@ impl MessagingUi {
 		);
 		let over_bin = ui.rect_contains_pointer(bin);
 		if ui.rect_contains_pointer(rect) {
-			ui.painter().rect_filled(rect, 6, colors.hover);
+			ui.painter().rect_filled(rect, 8, colors.hover);
 		}
 		ui.scope_builder(egui::UiBuilder::new().max_rect(avatar), |ui| {
 			self.avatars.show_plain(ui, &user, 32.0, demo);
@@ -860,7 +860,7 @@ impl MessagingUi {
 				ui,
 				&format!(
 					"{} {clears}.",
-					crate::i18n::translate("account-menu-custom-status-editor-serein-clears-it")
+					crate::i18n::translate("account-menu-custom-status-editor-leech-clears-it")
 				),
 			);
 		}

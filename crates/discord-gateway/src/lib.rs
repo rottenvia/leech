@@ -298,14 +298,14 @@ impl Diagnostics {
 			.scope
 			.len()
 			.saturating_add(label.len())
-			.saturating_add(11);
+			.saturating_add(10);
 		if self.remaining == 0 || bytes > self.bytes {
 			return;
 		}
 		// Charge attempted output even if stderr is closed or accepts only part of a line.
 		self.remaining -= 1;
 		self.bytes -= bytes;
-		let _ = writeln!(writer, "[Serein {}] {label}", self.scope);
+		let _ = writeln!(writer, "[Leech {}] {label}", self.scope);
 	}
 }
 fn ignored_dispatch_label(name: Option<&str>) -> &'static str {
@@ -1160,12 +1160,11 @@ async fn run_recoverable(
 	outgoing_activity.update_presence(&own_presence.borrow_and_update())?;
 	let mut member_diagnostics = Diagnostics::new(
 		"members",
-		std::env::var_os("SEREIN_MEMBER_DIAGNOSTICS").as_deref() == Some(std::ffi::OsStr::new("1")),
+		std::env::var_os("LEECH_MEMBER_DIAGNOSTICS").as_deref() == Some(std::ffi::OsStr::new("1")),
 	);
 	let mut gateway_diagnostics = Diagnostics::new(
 		"gateway",
-		std::env::var_os("SEREIN_GATEWAY_DIAGNOSTICS").as_deref()
-			== Some(std::ffi::OsStr::new("1")),
+		std::env::var_os("LEECH_GATEWAY_DIAGNOSTICS").as_deref() == Some(std::ffi::OsStr::new("1")),
 	);
 	let mut state = ResumeState::default();
 	let mut was_ready = false;
@@ -3137,7 +3136,7 @@ mod member_tests {
 		for _ in 0..1000 {
 			enabled.record_to(label, &mut output);
 		}
-		let line = "[Serein gateway] unsupported dispatch ignored\n";
+		let line = "[Leech gateway] unsupported dispatch ignored\n";
 		assert_eq!(output, line.repeat(64).as_bytes());
 		assert_eq!(enabled.remaining, 0);
 		assert_eq!(enabled.bytes, 8 * 1024 - output.len());
@@ -3146,16 +3145,16 @@ mod member_tests {
 		// Byte accounting includes UTF-8 and formatting, independently of the line cap.
 		output.clear();
 		let mut short = Diagnostics::new("members", true);
-		short.bytes = 20;
+		short.bytes = 19;
 		short.record_to("\u{e9}", &mut output);
 		short.record_to("another line", &mut output);
-		assert_eq!(output, "[Serein members] \u{e9}\n".as_bytes());
+		assert_eq!(output, "[Leech members] \u{e9}\n".as_bytes());
 		assert_eq!((short.remaining, short.bytes), (63, 0));
 		static OVERSIZED: [u8; 8192] = [b'x'; 8192];
 		let mut oversized = Diagnostics::new("gateway", true);
 		oversized.record_to(std::str::from_utf8(&OVERSIZED).unwrap(), &mut output);
 		assert_eq!(oversized.remaining, 64);
-		assert_eq!(output.len(), 20);
+		assert_eq!(output.len(), 19);
 
 		struct Closed;
 		impl std::io::Write for Closed {

@@ -1,27 +1,29 @@
-# Serein brand assets
+# Leech brand assets
 
-Serein's own application mark: a speech bubble carrying an S-shaped wave, in the icy
-blue-to-indigo brand gradient. These files are Serein design assets, not Apple, Discord or any
-other vendor's branding, and no third-party font is embedded in them.
+Leech's own application mark: a leech bent into a lowercase L, with a sucker ring in its head,
+white on a rose plate. These files are Leech design assets, not Discord's or any other vendor's
+branding, and no third-party font is embedded in them.
 
-- `serein.svg` — full-colour gradient mark on its rounded plate; the master vector source.
-- `serein-flat.svg` — flat (non-gradient) variant for small or low-colour contexts.
-- `serein-mark.svg` — solid white silhouette, view box trimmed to the mark's bounding box.
-  `tools/generate-icons.py` rasterizes this one into the shared icon atlas as `serein-mark`,
-  which the interface tints at draw time.
-- `serein-1024.png` — 1024×1024 sRGB RGBA preview render of the full-colour mark.
-- `serein-tray.png` — 72×72 black-on-transparent render of `serein-mark.svg`, embedded by
+- `leech.svg` — full-colour gradient mark on its rounded plate; the master vector source.
+- `leech-flat.svg` — flat (non-gradient) variant for small or low-colour contexts.
+- `leech-mark.svg` — solid white silhouette, view box trimmed to the mark's bounding box. The
+  interface icon atlas carries it as `leech-mark`, tinted at draw time.
+- `leech-1024.png` — 1024×1024 sRGB RGBA render of the full-colour mark.
+- `leech-tray.png` — 72×72 black-on-transparent render of the silhouette, embedded by
   `crates/platform` as the macOS menu bar template image; macOS tints it per appearance, so only
-  its alpha is used. Regenerate with:
+  its alpha is used.
 
-  ```sh
-  sed 's/fill="#fff"/fill="#000"/g' assets/brand/serein-mark.svg |
-    rsvg-convert -w 72 -h 72 -o assets/brand/serein-tray.png
-  ```
+All of them, the packaged platform icons in `packaging/` (`macos/Leech.icns` and `Leech.icon`,
+`windows/Leech.ico`, `linux/hicolor/*`) and the atlas cell come from one script. Change the
+geometry or colours there and run it again:
 
-The packaged platform icons built from the same artwork live in `packaging/` (`macos/Serein.icns`
-and `Serein.icon`, `windows/Serein.ico`, `linux/hicolor/*`).
+```sh
+python tools/generate-brand.py
+```
 
-Brand palette: `#8BBEFF` → `#506DDC` → `#2D247C` plate gradient, `#F5FAFF` and `#D1E0FF` waves.
-The interface accent (`design::DEFAULT_PRIMARY_RGB`, `#1a72e8`) is drawn from the same family and
-is tuned so white text on it keeps a 4.5:1 contrast ratio.
+It prints the SHA-256 of `leech-mark.svg`; copy it into the `leech-mark` row of
+`tools/generate-icons.py`.
+
+Brand palette: `#F78AAC` → `#D6336C` plate gradient, white mark. The interface accent comes from
+the same family: `#F0719B` under dark text on dark appearances, `#D6336C`
+(`design::DEFAULT_PRIMARY_RGB`) under white text on light ones.

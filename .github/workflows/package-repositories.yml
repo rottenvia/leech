@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing Serein release tag to package
+        description: Existing Leech release tag to package
         required: true
         type: string
       channel:
@@ -25,7 +25,7 @@ on:
   workflow_call:
     inputs:
       tag:
-        description: Existing Serein release tag to package
+        description: Existing Leech release tag to package
         required: true
         type: string
       channel:
@@ -132,7 +132,7 @@ jobs:
           BASE_URL: ${{ inputs.base_url }}
         run: |
           set -eu
-          export GNUPGHOME="$RUNNER_TEMP/serein-signing"
+          export GNUPGHOME="$RUNNER_TEMP/leech-signing"
           mkdir -m 700 "$GNUPGHOME"
           trap 'gpgconf --kill all; rm -rf "$GNUPGHOME"' EXIT
           test -n "$PACKAGE_SIGNING_KEY" && test -n "$FINGERPRINT"
@@ -181,11 +181,11 @@ jobs:
           python3 - <<'PY'
           import os
           from pathlib import Path
-          template = Path("packaging/flatpak/serein.flatpakref").read_text()
+          template = Path("packaging/flatpak/leech.flatpakref").read_text()
           reference = template.replace("https://viceverse-cz.github.io/Serein", os.environ["BASE_URL"].rstrip("/"))
-          Path("site/flatpak/serein.flatpakref").write_text(reference)
+          Path("site/flatpak/leech.flatpakref").write_text(reference)
           PY
-          cp packaging/linux/hicolor/256x256/apps/serein.png site/icons/serein.png
+          cp packaging/linux/hicolor/256x256/apps/leech.png site/icons/leech.png
           # Both manual and release runs must publish the verified release bundle.
           set -- packages/*Linux-*.flatpak
           if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
@@ -197,7 +197,7 @@ jobs:
           ostree --repo=site/flatpak/repo init --mode=archive-z2
           flatpak build-import-bundle site/flatpak/repo "$1"
           flatpak build-update-repo --generate-static-deltas site/flatpak/repo
-          flatpak repo --metadata=app/cz.viceverse.serein/x86_64/master site/flatpak/repo > /dev/null
+          flatpak repo --metadata=app/io.github.rottenvia.leech/x86_64/master site/flatpak/repo > /dev/null
           # Ensure GitHub Pages serves all files and directories without Jekyll processing
           touch site/.nojekyll
           # Webroot landing page
