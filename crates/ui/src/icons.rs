@@ -450,12 +450,12 @@ pub fn channel(kind: u8) -> Icon {
 
 /// Square icon button that highlights on hover and exposes `label` to accessibility.
 pub fn button(ui: &mut egui::Ui, icon: Icon, size: f32, label: &str) -> Response {
-	button_with_tooltip(ui, icon, size, label, false)
+	button_with_tooltip(ui, icon, size, label, false, Face::Bare)
 }
 
 /// Message toolbar labels appear as soon as the pointer reaches the action.
 pub(crate) fn button_immediate(ui: &mut egui::Ui, icon: Icon, size: f32, label: &str) -> Response {
-	button_with_tooltip(ui, icon, size, label, true)
+	button_with_tooltip(ui, icon, size, label, true, Face::Bare)
 }
 
 pub(crate) fn immediate_tooltip(response: Response, label: &str) -> Response {
@@ -470,22 +470,89 @@ pub(crate) fn immediate_tooltip(response: Response, label: &str) -> Response {
 	response
 }
 
+/// Corner radius of every icon button plate; matches the shared 8px widget radius.
+pub(crate) const PLATE_RADIUS: u8 = 8;
+
+/// State fill behind an icon button. A veil of the strong text colour rather than a fixed
+/// surface tone, so hover and pressed read on every surface, `raised` cards included.
+pub(crate) fn plate(ui: &egui::Ui, response: &Response, active: bool) -> Color32 {
+	let veil = design::palette(ui).text_strong;
+	if response.is_pointer_button_down_on() {
+		veil.gamma_multiply(0.18)
+	} else if response.hovered() || response.has_focus() {
+		veil.gamma_multiply(0.11)
+	} else if active {
+		veil.gamma_multiply(0.07)
+	} else {
+		Color32::TRANSPARENT
+	}
+}
+
+/// How an icon button looks at rest.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Face {
+	/// Glyph only; the plate appears on hover.
+	Bare,
+	/// Glyph inside a resting hairline, for a standalone action.
+	Framed,
+	/// Filled with the accent while enabled: the one confirming action in a row.
+	Accent,
+}
+
+/// Icon button with a resting hairline, for a standalone action such as the composer's attach.
+pub(crate) fn framed_button(ui: &mut egui::Ui, icon: Icon, size: f32, label: &str) -> Response {
+	button_with_tooltip(ui, icon, size, label, false, Face::Framed)
+}
+
+/// Icon button filled with the accent while enabled, for the one confirming action in a row.
+pub(crate) fn accent_button(ui: &mut egui::Ui, icon: Icon, size: f32, label: &str) -> Response {
+	button_with_tooltip(ui, icon, size, label, false, Face::Accent)
+}
+
 fn button_with_tooltip(
 	ui: &mut egui::Ui,
 	icon: Icon,
 	size: f32,
 	label: &str,
 	immediate: bool,
+	face: Face,
 ) -> Response {
 	let label = crate::i18n::translate_if_key(label);
 	let colors = design::palette(ui);
 	let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
-	if response.hovered() || response.has_focus() {
-		ui.painter().rect_filled(rect, 6, colors.hover);
+	let hot = response.hovered() || response.has_focus();
+	let filled = face == Face::Accent && ui.is_enabled();
+	if filled {
+		let fill = if response.is_pointer_button_down_on() {
+			design::mix(colors.accent, Color32::BLACK, 0.12)
+		} else if hot {
+			design::mix(colors.accent, Color32::WHITE, 0.14)
+		} else {
+			colors.accent
+		};
+		ui.painter().rect_filled(rect, PLATE_RADIUS, fill);
+	} else {
+		ui.painter()
+			.rect_filled(rect, PLATE_RADIUS, plate(ui, &response, false));
+		if face != Face::Bare {
+			ui.painter().rect_stroke(
+				rect,
+				PLATE_RADIUS,
+				egui::Stroke::new(
+					1.0,
+					colors
+						.text_strong
+						.gamma_multiply(if hot { 0.2 } else { 0.11 }),
+				),
+				egui::StrokeKind::Inside,
+			);
+		}
 	}
 	let color = if !ui.is_enabled() {
 		colors.muted.gamma_multiply(0.5)
-	} else if response.hovered() || response.has_focus() {
+	} else if filled {
+		colors.accent_text
+	} else if hot {
 		colors.text_strong
 	} else {
 		colors.muted
@@ -504,9 +571,8 @@ pub fn toggle(ui: &mut egui::Ui, icon: Icon, size: f32, active: bool, label: &st
 	let label = crate::i18n::translate_if_key(label);
 	let colors = design::palette(ui);
 	let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
-	if response.hovered() || response.has_focus() {
-		ui.painter().rect_filled(rect, 6, colors.hover);
-	}
+	ui.painter()
+		.rect_filled(rect, PLATE_RADIUS, plate(ui, &response, active));
 	let color = if active || response.hovered() || response.has_focus() {
 		colors.text_strong
 	} else {

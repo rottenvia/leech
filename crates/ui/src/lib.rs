@@ -511,8 +511,8 @@ fn composer_cap(
 		},
 	)
 	.corner_radius(egui::CornerRadius {
-		nw: 8,
-		ne: 8,
+		nw: 12,
+		ne: 12,
 		sw: 0,
 		se: 0,
 	})
@@ -1804,7 +1804,9 @@ impl MessagingUi {
 								|ui| {
 									ui.add_sized(
 										[(ui.available_width() - 36.0).max(60.0), 30.0],
+										// Inset like the header search field, not a raised action.
 										egui::Button::new(language.text("find-conversation"))
+											.fill(colors.raised)
 											.truncate(),
 									)
 								},
@@ -1822,39 +1824,15 @@ impl MessagingUi {
 							self.switcher.open(&ctx);
 						}
 						let friends = state.selected.is_none();
-						let (rect, response) =
-							ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
-						let hovered = response.hovered() || response.has_focus();
-						if friends || hovered {
-							ui.painter().rect_filled(
-								rect,
-								6,
-								if friends {
-									colors.selected
-								} else {
-									colors.hover
-								},
-							);
-						}
-						icons::paint(
-							ui.painter(),
+						if icons::toggle(
+							ui,
 							icons::Icon::People,
-							rect.shrink(7.0),
-							if friends || hovered {
-								colors.text_strong
-							} else {
-								colors.muted
-							},
-						);
-						response.widget_info(|| {
-							egui::WidgetInfo::selected(
-								egui::Role::Button,
-								true,
-								friends,
-								language.text("friends"),
-							)
-						});
-						if response.on_hover_text(language.text("friends")).clicked() {
+							30.0,
+							friends,
+							&language.text("friends"),
+						)
+						.clicked()
+						{
 							state.open_home();
 							self.guild = None;
 							self.search.open = false;
@@ -1938,7 +1916,7 @@ impl MessagingUi {
 		};
 		let card = egui::Frame::new()
 			.fill(card_fill)
-			.corner_radius(8)
+			.corner_radius(12)
 			.inner_margin(0)
 			.show(ui, |ui| {
 				ui.set_width(ui.available_width());
@@ -2114,7 +2092,7 @@ impl MessagingUi {
 			});
 		// Painted over the frame rather than as its stroke, so the card keeps the composer's height.
 		ui.painter()
-			.rect_stroke(card.response.rect, 8, card_edge, egui::StrokeKind::Inside);
+			.rect_stroke(card.response.rect, 12, card_edge, egui::StrokeKind::Inside);
 		if let Some(anchor) = anchor {
 			self.account_menu(&anchor, state, commands);
 		}
@@ -2291,7 +2269,7 @@ impl MessagingUi {
 					} else {
 						// Search pill.
 						let (pill, response) =
-							ui.allocate_exact_size(egui::vec2(144.0, 28.0), egui::Sense::click());
+							ui.allocate_exact_size(egui::vec2(160.0, 30.0), egui::Sense::click());
 						let enabled = state.can_search();
 						response.widget_info(|| {
 							egui::WidgetInfo::labeled(
@@ -2300,7 +2278,13 @@ impl MessagingUi {
 								language.text("search"),
 							)
 						});
-						ui.painter().rect_filled(pill, 6, colors.raised);
+						ui.painter().rect(
+							pill,
+							icons::PLATE_RADIUS,
+							colors.raised,
+							design::hairline(ui),
+							egui::StrokeKind::Inside,
+						);
 						let pill_text = if enabled {
 							colors.muted
 						} else {
@@ -2769,7 +2753,7 @@ impl MessagingUi {
 				.filter(|guild| state.needs_onboarding(*guild));
 			if let Some(guild) = gated {
 				design::glass_frame(ui, colors.raised, egui::Margin::same(12))
-					.corner_radius(8)
+					.corner_radius(12)
 					.show(ui, |ui| {
 						ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
 							if dialog::action(
@@ -2804,7 +2788,7 @@ impl MessagingUi {
 				return;
 			}
 			design::glass_frame(ui, colors.raised, egui::Margin::same(12))
-				.corner_radius(8)
+				.corner_radius(12)
 				.show(ui, |ui| {
 					let mut hint =
 						"You don't have permission to send messages in this channel.".to_owned();
@@ -3291,9 +3275,9 @@ impl MessagingUi {
 		}
 		design::glass_frame(ui, colors.raised, egui::Margin::symmetric(10, 6))
             .corner_radius(if cap_top.is_some() {
-                egui::CornerRadius { nw: 0, ne: 0, sw: 8, se: 8 }
+                egui::CornerRadius { nw: 0, ne: 0, sw: 12, se: 12 }
             } else {
-                egui::CornerRadius::same(8)
+                egui::CornerRadius::same(12)
             })
             .show(ui, |ui| {
                 // Outer frame bounds for the autocomplete popout: undo the inner margin and
@@ -3312,7 +3296,7 @@ impl MessagingUi {
                 let column = |ui: &mut egui::Ui, add: &mut dyn FnMut(&mut egui::Ui)| {
                     if stacked {
                         ui.allocate_ui_with_layout(
-                            egui::vec2(28.0, draft_height),
+                            egui::vec2(32.0, draft_height),
                             egui::Layout::bottom_up(egui::Align::Center),
                             |ui| {
                                 ui.spacing_mut().item_spacing.y = 4.0;
@@ -3332,7 +3316,7 @@ impl MessagingUi {
                     } else {
                         Some(ui
                             .add_enabled_ui(can_attach || can_create_poll, |ui| {
-                                icons::button(ui, icons::Icon::Attach, 28.0, &crate::i18n::translate("lib-ime-updates-text-attach-files"))
+                                icons::framed_button(ui, icons::Icon::Plus, 32.0, &crate::i18n::translate("lib-ime-updates-text-attach-files"))
                             })
                             .inner
                             .on_hover_text(crate::i18n::translate("lib-ime-updates-text-choose-drop-or-paste-files-ctrl-cmd-option-v-up")))
@@ -3372,10 +3356,10 @@ impl MessagingUi {
                         column(ui, &mut |ui| {
                         let send_button = ui
                             .add_enabled_ui(can_send, |ui| {
-                                icons::button(
+                                icons::accent_button(
                                     ui,
                                     icons::Icon::Send,
-                                    28.0,
+                                    32.0,
                                     &crate::i18n::translate_if_key(if editing_here { "lib-ime-updates-text-save-edit" } else if application_command { "lib-ime-updates-text-send-command" } else { "lib-ime-updates-text-send-message" }),
                                 )
                             })

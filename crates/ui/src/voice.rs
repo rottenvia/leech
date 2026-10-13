@@ -3004,9 +3004,11 @@ impl MessagingUi {
 			});
 			let (rect, response) =
 				ui.allocate_exact_size(egui::Vec2::splat(size), egui::Sense::click());
-			if response.hovered() || response.has_focus() {
-				ui.painter().rect_filled(rect, 6, colors.hover);
-			}
+			ui.painter().rect_filled(
+				rect,
+				crate::icons::PLATE_RADIUS,
+				crate::icons::plate(ui, &response, false),
+			);
 			crate::icons::paint(
 				ui.painter(),
 				match (deafen, active) {
@@ -3050,9 +3052,11 @@ impl MessagingUi {
 			.add_enabled_ui(enabled, |ui| {
 				let (rect, response) =
 					ui.allocate_exact_size(egui::Vec2::splat(size), egui::Sense::click());
-				if response.hovered() || response.has_focus() {
-					ui.painter().rect_filled(rect, 6, colors.hover);
-				}
+				ui.painter().rect_filled(
+					rect,
+					crate::icons::PLATE_RADIUS,
+					crate::icons::plate(ui, &response, false),
+				);
 				let icon = Self::mute_toggle_icon(deafen, active, ptm);
 				let color = if !enabled {
 					colors.muted.gamma_multiply(0.5)
@@ -3171,6 +3175,7 @@ impl MessagingUi {
 		);
 		row.spacing_mut().item_spacing.x = BAR_GAP;
 		pill(&mut row, media, |ui| {
+			let latch = ui.painter().add(egui::Shape::Noop);
 			let mic = control(
 				ui,
 				if muted {
@@ -3191,6 +3196,7 @@ impl MessagingUi {
 				},
 			);
 			mute_clicked = mic.clicked();
+			let mut latched = mic.rect;
 			if chevrons {
 				let settings = control(
 					ui,
@@ -3201,7 +3207,19 @@ impl MessagingUi {
 					"Voice settings",
 					"Microphone and speaker settings",
 				);
+				latched = latched.union(settings.rect);
 				self.voice_settings_popup(&settings, state.demo, true, true);
+			}
+			if muted {
+				// Discord tints the whole microphone half red while it is muted.
+				ui.painter().set(
+					latch,
+					egui::Shape::rect_filled(
+						latched.shrink(4.0),
+						crate::icons::PLATE_RADIUS,
+						colors.danger.gamma_multiply(0.24),
+					),
+				);
 			}
 			camera_clicked = control(
 				ui,
@@ -3425,7 +3443,7 @@ impl MessagingUi {
 			"Share your screen"
 		};
 		let color = if self.screen.busy {
-			egui::Color32::WHITE
+			design::palette(ui).accent_text
 		} else {
 			STAGE_TEXT
 		};
@@ -3806,6 +3824,7 @@ impl MessagingUi {
 						.color(colors.warning),
 					);
 				}
+				let processing = !state.demo && self.voice_available;
 				ui.horizontal(|ui| {
 					ui.spacing_mut().item_spacing.x = 10.0;
 					// Square status tile like Discord's, tinted with the connection colour.
@@ -3822,22 +3841,80 @@ impl MessagingUi {
 						ui.spacing_mut().item_spacing.x = 2.0;
 						let leave = ui
 							.add_enabled_ui(!state.demo, |ui| {
-								crate::icons::button(
-									ui,
-									crate::icons::Icon::HangUp,
-									32.0,
-									&crate::i18n::translate_if_key(if phase == Phase::Failed {
-										"voice-voice-card-section-dismiss-call"
+								let label = crate::i18n::translate_if_key(if phase == Phase::Failed {
+									"voice-voice-card-section-dismiss-call"
+								} else {
+									"voice-voice-card-section-disconnect"
+								});
+								let (rect, response) = ui
+									.allocate_exact_size(egui::Vec2::splat(32.0), egui::Sense::click());
+								// Red plate: the one destructive action in the card; solid on hover.
+								let hot = response.hovered() || response.has_focus();
+								ui.painter().rect_filled(
+									rect,
+									crate::icons::PLATE_RADIUS,
+									colors.danger.gamma_multiply(if !ui.is_enabled() {
+										0.1
+									} else if hot {
+										1.0
 									} else {
-										"voice-voice-card-section-disconnect"
+										0.18
 									}),
-								)
+								);
+								crate::icons::paint(
+									ui.painter(),
+									crate::icons::Icon::HangUp,
+									rect.shrink(6.0),
+									if !ui.is_enabled() {
+										colors.danger.gamma_multiply(0.5)
+									} else if hot {
+										egui::Color32::WHITE
+									} else {
+										colors.danger
+									},
+								);
+								response.widget_info(|| {
+									egui::WidgetInfo::labeled(
+										egui::Role::Button,
+										ui.is_enabled(),
+										&label,
+									)
+								});
+								response.on_hover_text(label)
 							})
 							.inner;
 						if leave.clicked()
 							&& let Some(command) = state.leave_call()
 						{
 							commands.push(command);
+						}
+						// Noise suppression sits beside disconnect, as in Discord's panel.
+						let suppressing =
+							self.voice_processing.effective().suppression != NoiseSuppression::Off;
+						let suppression = ui
+							.add_enabled_ui(processing, |ui| {
+								crate::icons::toggle(
+									ui,
+									crate::icons::Icon::Soundboard,
+									32.0,
+									suppressing,
+									if suppressing {
+										"Turn off noise suppression"
+									} else {
+										"Turn on noise suppression"
+									},
+								)
+							})
+							.inner
+							.on_disabled_hover_text(crate::i18n::translate_if_key(
+								"Noise suppression is unavailable in this build or preview.",
+							));
+						if suppression.clicked() {
+							self.voice_processing.edit().suppression = if suppressing {
+								NoiseSuppression::Off
+							} else {
+								NoiseSuppression::default()
+							};
 						}
 						ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
 							ui.vertical(|ui| {
@@ -3869,15 +3946,24 @@ impl MessagingUi {
 					|| state.demo || (self.screen.supported
 					&& matches!(phase, Phase::Connected | Phase::Waiting)
 					&& state.can_stream(channel_id));
-				let processing = !state.demo && self.voice_available;
 				let mut camera_clicked = false;
 				let mut share_clicked = false;
 				ui.horizontal(|ui| {
 					ui.spacing_mut().item_spacing.x = 8.0;
-					let width = ((ui.available_width() - 3.0 * 8.0 - 24.0) / 3.0).max(24.0);
+					// Two equal halves. Camera and its settings chevron form one split cell
+					// with a hairline seam; share fills the other half.
+					const CHEVRON: f32 = 28.0;
+					const SEAM: f32 = 1.0;
+					let width = ((ui.available_width() - 8.0) / 2.0).max(CHEVRON + SEAM + 24.0);
+					let whole = egui::CornerRadius::same(crate::icons::PLATE_RADIUS);
 					camera_clicked = card_action(
 						ui,
-						width,
+						width - SEAM - CHEVRON,
+						egui::CornerRadius {
+							ne: 0,
+							se: 0,
+							..whole
+						},
 						if camera {
 							crate::icons::Icon::Video
 						} else {
@@ -3903,16 +3989,19 @@ impl MessagingUi {
 						},
 					)
 					.clicked();
-					let camera_settings = crate::icons::button(
+					ui.add_space(SEAM - 8.0);
+					let rest = design::palette(ui).text_strong.gamma_multiply(0.07);
+					let camera_settings = split_chevron(
 						ui,
-						crate::icons::Icon::ChevronDown,
-						24.0,
-						&crate::i18n::translate("voice-voice-card-section-camera-settings"),
+						egui::vec2(CHEVRON, CARD_ACTION_HEIGHT),
+						rest,
+						"voice-voice-card-section-camera-settings",
 					);
 					self.camera_settings_popup(&camera_settings, state.demo);
 					share_clicked = card_action(
 						ui,
 						width,
+						whole,
 						crate::icons::Icon::ScreenShare,
 						can_share,
 						self.screen.busy,
@@ -3934,33 +4023,6 @@ impl MessagingUi {
 						},
 					)
 					.clicked();
-					if card_action(
-						ui,
-						width,
-						crate::icons::Icon::Soundboard,
-						processing,
-						self.voice_processing.effective().suppression != NoiseSuppression::Off,
-						if self.voice_processing.effective().suppression != NoiseSuppression::Off {
-							"Turn off noise suppression"
-						} else {
-							"Turn on noise suppression"
-						},
-						if processing {
-							"Noise suppression reduces keyboard noise, breathing and fans locally."
-						} else {
-							"Noise suppression is unavailable in this build or preview."
-						},
-					)
-					.clicked()
-					{
-						let enabled =
-							self.voice_processing.effective().suppression != NoiseSuppression::Off;
-						self.voice_processing.edit().suppression = if enabled {
-							NoiseSuppression::Off
-						} else {
-							NoiseSuppression::default()
-						};
-					}
 				});
 				if camera_clicked && let Some(command) = state.set_call_camera(!camera) {
 					self.voice_camera_status = "";
@@ -3976,7 +4038,7 @@ impl MessagingUi {
 		}
 	}
 
-	/// Mic or headphones toggle followed by Discord's small chevron opening voice settings.
+	/// Mic or headphones toggle joined to Discord's small chevron opening voice settings.
 	pub(super) fn mute_toggle_with_settings(
 		&mut self,
 		ui: &mut egui::Ui,
@@ -3984,25 +4046,75 @@ impl MessagingUi {
 		commands: &mut Vec<Command>,
 		deafen: bool,
 	) {
-		let chevron = crate::icons::button(
+		let colors = design::palette(ui);
+		// One plate behind both halves, so the pair reads as a single control; red while latched.
+		let plate = ui.painter().add(egui::Shape::Noop);
+		let spacing = std::mem::replace(&mut ui.spacing_mut().item_spacing.x, 0.0);
+		let chevron = split_chevron(
 			ui,
-			crate::icons::Icon::ChevronDown,
-			20.0,
-			&crate::i18n::translate_if_key(if deafen {
+			egui::vec2(18.0, 32.0),
+			egui::Color32::TRANSPARENT,
+			if deafen {
 				"voice-mute-toggle-with-settings-output-settings"
 			} else {
 				"voice-mute-toggle-with-settings-input-settings"
-			}),
+			},
 		);
 		self.voice_settings_popup(&chevron, state.demo, state.voice.active.is_some(), !deafen);
-		self.mute_toggle(ui, state, commands, deafen, 32.0);
+		let toggle = self.mute_toggle(ui, state, commands, deafen, 32.0);
+		ui.spacing_mut().item_spacing.x = spacing;
+		let latched = self.voice_deafened || (!deafen && self.voice_muted);
+		ui.painter().set(
+			plate,
+			egui::Shape::rect_filled(
+				chevron.rect.union(toggle.rect),
+				crate::icons::PLATE_RADIUS,
+				if latched {
+					colors.danger.gamma_multiply(0.18)
+				} else {
+					colors.text_strong.gamma_multiply(0.06)
+				},
+			),
+		);
 	}
 }
 
-/// Quick action in the in-call account card: filled cell, accent glyph while the feature is on.
+/// Height of the quick-action cells in the in-call account card.
+const CARD_ACTION_HEIGHT: f32 = 36.0;
+
+/// Resting, hovered and pressed fill of a quick-action cell: a veil of the text colour, so the
+/// cell reads on the `raised` card, or of the accent while the feature is on.
+fn card_action_fill(
+	ui: &egui::Ui,
+	response: &egui::Response,
+	enabled: bool,
+	active: bool,
+) -> egui::Color32 {
+	let colors = design::palette(ui);
+	let hot = enabled && (response.hovered() || response.has_focus());
+	let (tone, rest) = if active && enabled {
+		(colors.accent, 0.24)
+	} else {
+		(colors.text_strong, 0.07)
+	};
+	tone.gamma_multiply(if !enabled {
+		0.04
+	} else if response.is_pointer_button_down_on() {
+		rest + 0.12
+	} else if hot {
+		rest + 0.07
+	} else {
+		rest
+	})
+}
+
+/// Quick action in the in-call account card: filled cell, accent plate while the feature is on.
+/// `radius` squares the edge that joins a [`split_chevron`].
+#[allow(clippy::too_many_arguments)]
 fn card_action(
 	ui: &mut egui::Ui,
 	width: f32,
+	radius: egui::CornerRadius,
 	icon: crate::icons::Icon,
 	enabled: bool,
 	active: bool,
@@ -4013,23 +4125,20 @@ fn card_action(
 	let hint = crate::i18n::translate_if_key(hint);
 	let colors = design::palette(ui);
 	let (rect, response) = ui.allocate_exact_size(
-		egui::vec2(width, 40.0),
+		egui::vec2(width, CARD_ACTION_HEIGHT),
 		if enabled {
 			egui::Sense::click()
 		} else {
 			egui::Sense::hover()
 		},
 	);
-	let fill = if enabled && (response.hovered() || response.has_focus()) {
-		colors.selected
-	} else {
-		colors.hover
-	};
-	ui.painter().rect_filled(rect, 8, fill);
+	ui.painter().rect_filled(
+		rect,
+		radius,
+		card_action_fill(ui, &response, enabled, active),
+	);
 	let color = if !enabled {
 		colors.muted.gamma_multiply(0.5)
-	} else if active {
-		colors.accent
 	} else {
 		colors.text_strong
 	};
@@ -4042,6 +4151,47 @@ fn card_action(
 	response
 		.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, active, &label));
 	response.on_hover_text(hint)
+}
+
+/// Settings chevron forming the right half of a split control. `rest` is its resting fill;
+/// pass transparent when the caller paints one plate behind both halves.
+fn split_chevron(
+	ui: &mut egui::Ui,
+	size: egui::Vec2,
+	rest: egui::Color32,
+	label: &str,
+) -> egui::Response {
+	let label = crate::i18n::translate_if_key(label);
+	let colors = design::palette(ui);
+	let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+	let hot = response.hovered() || response.has_focus();
+	let veil = crate::icons::plate(ui, &response, false);
+	ui.painter().rect_filled(
+		rect,
+		egui::CornerRadius {
+			nw: 0,
+			sw: 0,
+			ne: crate::icons::PLATE_RADIUS,
+			se: crate::icons::PLATE_RADIUS,
+		},
+		if veil == egui::Color32::TRANSPARENT {
+			rest
+		} else {
+			veil
+		},
+	);
+	crate::icons::paint(
+		ui.painter(),
+		crate::icons::Icon::ChevronDown,
+		egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(12.0)),
+		if hot {
+			colors.text_strong
+		} else {
+			colors.muted
+		},
+	);
+	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
+	response.on_hover_text(label)
 }
 
 /// Discord's call stage is black in every appearance; pills and tiles sit on it in fixed greys.
@@ -4060,7 +4210,7 @@ const MIN_STRIP: f32 = 64.0;
 const MIN_FOCUS: f32 = 80.0;
 /// Height shared by every control, pill and the hang-up button in the call bar.
 const CONTROL_HEIGHT: f32 = 48.0;
-const HANG_UP: f32 = 64.0;
+const HANG_UP: f32 = 72.0;
 const BAR_GAP: f32 = 12.0;
 
 /// Green ring like Discord's speaking indicator; the accessible label still names the state.

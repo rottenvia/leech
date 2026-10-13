@@ -54,8 +54,8 @@ font sizes are whole logical pixels, before the user's display scale.
 | `item_spacing` | [8, 8] | Each axis 0–24 |
 | `button_padding` | [12, 6] | Each axis 0–24 |
 | `control_height` | 32 | 24–56 |
-| `widget_radius` | 8 | 0–24 |
-| `window_radius` | 12 | 0–24 |
+| `widget_radius` | 10 | 0–24 |
+| `window_radius` | 14 | 0–24 |
 | `menu_radius` | 12 | 0–24 |
 
 For example, this `theme` value provides a flatter, roomier appearance:
