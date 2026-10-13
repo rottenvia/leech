@@ -153,7 +153,8 @@ in the house plum cast rather than black and neutral grey, with 80px participant
 calls, above the conversation) or hairlined 16:9 tiles with name badges (guild channels), a
 bottom control bar of dark pills (mute with settings chevron, camera, screen share, more)
 and a red hang-up button, a green "In a call" badge in the header, mute/deafen toggles in the
-account card, and a "Voice Connected" panel above it while connected. The panel follows
+account card, and a "Voice Connected" panel above it while connected. The header and the bar
+stay visible beside the avatars or tiles and fade out only over an enlarged video. The panel follows
 Discord's: noise suppression and a red disconnect beside the title, then two equal cells for
 camera (split with its settings chevron) and screen share, filled with the accent while on.
 Each mute/deafen toggle shares one plate with its settings chevron and turns red while latched;
