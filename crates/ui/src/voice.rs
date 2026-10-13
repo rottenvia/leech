@@ -872,7 +872,8 @@ impl MessagingUi {
 		let (rect, _) = ui.allocate_exact_size(stage.size(), egui::Sense::hover());
 		let notices = self.stage_notices(state, channel, connected);
 		let bottom = CONTROL_HEIGHT + 2.0 * STAGE_MARGIN;
-		// In the call, the bar fades in on hover and an enlarged video fills the stage.
+		// In the call, the bar hides only over an enlarged video, which fills the stage; there
+		// it fades in on hover.
 		let reveal = if connected {
 			chrome_reveal(ui, rect, "voice-stage-chrome")
 		} else {
@@ -959,7 +960,9 @@ impl MessagingUi {
 			egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
 		));
 		if connected {
-			bar_ui.set_opacity(reveal);
+			// The bar has its own strip under the tiles, so it only hides over an enlarged
+			// video; an empty strip that fills on hover reads as a missing control.
+			bar_ui.set_opacity(if full { reveal } else { 1.0 });
 			self.call_controls(&mut bar_ui, state, channel, commands);
 		} else {
 			bar_ui.horizontal_centered(|ui| {
@@ -3548,6 +3551,13 @@ impl MessagingUi {
 					// background follows a resize and egui keeps the dragged size.
 					ui.expand_to_include_rect(rect);
 					let reveal = chrome_reveal(ui, rect, "dm-call-chrome");
+					// The header and the bar keep their own strips beside the avatars, so they
+					// hide only over an enlarged video, as in Discord.
+					let chrome = if self.voice_focus.is_some() {
+						reveal
+					} else {
+						1.0
+					};
 					let top = rect.top() + if header.is_some() { 48.0 } else { 0.0 };
 					let notices = self.stage_notices(state, channel, true);
 					let error = state.voice.active.as_ref().and_then(|c| c.error);
@@ -3620,7 +3630,7 @@ impl MessagingUi {
 						);
 						// The stage stays black in every theme, so its header reads as dark.
 						header_ui.visuals_mut().dark_mode = true;
-						header_ui.set_opacity(reveal);
+						header_ui.set_opacity(chrome);
 						self.channel_header_row(
 							&mut header_ui,
 							state,
@@ -3639,7 +3649,7 @@ impl MessagingUi {
 							.max_rect(bar)
 							.layout(egui::Layout::left_to_right(egui::Align::Center)),
 					);
-					bar_ui.set_opacity(reveal);
+					bar_ui.set_opacity(chrome);
 					self.call_controls(&mut bar_ui, state, channel, commands);
 				});
 			self.apply_watch_request(state);
@@ -3833,7 +3843,7 @@ impl MessagingUi {
 					// Square status tile like Discord's, tinted with the connection colour.
 					let (tile, _) =
 						ui.allocate_exact_size(egui::Vec2::splat(40.0), egui::Sense::hover());
-					ui.painter().rect_filled(tile, 8, colors.base);
+					ui.painter().rect_filled(tile, 10, color.gamma_multiply(0.16));
 					crate::icons::paint(
 						ui.painter(),
 						crate::icons::Icon::InCall,

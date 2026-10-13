@@ -2249,7 +2249,10 @@ impl TimelineView {
 					let prior = previous;
 					let deleted = state.timeline.is_deleted(m.id);
 					let key = row_height_key(m, prior, self.unread_boundary, state, deleted);
-					previous = Some(m);
+					// The starter lives in the parent channel, so the render pass finds no
+					// previous message for the row after it. Key that row the same way here,
+					// or its height reads as stale and is re-measured on every frame.
+					previous = (Some(m.id) != starter_id).then_some(m);
 					let lines = m
 						.content
 						.lines()
@@ -6809,7 +6812,7 @@ mod tests {
 			// System rows paint the sentence as styled runs with the member name strong.
 			assert!(painted.iter().any(|s| s == "Welcome, "));
 			assert!(painted.iter().any(|s| s == "! Joined the server."));
-			assert!(painted.iter().any(|s| s == " changed the channel name"));
+			assert!(painted.iter().any(|s| s == " changed the channel name: "));
 			assert!(painted.iter().any(|s| s == "new channel name"));
 			for description in [
 				" accepted your friend request.",
