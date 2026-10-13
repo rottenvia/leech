@@ -46,13 +46,13 @@ jobs:
           use-flakehub: false
 
       - name: Build
-        run: nix build --print-build-logs --show-trace .#serein
+        run: nix build --print-build-logs --show-trace .#leech
       - name: Verify installed binary
-        run: test -x result/bin/serein
+        run: test -x result/bin/leech
       - name: Verify bundled notices and corresponding source
         shell: bash
         run: |
-          docs=result/share/doc/serein
+          docs=result/share/doc/leech
           for file in README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.md; do
             cmp "$file" "$docs/$file"
           done
@@ -71,10 +71,10 @@ jobs:
       - name: Verify Linux desktop assets
         if: runner.os == 'Linux'
         run: |
-          test -f result/share/applications/cz.viceverse.serein.desktop
-          test -f result/share/icons/hicolor/256x256/apps/serein.png
+          test -f result/share/applications/io.github.rottenvia.leech.desktop
+          test -f result/share/icons/hicolor/256x256/apps/leech.png
       - name: Verify macOS app bundle
         if: runner.os == 'macOS'
         run: |
-          test -x result/Applications/Serein.app/Contents/MacOS/serein
-          plutil -lint result/Applications/Serein.app/Contents/Info.plist
+          test -x result/Applications/Leech.app/Contents/MacOS/leech
+          plutil -lint result/Applications/Leech.app/Contents/Info.plist

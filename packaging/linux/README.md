@@ -10,19 +10,19 @@ Download the file labelled for your distribution from
 [Releases](https://github.com/ViceVerse-cz/Serein/releases), then use its actual filename:
 
 ```sh
-sudo apt install ./serein-*.deb                     # Ubuntu 26.04
-sudo dnf install ./serein-*.fc43.*.rpm              # Fedora 43
-sudo dnf install ./serein-*.fc44.*.rpm              # Fedora 44
-sudo zypper install ./serein-*.suse.*.rpm           # openSUSE Tumbleweed
-sudo pacman -U ./serein-*.pkg.tar.zst               # Arch
-flatpak install --user ./serein-*.flatpak           # Flatpak bundle
+sudo apt install ./leech-*.deb                     # Ubuntu 26.04
+sudo dnf install ./leech-*.fc43.*.rpm              # Fedora 43
+sudo dnf install ./leech-*.fc44.*.rpm              # Fedora 44
+sudo zypper install ./leech-*.suse.*.rpm           # openSUSE Tumbleweed
+sudo pacman -U ./leech-*.pkg.tar.zst               # Arch
+flatpak install --user ./leech-*.flatpak           # Flatpak bundle
 ```
 
 Use a directory containing only the selected package. Local build artifacts are
 unsigned; package-manager signature policy may require an operator-signed package.
 The [signed repository setup](../repositories/README.md) prepares apt, dnf/zypper
 and pacman repositories for normal package-manager upgrades. Hosting and signing
-credentials must be configured before those repository URLs are usable. Serein is
+credentials must be configured before those repository URLs are usable. Leech is
 not listed in distribution archives or Flathub by this change. An optional
 [AUR binary recipe](../aur/README.md) is prepared in this repository for maintainer
 submission; it does not configure a pacman repository or claim AUR publication.
@@ -38,10 +38,10 @@ these are native package dependencies (`gstreamer1.0-pipewire` on Debian/Ubuntu,
 `pipewire-gstreamer` on Fedora, `gstreamer-plugin-pipewire` on openSUSE and
 `gst-plugin-pipewire` on Arch). Use a ScreenCast-capable portal backend matching your
 desktop; the GTK fallback alone does not provide screen capture. VA-API/NVENC and OpenGL
-plugins plus compatible drivers enable hardware encoding; otherwise Serein uses bundled
+plugins plus compatible drivers enable hardware encoding; otherwise Leech uses bundled
 OpenH264. Hardware plugin names/availability vary by distribution and repository.
 Stream audio additionally links the system `libpulse` client library and uses individual
-application monitors on PulseAudio or PipeWire-Pulse. Serein's playback is excluded;
+application monitors on PulseAudio or PipeWire-Pulse. Leech's playback is excluded;
 no virtual device or output rerouting is required. Native package tools derive the
 linked libpulse runtime dependency from the executable. Source builds require its
 development package, installed by `install-build-deps.sh`.
@@ -72,7 +72,7 @@ dependency versions; this does not guarantee compatibility with other Arch deriv
 
 `install-build-deps.sh` installs build dependencies as root on the explicitly
 supported CI distributions. It is intended for fresh build containers. Normal
-packaging runs without root and never installs or starts Serein. RPM uses
+packaging runs without root and never installs or starts Leech. RPM uses
 `rpmbuild` dependency generation; Arch derives native library package dependencies
 from the host package database and uses `makepkg`. Both inspect package metadata,
 payload contents/permissions and the native executable's library closure. Runtime
@@ -86,13 +86,13 @@ python3 packaging/linux/test_package.py --format rpm
 python3 packaging/linux/test_package.py --format arch
 ```
 
-These package `/bin/true`, never Serein or a live account. Native application
+These package `/bin/true`, never Leech or a live account. Native application
 builds and package inspection do not prove desktop login, graphics or physical audio.
 
 ## Debian / Ubuntu details
 
 On a Debian/Ubuntu Linux build host, `cargo xtask package` produces the standard
-`dist/serein_<version>-1_<architecture>.deb` including voice. Native `amd64` and `arm64`
+`dist/leech_<version>-1_<architecture>.deb` including voice. Native `amd64` and `arm64`
 ELF headers are accepted; a build does not prove desktop or audio support on that
 architecture. These are unsigned host-distribution packages, not portable Linux
 archives or a promise of compatibility with older distributions.
@@ -107,18 +107,18 @@ and source trees are not included. It excludes stale archives, nested voice outp
 logs, and stale license files. Temporary files are removed when packaging finishes
 or raises an error.
 
-The archive installs `/usr/bin/serein`, a launcher in
-`/usr/share/applications/cz.viceverse.serein.desktop`, and notices and licenses under
-`/usr/share/doc/serein`. No maintainer
+The archive installs `/usr/bin/leech`, a launcher in
+`/usr/share/applications/io.github.rottenvia.leech.desktop`, and notices and licenses under
+`/usr/share/doc/leech`. No maintainer
 scripts, background updater, automatic launch or user-profile writes are added.
 For a deliberate manual installation, use the local file:
 
 ```sh
-sudo apt install --reinstall ./dist/serein_0.1.0-1_amd64.deb
+sudo apt install --reinstall ./dist/leech_0.1.0-1_amd64.deb
 ```
 
 These are user installation instructions; the build and smoke checks do not run
-them. Remove the application with `sudo apt remove serein`; normal package
+them. Remove the application with `sudo apt remove leech`; normal package
 removal does not delete account data. Use in-app logout/cache controls as described
 in the storage policy.
 
@@ -150,7 +150,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 packaging/linux/test_package.py
 
 It deliberately supplies synthetic documentation and source trees, verifies they are
 omitted, then checks mismatched payload and invalid ELF detection. The fixture is not
-a Serein build.
+a Leech build.
 
 Tool contracts: [dpkg-shlibdeps](https://manpages.debian.org/trixie/dpkg-dev/dpkg-shlibdeps.1.en.html)
 and [dpkg-deb](https://manpages.debian.org/trixie/dpkg/dpkg-deb.1.en.html).

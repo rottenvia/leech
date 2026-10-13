@@ -197,7 +197,7 @@ mod native {
 		#[tokio::test]
 		async fn private_pipe_roundtrip_contention_and_release() {
 			let name = format!(
-				r"\\.\pipe\serein-test-{}-{}",
+				r"\\.\pipe\leech-test-{}-{}",
 				std::process::id(),
 				getrandom::u64().unwrap()
 			);
@@ -408,7 +408,7 @@ mod native {
 		async fn private_socket_roundtrip_contention_and_owned_cleanup() {
 			// Sibling tests spawn shell processes. Keep socket ownership in an exact-test child
 			// so a concurrent spawn cannot temporarily inherit the fixture's open descriptors.
-			const CHILD: &str = "SEREIN_TEST_PRIVATE_SOCKET_CHILD";
+			const CHILD: &str = "LEECH_TEST_PRIVATE_SOCKET_CHILD";
 			if std::env::var_os(CHILD).is_none() {
 				let mut child = std::process::Command::new(std::env::current_exe().unwrap())
 					.args([
@@ -442,7 +442,7 @@ mod native {
 			}
 			let directory = fs::canonicalize(std::env::temp_dir()).unwrap();
 			let path = directory.join(format!(
-				"serein-test-{}-{}",
+				"leech-test-{}-{}",
 				std::process::id(),
 				getrandom::u64().unwrap()
 			));

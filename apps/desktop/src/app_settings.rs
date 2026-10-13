@@ -282,7 +282,7 @@ pub fn debug_window_geometry_check() {
 	);
 	let mut random = [0_u8; 16];
 	getrandom::fill(&mut random).unwrap();
-	let directory = std::env::temp_dir().join(format!("serein-window-geometry-{random:02x?}"));
+	let directory = std::env::temp_dir().join(format!("leech-window-geometry-{random:02x?}"));
 	std::fs::create_dir(&directory).unwrap();
 	let path = directory.join("preferences.sqlite3");
 	let store = LocalStore::open(&path).unwrap();

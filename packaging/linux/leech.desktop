@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Leech
+Comment=Experimental unofficial native Discord client
+Exec=leech
+Icon=leech
+StartupWMClass=io.github.rottenvia.leech
+Terminal=false
+Categories=Network;InstantMessaging;

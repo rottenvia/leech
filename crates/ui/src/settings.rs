@@ -511,9 +511,35 @@ impl MessagingUi {
 	fn settings_navigation(&mut self, ui: &mut egui::Ui, state: &State) {
 		let colors = design::palette(ui);
 		let language = self.language;
+		// The version lines stay pinned under the list so the fold never cuts them.
+		let footer = 40.0;
+		let list = ui.available_rect_before_wrap();
+		let mut pinned = ui.new_child(
+			egui::UiBuilder::new()
+				.max_rect(egui::Rect::from_min_max(
+					egui::pos2(list.left(), list.bottom() - footer + 6.0),
+					list.right_bottom(),
+				))
+				.layout(egui::Layout::top_down(egui::Align::Min)),
+		);
+		pinned.spacing_mut().item_spacing.y = 1.0;
+		pinned.label(
+			RichText::new(format!("Leech {}", self.build.version))
+				.size(12.0)
+				.color(colors.muted),
+		);
+		pinned.add(
+			egui::Label::new(
+				RichText::new(language.text("unofficial"))
+					.size(11.0)
+					.color(colors.muted),
+			)
+			.truncate(),
+		);
 		egui::ScrollArea::vertical()
 			.id_salt("settings-navigation-scroll")
 			.auto_shrink([false, false])
+			.max_height(list.height() - footer)
 			.show(ui, |ui| {
 				ui.spacing_mut().item_spacing.y = 2.0;
 				self.settings_search(ui);
@@ -581,17 +607,7 @@ impl MessagingUi {
 				ui.separator();
 				ui.add_space(4.0);
 				self.settings_logout(ui, state.demo);
-				ui.add_space(12.0);
-				ui.label(
-					RichText::new(format!("Serein {}", self.build.version))
-						.size(12.0)
-						.color(colors.muted),
-				);
-				ui.label(
-					RichText::new(language.text("unofficial"))
-						.size(11.0)
-						.color(colors.muted),
-				);
+				ui.add_space(8.0);
 			});
 	}
 
@@ -600,8 +616,9 @@ impl MessagingUi {
 		let language = self.language;
 		egui::Frame::new()
 			.fill(colors.raised)
-			.corner_radius(6)
-			.inner_margin(egui::Margin::symmetric(8, 4))
+			.stroke(design::hairline(ui))
+			.corner_radius(10)
+			.inner_margin(egui::Margin::symmetric(10, 5))
 			.show(ui, |ui| {
 				ui.horizontal(|ui| {
 					ui.spacing_mut().item_spacing.x = 6.0;
@@ -637,7 +654,7 @@ impl MessagingUi {
 		response
 			.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), &label));
 		if response.hovered() || response.has_focus() {
-			ui.painter().rect_filled(rect, 4, colors.hover);
+			ui.painter().rect_filled(rect, 8, colors.hover);
 		}
 		ui.painter().text(
 			egui::pos2(rect.left() + 10.0, rect.center().y),
@@ -1019,7 +1036,7 @@ impl MessagingUi {
 					ui,
 					"settings-appearance-settings-transparency-blur",
 					Some(
-						"settings-appearance-settings-restart-serein-after-changing-this-themes-can-customize-effects-while",
+						"settings-appearance-settings-restart-leech-after-changing-this-themes-can-customize-effects-while",
 					),
 					&mut self.transparency_blur,
 				);
@@ -1278,7 +1295,7 @@ impl MessagingUi {
 				design::hint(
 					ui,
 					&crate::i18n::translate(
-						"settings-storage-page-serein-does-not-collect-telemetry-or-upload-diagnostics-discord-retains",
+						"settings-storage-page-leech-does-not-collect-telemetry-or-upload-diagnostics-discord-retains",
 					),
 				);
 			},
@@ -1562,7 +1579,7 @@ fn preset_swatch(
 	});
 	let painter = &ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
 	if response.hovered() || response.has_focus() {
-		painter.rect_filled(rect, 6, colors.hover);
+		painter.rect_filled(rect, 8, colors.hover);
 	}
 	let center = egui::pos2(rect.center().x, rect.top() + 24.0);
 	let [top, bottom] = swatch.backdrop.unwrap_or_else(|| {

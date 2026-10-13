@@ -1,4 +1,4 @@
-//! Offline check: cargo run --locked -p serein --example scrolling_preferences
+//! Offline check: cargo run --locked -p leech --example scrolling_preferences
 use eframe::egui;
 use model::ReadingPreferences;
 

@@ -121,7 +121,7 @@ async fn worker(
 	dir: PathBuf,
 	target: Target,
 ) {
-	let name = format!("serein-tray-{}", std::process::id());
+	let name = format!("leech-tray-{}", std::process::id());
 	let paths = [State::Shown, State::Hidden, State::Minimized]
 		.map(|state| dir.join(format!("{name}-{}.js", state as u8)));
 	let connected = tokio::time::timeout(TIMEOUT, async {
@@ -204,10 +204,13 @@ mod tests {
 		let pid = script(State::Hidden, &Target::Pid(42));
 		assert!(pid.contains("w.pid === 42"));
 		assert!(pid.contains("skip(w, true); w.minimized = true;"));
-		let app = script(State::Shown, &Target::App("cz.viceverse.serein".into()));
-		assert!(app.contains("w.desktopFileName === \"cz.viceverse.serein\""));
+		let app = script(
+			State::Shown,
+			&Target::App("io.github.rottenvia.leech".into()),
+		);
+		assert!(app.contains("w.desktopFileName === \"io.github.rottenvia.leech\""));
 		assert!(app.contains("workspace.activeWindow = w"));
-		assert!(valid_app_id("cz.viceverse.serein"));
+		assert!(valid_app_id("io.github.rottenvia.leech"));
 		assert!(!valid_app_id("../x"));
 		assert!(!valid_app_id(".."));
 		assert!(!valid_app_id("a\"b"));

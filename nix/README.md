@@ -1,18 +1,18 @@
 # Nix package
 
-The flake exposes `serein` (also the default package) and a development shell for
+The flake exposes `leech` (also the default package) and a development shell for
 `x86_64-linux` and `aarch64-darwin`. Build on the matching host:
 
 ```sh
-nix build .#serein
-nix run .#serein
+nix build .#leech
+nix run .#leech
 nix develop        # cargo, rustc and the native build inputs
 ```
 
-Linux installs `result/bin/serein`, a `cz.viceverse.serein.desktop` entry and icons.
-macOS installs `result/Applications/Serein.app` with `result/bin/serein` linking to
+Linux installs `result/bin/leech`, a `io.github.rottenvia.leech.desktop` entry and icons.
+macOS installs `result/Applications/Leech.app` with `result/bin/leech` linking to
 the bundle executable. Both include the notices, font/asset licenses and the
-corresponding MPL-2.0 hpke-rs source under `result/share/doc/serein` (inside the
+corresponding MPL-2.0 hpke-rs source under `result/share/doc/leech` (inside the
 bundle `Resources` on macOS).
 
 The package version is the Cargo workspace version, as with `cargo build`. Nix

@@ -104,7 +104,7 @@ impl Portal {
 		let portal = proxy(connection, &owner, DESKTOP, SCREENCAST).await?;
 		let sender = connection.unique_name().ok_or(UNAVAILABLE)?.as_str()[1..].replace('.', "_");
 		let session = OwnedObjectPath::try_from(format!(
-			"/org/freedesktop/portal/desktop/session/{sender}/serein"
+			"/org/freedesktop/portal/desktop/session/{sender}/leech"
 		))
 		.map_err(|_| INVALID)?;
 		let closed = signals(
@@ -117,14 +117,14 @@ impl Portal {
 		)
 		.await?;
 		let options = HashMap::from([
-			("handle_token", Value::from("serein_create")),
-			("session_handle_token", Value::from("serein")),
+			("handle_token", Value::from("leech_create")),
+			("session_handle_token", Value::from("leech")),
 		]);
 		let response = request(
 			connection,
 			&owner,
 			&sender,
-			"serein_create",
+			"leech_create",
 			stop,
 			portal.call_method("CreateSession", &options),
 		)
@@ -142,7 +142,7 @@ impl Portal {
 			return Err("The desktop portal cannot provide the requested cursor mode.");
 		}
 		let options = HashMap::from([
-			("handle_token", Value::from("serein_select")),
+			("handle_token", Value::from("leech_select")),
 			("types", Value::from(types & 3)),
 			("multiple", Value::from(false)),
 			("cursor_mode", Value::from(cursor_mode)),
@@ -152,17 +152,17 @@ impl Portal {
 			connection,
 			&owner,
 			&sender,
-			"serein_select",
+			"leech_select",
 			stop,
 			portal.call_method("SelectSources", &(&session, &options)),
 		)
 		.await?;
-		let options = HashMap::from([("handle_token", Value::from("serein_start"))]);
+		let options = HashMap::from([("handle_token", Value::from("leech_start"))]);
 		let mut response = request(
 			connection,
 			&owner,
 			&sender,
-			"serein_start",
+			"leech_start",
 			stop,
 			portal.call_method("Start", &(&session, "", &options)),
 		)

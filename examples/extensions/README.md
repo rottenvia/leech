@@ -266,7 +266,7 @@ to `pack.py`; Cargo will not necessarily write into this example's `target/`.
 Step 4: return to the repository root and start the offline app:
 
 ```powershell
-cargo run --locked -p serein -- --demo
+cargo run --locked -p leech -- --demo
 ```
 
 Step 5: in **Settings > Extensions**, import

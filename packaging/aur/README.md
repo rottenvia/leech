@@ -1,6 +1,6 @@
 # AUR binary recipe
 
-This directory prepares `serein-bin` for an AUR maintainer. It is **not an AUR
+This directory prepares `leech-bin` for an AUR maintainer. It is **not an AUR
 publication**, and no AUR package availability or ownership is claimed. The recipe
 repackages the project's existing, voice-enabled x86_64 Arch release without
 compiling Rust or configuring an additional pacman repository. It currently pins
@@ -18,8 +18,8 @@ makepkg -si
 ```
 
 These are owner installation instructions; automated validation never installs
-or launches Serein. `serein-bin` conflicts with the repository/source `serein`
-package and a future `serein-git` variant because they install the same executable.
+or launches Leech. `leech-bin` conflicts with the repository/source `leech`
+package and a future `leech-git` variant because they install the same executable.
 Pacman handles a deliberate replacement. Account caches and saved credentials
 are unaffected by package removal; see the normal storage policy.
 

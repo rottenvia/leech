@@ -109,7 +109,7 @@ pub fn debug_check() {
 	assert!(CustomFont::new("Invalid".into(), b"not a font".to_vec()).is_err());
 	let mut random = [0_u8; 8];
 	getrandom::fill(&mut random).unwrap();
-	let directory = std::env::temp_dir().join(format!("serein-font-debug-{random:02x?}"));
+	let directory = std::env::temp_dir().join(format!("leech-font-debug-{random:02x?}"));
 	std::fs::create_dir(&directory).unwrap();
 	let oversized = directory.join("large.ttf");
 	std::fs::File::create(&oversized)
@@ -170,16 +170,16 @@ pub fn debug_check() {
 		assert!(definitions.font_data.contains_key("Noto Sans CJK"));
 		assert_eq!(
 			definitions.families[&FontFamily::Proportional][0],
-			"Serein Custom"
+			"Leech Custom"
 		);
 		assert_eq!(
-			definitions.font_data["Serein Custom"].bytes(),
+			definitions.font_data["Leech Custom"].bytes(),
 			replacement.bytes()
 		);
 		assert!(
 			!definitions.families[&FontFamily::Monospace]
 				.iter()
-				.any(|name| name.starts_with("Serein Custom"))
+				.any(|name| name.starts_with("Leech Custom"))
 		);
 	});
 	ui::fonts::apply_custom(&ctx, None);
@@ -190,7 +190,7 @@ pub fn debug_check() {
 			"Inter"
 		);
 		assert!(fonts.definitions().font_data.contains_key("Noto Sans CJK"));
-		assert!(!fonts.definitions().font_data.contains_key("Serein Custom"));
+		assert!(!fonts.definitions().font_data.contains_key("Leech Custom"));
 	});
 	let collection = ctx.fonts(|fonts| {
 		fonts.definitions().font_data["Noto Sans CJK"]
@@ -228,7 +228,7 @@ pub fn debug_check() {
 			assert_eq!(definitions.font_data["Noto Sans CJK"].index, index);
 			assert_eq!(
 				definitions.families[&FontFamily::Proportional][0],
-				"Serein Custom"
+				"Leech Custom"
 			);
 		});
 	}

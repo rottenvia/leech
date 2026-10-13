@@ -728,7 +728,7 @@ fn emoji_button(
 	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), &label));
 	let hot = ui.is_enabled() && (response.hovered() || response.has_focus());
 	if hot || open {
-		ui.painter().rect_filled(rect, 6, p.hover);
+		ui.painter().rect_filled(rect, 8, p.hover);
 	}
 	let art = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(22.0));
 	match emoji {

@@ -4,11 +4,11 @@ use std::sync::{Arc, Mutex, Weak};
 
 pub const MAX_CUSTOM_FONT_BYTES: usize = 32 * 1024 * 1024;
 const CUSTOM: [&str; 3] = [
-	"Serein Custom",
-	"Serein Custom Medium",
-	"Serein Custom SemiBold",
+	"Leech Custom",
+	"Leech Custom Medium",
+	"Leech Custom SemiBold",
 ];
-const DEFINITIONS_KEY: &str = "serein-font-definitions";
+const DEFINITIONS_KEY: &str = "leech-font-definitions";
 
 #[derive(Clone)]
 pub struct CustomFont {

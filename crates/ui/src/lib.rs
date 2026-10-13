@@ -544,7 +544,7 @@ fn mention_switch(ui: &mut egui::Ui, colors: &design::Palette, on: &mut bool) {
 		"Click to enable pinging the original author."
 	};
 	if response.hovered() || response.has_focus() {
-		ui.painter().rect_filled(rect, 6, colors.hover);
+		ui.painter().rect_filled(rect, 8, colors.hover);
 	}
 	let galley = ui.painter().layout_no_wrap(label.to_owned(), font, color);
 	ui.painter()
@@ -896,7 +896,7 @@ impl MessagingUi {
 				Some(Ok(model::InvitePreview {
 					guild: Id(424242),
 					embed: model::Embed {
-						title: Some("Serein community".into()),
+						title: Some("Leech community".into()),
 						..Default::default()
 					},
 				})),
@@ -1307,24 +1307,14 @@ impl MessagingUi {
 							design::build_badge(ui, self.build);
 						}
 						if state.demo && !self.updates.available && !self.updates.ready {
-							egui::Frame::new()
-								.stroke(egui::Stroke::new(1.0, colors.border))
-								.corner_radius(10)
-								.inner_margin(egui::Margin::symmetric(8, 3))
-								.show(ui, |ui| {
-									ui.label(
-										design::semibold(
-											ui,
-											crate::i18n::translate("lib-title-bar-offline-preview"),
-											10.0,
-										)
-										.color(colors.muted),
-									);
-								})
-								.response
-								.on_hover_text(crate::i18n::translate(
-									"lib-title-bar-synthetic-data-no-network-or-local-storage",
-								));
+							design::chip(
+								ui,
+								&crate::i18n::translate("lib-title-bar-offline-preview"),
+								colors.muted,
+							)
+							.on_hover_text(crate::i18n::translate(
+								"lib-title-bar-synthetic-data-no-network-or-local-storage",
+							));
 						}
 						if !state.demo
 							&& state.auth != client_core::auth::AuthState::Authenticated
@@ -9566,7 +9556,7 @@ pub fn debug_pr565(mut state: State, mut user: model::User) {
 	state.own_profile.data = Some(profiles::synthetic(&own, None));
 	assert_eq!(
 		profiles::known_username(&state, own.id).as_deref(),
-		Some("serein.preview")
+		Some("leech.preview")
 	);
 	click(
 		&mut view,

@@ -3,7 +3,7 @@
 language-system = 系統
 language-group = 語言
 language-label = 顯示語言
-language-description = 選擇 Serein 的語言。Discord 內容不會翻譯。
+language-description = 選擇 Leech 的語言。Discord 內容不會翻譯。
 section-user = 使用者設定
 section-app = 應用程式設定
 section-customization = 個人化
@@ -28,11 +28,11 @@ description-appearance = 主題、色彩、視窗效果與版面配置。
 description-chat = 訊息、媒體、連結與捲動的行為。
 description-messaging-permissions = 控制誰能聯絡你、訊息如何過濾。
 description-notifications = 選擇要接收哪些通知，以及如何顯示。
-description-registered-games = 分享你在玩的遊戲，修正或新增 Serein 偵測到的遊戲。
+description-registered-games = 分享你在玩的遊戲，修正或新增 Leech 偵測到的遊戲。
 description-voice = 麥克風、喇叭、攝影機與語音處理。
-description-keybinds = Serein 的鍵盤快捷鍵。
-description-storage = Serein 在這台裝置上保留的資料。
-description-updates = 讓這台裝置的 Serein 保持最新。
+description-keybinds = Leech 的鍵盤快捷鍵。
+description-storage = Leech 在這台裝置上保留的資料。
+description-updates = 讓這台裝置的 Leech 保持最新。
 description-extensions = 管理社群擴充功能。
 description-themes = 選擇社群主題。
 theme-maker = 主題製作
@@ -45,30 +45,30 @@ log-out = 登出
 unofficial = 非官方 · 未獲 Discord 認可
 offline-preview = 離線預覽 · 變更只留在這次工作階段，不會送出。
 general-startup = 開機啟動
-general-open-at-startup = 電腦啟動時開啟 Serein
-general-open-at-startup-description = Serein 會在背景登入並連線。
+general-open-at-startup = 電腦啟動時開啟 Leech
+general-open-at-startup-description = Leech 會在背景登入並連線。
 general-start-minimized = 最小化啟動
 general-start-minimized-description = 在背景啟動，不佔用你的畫面。
 general-startup-unavailable = 自動啟動僅支援 Windows 和 macOS。
 general-window = 視窗
 general-hide-decorations = 隱藏視窗裝飾
-general-hide-decorations-description = 拿掉系統標題列與邊框，改用視窗管理員來移動、調整大小或關閉 Serein。
-general-hide-title-bar = 隱藏 Serein 標題列
+general-hide-decorations-description = 拿掉系統標題列與邊框，改用視窗管理員來移動、調整大小或關閉 Leech。
+general-hide-title-bar = 隱藏 Leech 標題列
 general-hide-title-bar-description = 改用系統標題列與視窗按鈕。
-general-keep-menu-bar = 讓 Serein 留在選單列
-general-keep-system-tray = 讓 Serein 留在系統匣
-general-menu-bar-description = 關閉視窗後 Serein 留在選單列。要結束請從選單中選離開。
-general-linux-tray-description = 關閉後 Serein 繼續執行。可用系統匣顯示、最小化或結束。
-general-windows-tray-description = 關閉視窗後 Serein 留在通知區域。要結束請從選單中選離開。
+general-keep-menu-bar = 讓 Leech 留在選單列
+general-keep-system-tray = 讓 Leech 留在系統匣
+general-menu-bar-description = 關閉視窗後 Leech 留在選單列。要結束請從選單中選離開。
+general-linux-tray-description = 關閉後 Leech 繼續執行。可用系統匣顯示、最小化或結束。
+general-windows-tray-description = 關閉視窗後 Leech 留在通知區域。要結束請從選單中選離開。
 general-tray-unavailable = 此平台沒有系統匣可用。
 general-graphics = 圖形
 general-render-with = 渲染方式
-general-gpu-restart = 下次啟動 Serein 時生效。
+general-gpu-restart = 下次啟動 Leech 時生效。
 general-gpu-current-prefix = 目前繪製使用
 gpu-automatic = 自動
 gpu-high-performance = 高效能
 gpu-power-saving = 省電
-gpu-automatic-description = 讓 Serein 自行選取能繪製此視窗的 GPU。
+gpu-automatic-description = 讓 Leech 自行選取能繪製此視窗的 GPU。
 gpu-high-performance-description = 有獨立顯示卡時就使用它。
 gpu-power-saving-description = 使用內顯以節省電力。
 direct-messages = 私訊
@@ -212,7 +212,7 @@ account-menu-custom-status-editor-clear-after = 多久後清除
 # Context: custom_status_editor
 account-menu-custom-status-editor-no-custom-status = 無自訂狀態
 # Context: custom_status_editor
-account-menu-custom-status-editor-serein-clears-it = Serein 會自動清除
+account-menu-custom-status-editor-leech-clears-it = Leech 會自動清除
 # Context: custom_status_editor
 account-menu-custom-status-editor-status-text = 狀態文字
 # Context: custom_status_editor
@@ -1048,7 +1048,7 @@ fonts-show-none-installed = 這台系統上找不到已安裝的字型。
 # Context: show
 fonts-show-the-quick-brown-fox-jumps-over-the-lazy-dog-0123456789 = 靈巧的棕色狐狸躍過懶惰的狗。0123456789
 # Context: show
-fonts-show-ttf-or-otf-up-to-32-mib-saved-on-this = 這台裝置已安裝的字型，單一上限 32 MiB。會另存一份給 Serein 使用。程式碼仍用等寬字型。
+fonts-show-ttf-or-otf-up-to-32-mib-saved-on-this = 這台裝置已安裝的字型，單一上限 32 MiB。會另存一份給 Leech 使用。程式碼仍用等寬字型。
 # Context: show
 fonts-show-typography = 文字排版
 
@@ -1558,7 +1558,7 @@ keybinds-show-voice-enable-global-keybinds = 啟用全域快捷鍵
 # Context: show_voice
 keybinds-show-voice-global-availability = 全域可用性
 # Context: show_voice
-keybinds-show-voice-use-voice-shortcuts-while-another-app-is-focused-when-off = 焦點在其他應用程式時也能使用語音快捷鍵。關閉時，快捷鍵僅在 Serein 有焦點時有效。
+keybinds-show-voice-use-voice-shortcuts-while-another-app-is-focused-when-off = 焦點在其他應用程式時也能使用語音快捷鍵。關閉時，快捷鍵僅在 Leech 有焦點時有效。
 
 ## crates/ui/src/lib.rs
 # Context: account_card
@@ -1636,7 +1636,7 @@ main-restoring-checking-your-saved-login = 正在檢查已儲存的登入
 # Context: restoring
 main-restoring-connecting-to-discord = 正在連線至 Discord
 # Context: restoring_screen
-main-restoring-screen-serein = Serein
+main-restoring-screen-leech = Leech
 # Context: restoring_screen
 main-restoring-screen-use-a-different-account = 使用其他帳戶
 # Context: restoring_screen
@@ -1648,11 +1648,11 @@ main-sign-in-consent-i-own-this-account-and-authorize-this-session = 這個帳�
 # Context: sign_in_consent
 main-sign-in-consent-passwords-and-2fa-stay-on-discord-s-own-login-page = 密碼與 2FA 只留在 Discord 自己的登入頁；僅工作階段令牌會存進你的作業系統憑證儲存區。
 # Context: sign_in_disclosures
-main-sign-in-disclosures-about-serein = 關於 Serein
+main-sign-in-disclosures-about-leech = 關於 Leech
 # Context: sign_in_disclosures
 main-sign-in-disclosures-connect-with-this-token = 用這個令牌連線
 # Context: sign_in_disclosures
-main-sign-in-disclosures-for-owners-who-already-hold-a-valid-discord-session-token = 供已持有有效 Discord 工作階段令牌的使用者使用，例如來自另一套已登入的 Serein。這裡絕不會用到密碼與 2FA，且完全略過 Discord 的託管登入頁。
+main-sign-in-disclosures-for-owners-who-already-hold-a-valid-discord-session-token = 供已持有有效 Discord 工作階段令牌的使用者使用，例如來自另一套已登入的 Leech。這裡絕不會用到密碼與 2FA，且完全略過 Discord 的託管登入頁。
 # Context: sign_in_disclosures
 main-sign-in-disclosures-forget-saved-login = 清除已儲存的登入
 # Context: sign_in_disclosures
@@ -1666,7 +1666,7 @@ main-sign-in-header-sign-in-with-your-discord-account-to-get-started = 登入你
 # Context: sign_in_header
 main-sign-in-header-welcome-back = 歡迎回來
 # Context: sign_in_header
-main-sign-in-header-welcome-to-serein = 歡迎使用 Serein
+main-sign-in-header-welcome-to-leech = 歡迎使用 Leech
 # Context: sign_in_preview
 main-sign-in-status-copy-failure-details = 複製失敗詳細資料
 main-sign-in-preview-explore-the-offline-preview = 探索離線預覽
@@ -1675,7 +1675,7 @@ main-sign-in-preview-sample-conversations-no-discord-connection = 範例對話�
 # Context: sign_in_screen
 main-sign-in-screen-independent-and-open-source-not-affiliated-with-discord = 獨立且開源。與 Discord 無關聯。
 # Context: sign_in_screen
-main-sign-in-screen-serein = Serein
+main-sign-in-screen-leech = Leech
 # Context: ui
 main-ui-cancel = 取消
 # Context: ui
@@ -2277,9 +2277,9 @@ screen-body-refresh = 重新整理
 # Context: body
 screen-body-screen-or-window = 螢幕或視窗
 # Context: body
-screen-body-send-what-your-mac-plays-along-with-the-screen-serein = 連同畫面一起送出你的 Mac 播放的聲音。不含 Serein 本身的通話音訊。
+screen-body-send-what-your-mac-plays-along-with-the-screen-leech = 連同畫面一起送出你的 Mac 播放的聲音。不含 Leech 本身的通話音訊。
 # Context: body
-screen-body-share-sound-from-other-apps-even-when-sharing-one-window = 即使只分享一個視窗，也能送出其他應用程式的聲音。不含 Serein 本身的音訊。
+screen-body-share-sound-from-other-apps-even-when-sharing-one-window = 即使只分享一個視窗，也能送出其他應用程式的聲音。不含 Leech 本身的音訊。
 # Context: body
 screen-body-share-system-audio = 分享系統音訊
 # Context: body
@@ -3438,7 +3438,7 @@ settings-activity-added-games = 已新增的遊戲
 # Context: activity_settings
 settings-activity-no-games-added = 尚未新增遊戲
 # Context: activity_settings
-settings-activity-hidden = 已隱藏。Serein 不會偵測這個遊戲。
+settings-activity-hidden = 已隱藏。Leech 不會偵測這個遊戲。
 # Context: activity_settings
 settings-activity-detected = 自動偵測到
 # Context: activity_settings
@@ -3460,7 +3460,7 @@ settings-activity-click-to-rename = 點一下重新命名
 # Context: activity_settings
 settings-activity-add-a-game = 新增遊戲
 # Context: activity_settings
-settings-activity-choose-program = 選擇一個執行中的程式。只要它在跑，Serein 就會把你的遊戲顯示成它。
+settings-activity-choose-program = 選擇一個執行中的程式。只要它在跑，Leech 就會把你的遊戲顯示成它。
 # Context: activity_settings
 settings-activity-search-programs = 搜尋執行中的程式
 # Context: activity_settings
@@ -3488,7 +3488,7 @@ settings-appearance-settings-primary-color = 主色
 # Context: appearance_settings
 settings-appearance-settings-reset = 重設
 # Context: appearance_settings
-settings-appearance-settings-restart-serein-after-changing-this-themes-can-customize-effects-while = 改完要重新啟動 Serein。主題啟用時可自行設定效果。
+settings-appearance-settings-restart-leech-after-changing-this-themes-can-customize-effects-while = 改完要重新啟動 Leech。主題啟用時可自行設定效果。
 # Context: appearance_settings
 settings-appearance-settings-the-active-theme-brings-its-own-accent-it-takes-over = 作用中的主題有自己的強調色；使用該主題期間會由它接手。
 # Context: appearance_settings
@@ -3528,11 +3528,11 @@ settings-storage-page-clear-cache = 清除快取
 # Context: storage_page
 settings-storage-page-local-storage = 本機儲存
 # Context: storage_page
-settings-storage-page-messages-and-drafts-are-cached-on-this-device-inside-bounded = 訊息與草稿會存放在這台裝置上，檔案有容量上限且依帳號分離。快取內容不會由 Serein 加密；儲存的登入令牌則放在作業系統的憑證庫。
+settings-storage-page-messages-and-drafts-are-cached-on-this-device-inside-bounded = 訊息與草稿會存放在這台裝置上，檔案有容量上限且依帳號分離。快取內容不會由 Leech 加密；儲存的登入令牌則放在作業系統的憑證庫。
 # Context: storage_page
 settings-storage-page-removes-cached-messages-and-media-drafts-and-your-login-stay = 會清除快取的訊息與媒體。草稿和你的登入會保留。
 # Context: storage_page
-settings-storage-page-serein-does-not-collect-telemetry-or-upload-diagnostics-discord-retains = Serein 不收集遙測資料，也不上傳診斷資訊。Discord 的服務端資料依它自己的政策保留。
+settings-storage-page-leech-does-not-collect-telemetry-or-upload-diagnostics-discord-retains = Leech 不收集遙測資料，也不上傳診斷資訊。Discord 的服務端資料依它自己的政策保留。
 # Context: storage_page
 settings-storage-page-your-privacy = 你的隱私
 # Context: cosmetic_settings
@@ -3979,7 +3979,7 @@ updates-update-settings-could-not-load-or-save-update-preferences-changes-may-no
 # Context: update_settings
 updates-update-settings-download-update = 下載更新
 # Context: update_settings
-updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = 在背景下載更新，準備好再重啟。關閉時 Serein 仍會在啟動與定期檢查更新。
+updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = 在背景下載更新，準備好再重啟。關閉時 Leech 仍會在啟動與定期檢查更新。
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = 含最新改動的早期版本。Nightly 可能較不穩定。
 # Context: update_settings
@@ -4005,7 +4005,7 @@ updates-update-settings-release-channel = 發布通道
 # Context: update_settings
 updates-update-settings-restart-to-update = 重啟以更新
 # Context: update_settings
-updates-update-settings-serein-was-installed-via-your-distribution-run-this-in-a = Serein 是用發行版安裝的。請在終端機執行此指令更新。
+updates-update-settings-leech-was-installed-via-your-distribution-run-this-in-a = Leech 是用發行版安裝的。請在終端機執行此指令更新。
 # Context: update_settings
 updates-update-settings-support-diagnostics = 支援與診斷
 # Context: update_log
@@ -4476,7 +4476,7 @@ onboarding-rules-heading = 伺服器規則
 # Context: rules
 onboarding-rules-review = 聊天前，審核人員會先檢視這些回答。
 # Context: field
-onboarding-field-unsupported = 這個伺服器有個問題 Serein 還無法顯示。請到 Discord 應用程式完成加入。
+onboarding-field-unsupported = 這個伺服器有個問題 Leech 還無法顯示。請到 Discord 應用程式完成加入。
 # Context: field
 onboarding-field-agree = 我已閱讀並同意規則
 
@@ -4515,7 +4515,7 @@ public-upload-host-catbox = 上限 200 MB（GIF 20 MB） · 兩年未存取可�
 public-upload-host-litterbox = 上限 1 GB · 暫存型，72 小時後刪除
 public-upload-over-limit = { $size } · 超過你的 Discord 上傳上限 { $limit }
 public-upload-uploading = 上傳至 { $host } · { $sent }／{ $total }
-public-upload-privacy = 拿到連結的人都能開啟這個檔案。內容原封不動（含後設資料）上傳到 Discord 之外，Serein 之後無法刪除。
+public-upload-privacy = 拿到連結的人都能開啟這個檔案。內容原封不動（含後設資料）上傳到 Discord 之外，Leech 之後無法刪除。
 public-upload-review = 尚未送出任何東西。把連結加入草稿或複製後，自行傳送。
 public-upload-return = 請回到原對話加入這個連結。
 public-upload-preparing = 正在準備公開上傳…
@@ -4657,7 +4657,7 @@ reading-double-click-reaction = 雙擊回應
 
 ## crates/platform/src/app_menu.rs
 # Context: macos_menu_bar
-app-menu-about = 關於 Serein
+app-menu-about = 關於 Leech
 # Context: macos_menu_bar
 app-menu-updates = 檢查更新項目…
 # Context: macos_menu_bar
@@ -4665,13 +4665,13 @@ app-menu-settings = 設定…
 # Context: macos_menu_bar
 app-menu-services = 服務
 # Context: macos_menu_bar
-app-menu-hide = 隱藏 Serein
+app-menu-hide = 隱藏 Leech
 # Context: macos_menu_bar
 app-menu-hide-others = 隱藏其他
 # Context: macos_menu_bar
 app-menu-show-all = 顯示全部
 # Context: macos_menu_bar
-app-menu-quit = 結束 Serein
+app-menu-quit = 結束 Leech
 # Context: macos_menu_bar
 app-menu-file = 檔案
 # Context: macos_menu_bar
@@ -4713,7 +4713,7 @@ app-menu-bring-all-to-front = 將此程式所有視窗移至最前
 # Context: macos_menu_bar
 app-menu-help = 輔助說明
 # Context: macos_menu_bar
-app-menu-github = GitHub 上的 Serein
+app-menu-github = GitHub 上的 Leech
 # Context: macos_menu_bar
 app-menu-report-issue = 回報問題…
 

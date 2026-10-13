@@ -3,7 +3,7 @@
 use model::registered_games::{self as games, RegisteredGame};
 use std::{path::PathBuf, sync::mpsc};
 
-/// A hundred-odd short entries; anything larger was not written by Serein.
+/// A hundred-odd short entries; anything larger was not written by Leech.
 const MAX_FILE: u64 = 64 * 1024;
 /// The picker filters by name, so a very busy machine need not list every helper process.
 const MAX_PROGRAMS: usize = 512;
@@ -189,13 +189,13 @@ mod tests {
 			"/opt/game/GAME.x86_64",
 			"/usr/lib/systemd/systemd",
 			"/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder",
-			"/opt/serein/serein",
+			"/opt/leech/leech",
 			"bash",
 			"/usr/bin/alpha",
 		]
 		.map(str::to_owned)
 		.to_vec();
-		let list = programs(paths, Some("/opt/serein/serein".into()));
+		let list = programs(paths, Some("/opt/leech/leech".into()));
 		if cfg!(windows) {
 			assert!(list.contains(&"bash".to_owned()));
 		} else {
@@ -234,7 +234,7 @@ mod tests {
 
 	#[test]
 	fn stored_list_round_trips_and_rejects_oversize_files() {
-		let directory = std::env::temp_dir().join(format!("serein-games-{}", std::process::id()));
+		let directory = std::env::temp_dir().join(format!("leech-games-{}", std::process::id()));
 		let path = directory.join("registered_games.json");
 		let list = vec![RegisteredGame {
 			executable: "opt/game/game.x86_64".into(),
