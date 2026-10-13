@@ -22,7 +22,7 @@ COLUMNS, CELL, PAD = 8, 64, 4
 GLYPH = CELL - 2 * PAD
 
 # Repository-local artwork, rasterized from the repository instead of an upstream package.
-# `assets/icons/thread.svg` is the thread glyph; it is listed inline below.
+# `assets/icons/thread.svg`, `hang-up.svg`, `noise.svg` and `window.svg` are listed inline below.
 BRAND_MARK = "repo:assets/brand/leech-mark.svg"
 
 # name, upstream asset, SHA-256 of the unmodified SVG file.
@@ -46,7 +46,7 @@ ICONS = [
     ("bell", "fill/bell-fill.svg", "26437565edc7418a2c326a74078fb4519aa2316e84fcf1adefbdd1b2c89f4ac5"),
     ("phone", "fill/phone-fill.svg", "4546c9d7d0a26f08ec5a35f2ca3e12d8ef76767ba60c2effa6f214d7f070dcb6"),
     ("phone-call", "fill/phone-call-fill.svg", "6d67e611de99d8a33ba45f5d2a9e56d4123dcb9395020998a3b7250d3a08e36a"),
-    ("phone-disconnect", "fill/phone-disconnect-fill.svg", "15996d65a74424921e84c8e40e94fb43da650183476abb00b3d1498d2400ffc4"),
+    ("hang-up", "repo:assets/icons/hang-up.svg", "a89e70c3db9afe4dfc7ce090ec12312f754add0f65190eedd333650ed337c397"),
     ("video-camera", "fill/video-camera-fill.svg", "daf72fb4e3f7978254c2ac1959db6d855f12bb0d9b7504309d2e6270b7192933"),
     ("video-camera-slash", "fill/video-camera-slash-fill.svg", "1cb4bf1be6de46f024be49c324641afe36cfa5807f4846691851d8c954a5d0e4"),
     ("monitor-arrow-up", "fill/monitor-arrow-up-fill.svg", "9519c0c4c734553167b598b03d493cdb6ef14f8df8c7283a1847699bcc33a0a8"),
@@ -124,6 +124,9 @@ ICONS = [
     ("device-mobile", "bold/device-mobile-bold.svg", "77a4a5ebcba16e37637e700381bc3858b92c9350730ecf1e207f5f40d524de03"),
     ("hard-drives", "fill/hard-drives-fill.svg", "16f26a807a05ded561ff3322879e698b70d77f07df5dabda451825ddd8f5ba28"),
     ("corners-out", "bold/corners-out-bold.svg", "df74ba3c2a496a344f98e80c0782f43aa3760ed4b8b6103a4c621bfc59575e16"),
+    ("noise", "repo:assets/icons/noise.svg", "739df297725815e76f63df9e773eff82b5b0b1ff0c1d7709e74c64c94ae50ccf"),
+    ("noise-slash", "repo:assets/icons/noise.svg", "739df297725815e76f63df9e773eff82b5b0b1ff0c1d7709e74c64c94ae50ccf"),
+    ("window", "repo:assets/icons/window.svg", "65e22a650723dba7bf87c29b6b4864314a67c284a9d5fe00225d89d71b77eec4"),
 ]
 LICENSE_SHA256 = "ddbe6082ec3cf979db47e5af549d2849c5d6182b3e005ef91ce1dbb9eb122f11"
 
@@ -195,7 +198,8 @@ def main():
     for cell, (name, asset, sha256, simple) in enumerate(sources):
         local = asset.startswith("repo:")
         if local:
-            svg = (root / asset.removeprefix("repo:")).read_bytes()
+            # Git may check text out with CRLF; the pins are taken from the LF form.
+            svg = (root / asset.removeprefix("repo:")).read_bytes().replace(b"\r\n", b"\n")
         else:
             svg = fetch(asset, SIMPLE_BASE) if simple else fetch(f"assets/{asset}")
         digest = hashlib.sha256(svg).hexdigest()
@@ -240,7 +244,13 @@ def main():
     if shutil.which("oxipng"):
         subprocess.run(["oxipng", "-o", "max", "--strip", "all", "-q", destination / "atlas.png"], check=True)
     else:
-        print("oxipng not found; atlas.png left at resvg compression", file=sys.stderr)
+        # White at every alpha fits one 256-entry palette; Pillow packs that close to oxipng.
+        from PIL import Image
+
+        atlas = Image.open(destination / "atlas.png").convert("RGBA")
+        indexed = Image.frombytes("P", atlas.size, atlas.getchannel("A").tobytes())
+        indexed.putpalette([255] * 768)
+        indexed.save(destination / "atlas.png", transparency=bytes(range(256)), optimize=True)
     (destination / "index.tsv").write_text("".join(f"{name}\t{cell}\n" for name, cell in index), encoding="utf-8")
     (destination / "LICENSE").write_bytes(license_text)
     (destination / "LICENSE-SIMPLE-ICONS").write_bytes(simple_license)

@@ -671,7 +671,9 @@ impl MessagingUi {
 						CachedRow::Participant(entry) => {
 							let entry = &state.voice.roster[entry];
 							let response = ui.horizontal(|ui| {
-								ui.add_space(28.0);
+								// Avatars stand in the channel-icon column; the row is inset
+								// just enough to read as a child of the channel above.
+								ui.add_space(4.0);
 								self.voice_participant(ui, state, entry);
 							});
 							paint_shelf_rule(

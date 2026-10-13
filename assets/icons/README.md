@@ -6,7 +6,7 @@
 fetched through the jsDelivr npm mirror on September 10, 2026. The unmodified license is
 `LICENSE` and is staged in both packages as `licenses/Phosphor-Icons-MIT.txt`.
 
-Ninety-four unmodified Phosphor `assets/fill/*.svg` and `assets/bold/*.svg` files are scaled
+Ninety-three unmodified Phosphor `assets/fill/*.svg` and `assets/bold/*.svg` files are scaled
 to 56×56 pixels, filled white, and rasterized by `resvg` 0.45.1 into one transparent PNG atlas
 with 64×64 cells (8 columns, 14 rows). `headphones-slash` is derived from `headphones-fill.svg`
 by masking a diagonal knockout and adding a 16-unit round-capped stroke, matching the style of
@@ -23,13 +23,19 @@ to match Phosphor's visual weight. Brand marks remain trademarks of their owners
 legal disclaimer applies. The license file is staged in both packages as
 `licenses/Simple-Icons-CC0.txt`.
 
-One repository-drawn glyph, `thread.svg` (four slanted round-capped bars on the same 256-unit
-grid), marks threads; it is rasterized with the Phosphor set and carries no upstream license.
+Four glyphs are drawn in this repository on the same 256-unit grid, rasterized with the
+Phosphor set, and carry no upstream license: `thread.svg` (four slanted round-capped bars,
+marks threads), `hang-up.svg` (a handset laid face down, one arched grip between two round
+pads; it replaced Phosphor's `phone-disconnect`), `noise.svg` (three voice bars under a
+four-point spark, noise suppression; `noise-slash` is the same file with the generator's
+diagonal knockout) and `window.svg` (a rounded frame under a solid title bar, a window as a
+share source).
 
-- `atlas.png`: 512×896 RGBA, 26,267 bytes after lossless `oxipng -o max --strip all`.
-  SHA-256 `eb0553105dd745e67b1c1e2249cdf0f037c56ea2f1d7b5af45ebbf38f240a8f2`.
+- `atlas.png`: 512×896, 29,821 bytes as a 256-entry white palette (the generator's Pillow
+  fallback when `oxipng` is absent). SHA-256
+  `68f5e5a09396d47bac442400ff0ebbccff74cc38e1c9209826418a1020198a73`.
 - `index.tsv`: icon name, tab, zero-based cell; SHA-256
-  `cc8a5f5cebe0bcb916e6a12c4dae58c6feabee0487b2ca3e8bb1a3f1c6f378de`.
+  `82238b9f6f35dced0972836d437f9fe74ce1561c0a71ebfdc772a8a1a43b9dd1`.
 
 Every upstream SVG's SHA-256 is pinned in `tools/generate-icons.py`, which refuses to build
 from mismatching files. Regenerate from the repository root:

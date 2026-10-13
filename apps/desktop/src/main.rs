@@ -946,6 +946,8 @@ struct Desktop {
 	extensions: extension_bridge::Bridge,
 	extension_close_pending: bool,
 	login: Option<platform::LoginView>,
+	/// Fixture-only: draw the sign-in window's header with no webview behind it.
+	login_preview: bool,
 	captcha: captcha::Captcha,
 	connection: Option<connection::Connection>,
 	state: State,
@@ -2107,6 +2109,8 @@ impl Desktop {
 		#[cfg_attr(not(feature = "demo"), allow(unused_mut))]
 		let mut sign_in_panels = false;
 		#[cfg_attr(not(feature = "demo"), allow(unused_mut))]
+		let mut sign_in_window = false;
+		#[cfg_attr(not(feature = "demo"), allow(unused_mut))]
 		let mut sign_in_forget = None;
 		#[cfg(feature = "demo")]
 		if demo && std::env::args().any(|arg| arg == "--demo-join-server") {
@@ -2140,6 +2144,8 @@ impl Desktop {
 			state.user = None;
 			state.status = "Disconnected";
 			sign_in_panels = rest == "panels";
+			// `=window` shows the temporary sign-in window's header; no page is loaded.
+			sign_in_window = rest == "window";
 			if rest == "forget" {
 				sign_in_forget = messaging.accounts.get(1).map(|account| account.id);
 			}
@@ -2224,6 +2230,7 @@ impl Desktop {
 			extensions: extension_bridge::Bridge::default(),
 			extension_close_pending: false,
 			login: None,
+			login_preview: sign_in_window,
 			captcha: captcha::Captcha::default(),
 			connection: None,
 			state,
@@ -6467,7 +6474,7 @@ impl eframe::App for Desktop {
 	}
 	fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
 		let ctx = ui.ctx().clone();
-		let title_bar_height = if self.login.is_some() {
+		let title_bar_height = if self.login.is_some() || self.login_preview {
 			platform::LOGIN_HEADER_HEIGHT
 		} else if self.state.user.is_some() {
 			ui::design::TITLE_BAR_HEIGHT
@@ -6743,69 +6750,89 @@ impl eframe::App for Desktop {
 			ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
 			self.confirming_close = true;
 		}
-		if self.login.is_some() {
+		if self.login.is_some() || self.login_preview {
 			let p = ui::design::palette(ui);
-			egui::Panel::top("login-header")
+			// The caption buttons reach the window corner, so only the left edge is padded.
+			let header = egui::Panel::top("login-header")
 				.exact_size(platform::LOGIN_HEADER_HEIGHT)
 				.show_separator_line(false)
 				.frame(
 					egui::Frame::NONE
 						.fill(ui::design::window_palette(ui).surface)
-						.stroke(egui::Stroke::new(1.0, p.border))
-						.inner_margin(egui::Margin::symmetric(16, 0)),
+						.inner_margin(egui::Margin {
+							left: 16,
+							right: if self.messaging.hide_title_bar { 16 } else { 0 },
+							top: 0,
+							bottom: 0,
+						}),
 				)
 				.show(ui, |ui| {
 					ui::design::window_drag(ui, ui.max_rect());
 					ui.horizontal_centered(|ui| {
+						ui.spacing_mut().item_spacing.x = 12.0;
 						ui.add_space(self.traffic_light_inset());
 						let (rect, _) =
 							ui.allocate_exact_size(egui::vec2(32.0, 32.0), egui::Sense::hover());
-						ui.painter().rect_filled(rect, 8, p.accent);
+						ui.painter()
+							.rect_filled(rect, ui::icons::PLATE_RADIUS, p.accent);
 						ui::icons::paint(
 							ui.painter(),
 							ui::icons::Icon::Leech,
 							rect.shrink(7.0),
 							p.accent_text,
 						);
-						ui.add_space(4.0);
-						ui.vertical(|ui| {
-							ui.spacing_mut().item_spacing.y = 1.0;
-							ui.label(
-								ui::design::semibold(
-									ui,
-									ui::i18n::translate("main-ui-sign-in-to-discord"),
-									15.0,
-								)
-								.color(p.text_strong),
-							);
-							ui.label(
-								egui::RichText::new(ui::i18n::translate(
-									"main-ui-discord-com-temporary-login-window-passwords-and-2fa-never-leave",
-								))
-								.size(12.0)
-								.color(p.muted),
-							);
+						// Both lines are measured and placed as one block, so they centre on
+						// the mark; a plain column would hang from the top of the header.
+						let heading = ui::i18n::translate("main-ui-sign-in-to-discord");
+						let note = ui::i18n::translate(
+							"main-ui-discord-com-temporary-login-window-passwords-and-2fa-never-leave",
+						);
+						let room = (ui.available_width() - 260.0).max(120.0);
+						let title = egui::WidgetText::from(
+							ui::design::semibold(ui, heading.as_str(), 15.0).color(p.text_strong),
+						)
+						.into_galley(
+							ui,
+							Some(egui::TextWrapMode::Truncate),
+							room,
+							egui::TextStyle::Body,
+						);
+						let detail = egui::WidgetText::from(
+							egui::RichText::new(note.as_str()).size(12.0).color(p.muted),
+						)
+						.into_galley(
+							ui,
+							Some(egui::TextWrapMode::Truncate),
+							room,
+							egui::TextStyle::Body,
+						);
+						let (block, text) = ui.allocate_exact_size(
+							egui::vec2(
+								title.size().x.max(detail.size().x),
+								title.size().y + 2.0 + detail.size().y,
+							),
+							egui::Sense::hover(),
+						);
+						text.widget_info(|| {
+							egui::WidgetInfo::labeled(
+								egui::Role::Label,
+								true,
+								format!("{heading}. {note}"),
+							)
 						});
+						let below = block.min + egui::vec2(0.0, title.size().y + 2.0);
+						ui.painter().galley(block.min, title, p.text_strong);
+						ui.painter().galley(below, detail, p.muted);
 						ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
 							if !self.messaging.hide_title_bar {
 								ui::design::window_controls(ui);
 							}
-							if ui
-								.add(
-									egui::Button::new(
-										ui::design::medium(
-											ui,
-											ui::i18n::translate("main-ui-cancel"),
-											13.0,
-										)
-										.color(p.text_strong),
-									)
-									.fill(p.raised)
-									.stroke(egui::Stroke::new(1.0, p.border))
-									.corner_radius(6)
-									.min_size(egui::vec2(0.0, 32.0)),
-								)
-								.clicked()
+							if ui::design::button(
+								ui,
+								"main-ui-cancel",
+								ui::design::ButtonKind::Outline,
+							)
+							.clicked()
 							{
 								self.login = None;
 								self.state.auth = AuthState::Unauthenticated;
@@ -6813,6 +6840,12 @@ impl eframe::App for Desktop {
 						});
 					});
 				});
+			let edge = header.response.rect;
+			ui.painter().hline(
+				edge.x_range(),
+				edge.bottom() - 0.5,
+				ui::design::hairline(ui),
+			);
 			egui::CentralPanel::default()
 				.frame(egui::Frame::NONE.fill(p.canvas))
 				.show(ui, |ui| {

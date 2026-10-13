@@ -59,12 +59,18 @@ on every surface. Cards, the composer and the account card take the same hairlin
 Icon buttons come from `crates/ui/src/icons.rs`: bare (plate on hover), framed (resting
 hairline, the composer's attach) and accent (filled while enabled, the composer's send). Their
 hover and pressed plates are veils of the text colour with an 8px radius. Toggles keep a faint
-plate while on. Account labels (APP, BOT) are tinted accent chips, not solid blocks. The title
+plate while on. A toggle whose state must read at a glance (noise suppression in the voice
+panel) is lit instead: an accent-tinted plate and accent glyph while on, a bare slashed glyph
+while off, so hovering never makes the two states look alike. Account labels (APP, BOT) are tinted accent chips, not solid blocks. The title
 bar's status chips (OFFLINE PREVIEW, the DEV and NIGHTLY build chips) share that treatment at
 one 20px height: a faint fill of their tint inside a hairline of it, with no gradient or glow.
 Row actions in lists (friends, roles) are the same rounded squares as every other button, not
 circles. A disabled filled button keeps a dimmed fill and takes the strong text colour, so its
 label stays legible.
+
+Scroll bars stay out of the picture: nothing at rest, a faint 3px thread while the pointer is
+over the area, a soft handle only when the bar itself is pointed at. Dialog sheets and the
+share-source list hide the bar altogether; a cut-off last row says the sheet scrolls.
 
 ## Typography
 
@@ -154,7 +160,11 @@ calls, above the conversation) or hairlined 16:9 tiles with name badges (guild c
 bottom control bar of dark pills (mute with settings chevron, camera, screen share, more)
 and a red hang-up button, a green "In a call" badge in the header, mute/deafen toggles in the
 account card, and a "Voice Connected" panel above it while connected. The header and the bar
-stay visible beside the avatars or tiles and fade out only over an enlarged video. The panel follows
+stay visible beside the avatars or tiles and fade out only over an enlarged video, which keeps
+a slim 8px margin from the stage edges instead of touching the sidebar. In the channel list a
+voice channel's participants stand in the channel-icon column (24px avatars under the speaker
+glyph), and the stream preview card floats 8px clear of the sidebar edge. Stage tiles grow to
+fill the stage up to 960px wide each, so a large window shows a full grid rather than one short row. The panel follows
 Discord's: noise suppression and a red disconnect beside the title, then two equal cells for
 camera (split with its settings chevron) and screen share, filled with the accent while on.
 Each mute/deafen toggle shares one plate with its settings chevron and turns red while latched;

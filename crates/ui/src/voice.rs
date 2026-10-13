@@ -581,14 +581,15 @@ impl MessagingUi {
 						.max_rect(rect)
 						.layout(egui::Layout::left_to_right(egui::Align::Center)),
 				);
-				inner.spacing_mut().item_spacing.x = 6.0;
+				inner.spacing_mut().item_spacing.x = 8.0;
+				inner.add_space(5.0);
 				// The name label carries the row's only tooltip.
 				let avatar = match user {
-					Some(user) => self.avatars.show_quiet(&mut inner, user, 28.0, state.demo),
+					Some(user) => self.avatars.show_quiet(&mut inner, user, 24.0, state.demo),
 					None => {
 						let (r, response) = inner
-							.allocate_exact_size(egui::Vec2::splat(28.0), egui::Sense::hover());
-						design::paint_avatar(&inner, name, 28.0, r);
+							.allocate_exact_size(egui::Vec2::splat(24.0), egui::Sense::hover());
+						design::paint_avatar(&inner, name, 24.0, r);
 						response
 					}
 				};
@@ -666,15 +667,18 @@ impl MessagingUi {
 		entry: &RosterEntry,
 	) {
 		let target = (entry.guild, entry.channel, entry.participant.user);
+		// The gap clears the sidebar's own edge, so the card floats beside the column
+		// instead of sitting on its border.
 		let mut tooltip = egui::Tooltip::for_enabled(row)
-			.gap(8.0)
+			.gap(16.0)
 			.width(324.0)
 			.accessible_name("Stream preview");
 		tooltip.popup = tooltip.popup.align(egui::RectAlign::RIGHT_START).frame(
 			egui::Frame::popup(&row.ctx.style_of(row.ctx.theme()))
 				.fill(design::palette(ui).raised)
+				.stroke(design::hairline(ui))
 				.inner_margin(12)
-				.corner_radius(10),
+				.corner_radius(12),
 		);
 		let open = tooltip.popup.is_open();
 		if open {
@@ -880,8 +884,10 @@ impl MessagingUi {
 			1.0
 		};
 		let full = connected && self.voice_focus.is_some() && !self.voice_focus_participants;
+		// An enlarged video keeps a slim margin: a rounded tile pressed against the sidebar
+		// and the member list reads as cut off, not as full screen.
 		let body = if full {
-			rect
+			rect.shrink(TILE_GAP)
 		} else {
 			egui::Rect::from_min_max(
 				rect.left_top() + egui::vec2(STAGE_MARGIN, STAGE_MARGIN),
@@ -1115,7 +1121,9 @@ impl MessagingUi {
 			let (columns, size) = if frameless {
 				frameless_fit(tiles.len(), area.size())
 			} else {
-				best_fit(tiles.len(), area.size(), 620.0)
+				// The cap only stops one or two tiles from swallowing a very large window; a
+				// lower one left wide bands of empty stage on big monitors.
+				best_fit(tiles.len(), area.size(), 960.0)
 			};
 			if size.x < 24.0 || size.y < 24.0 {
 				return;
@@ -3580,17 +3588,17 @@ impl MessagingUi {
 					} else {
 						notice_ui.cursor().top() + TILE_GAP
 					};
-					// An enlarged video fills the whole stage under the hover chrome, like
-					// Discord; the grid keeps clear of the header and the call bar.
+					// An enlarged video takes the whole stage under the hover chrome, inside a
+					// slim margin; the grid keeps clear of the header and the call bar.
 					let body = if self.voice_focus.is_some() {
 						egui::Rect::from_min_max(
-							rect.min,
+							rect.min + egui::Vec2::splat(TILE_GAP),
 							egui::pos2(
-								rect.right(),
+								rect.right() - TILE_GAP,
 								if self.voice_focus_participants {
 									bar_top
 								} else {
-									rect.bottom()
+									rect.bottom() - TILE_GAP
 								},
 							),
 						)
@@ -3837,7 +3845,7 @@ impl MessagingUi {
 						.color(colors.warning),
 					);
 				}
-				let processing = !state.demo && self.voice_available;
+				let processing = state.demo || self.voice_available;
 				ui.horizontal(|ui| {
 					ui.spacing_mut().item_spacing.x = 10.0;
 					// Square status tile like Discord's, tinted with the connection colour.
@@ -3851,7 +3859,7 @@ impl MessagingUi {
 						color,
 					);
 					ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-						ui.spacing_mut().item_spacing.x = 2.0;
+						ui.spacing_mut().item_spacing.x = 6.0;
 						let leave = ui
 							.add_enabled_ui(!state.demo, |ui| {
 								let label = crate::i18n::translate_if_key(if phase == Phase::Failed {
@@ -3906,17 +3914,41 @@ impl MessagingUi {
 							self.voice_processing.effective().suppression != NoiseSuppression::Off;
 						let suppression = ui
 							.add_enabled_ui(processing, |ui| {
-								crate::icons::toggle(
-									ui,
-									crate::icons::Icon::Soundboard,
-									32.0,
-									suppressing,
-									if suppressing {
-										"Turn off noise suppression"
-									} else {
-										"Turn on noise suppression"
-									},
-								)
+								let label = crate::i18n::translate_if_key(if suppressing {
+									"Turn off noise suppression"
+								} else {
+									"Turn on noise suppression"
+								});
+								let (rect, response) = ui
+									.allocate_exact_size(egui::Vec2::splat(32.0), egui::Sense::click());
+								let hot = response.hovered() || response.has_focus();
+								// Lit in the accent while it cleans the microphone and a bare
+								// slashed glyph when off, so the state reads without hovering.
+								let (fill, ink, icon) = if suppressing {
+									(
+										colors.accent.gamma_multiply(if hot { 0.3 } else { 0.18 }),
+										colors.accent,
+										crate::icons::Icon::Noise,
+									)
+								} else {
+									(
+										crate::icons::plate(ui, &response, false),
+										if hot { colors.text_strong } else { colors.muted },
+										crate::icons::Icon::NoiseOff,
+									)
+								};
+								ui.painter()
+									.rect_filled(rect, crate::icons::PLATE_RADIUS, fill);
+								crate::icons::paint(ui.painter(), icon, rect.shrink(6.0), ink);
+								response.widget_info(|| {
+									egui::WidgetInfo::selected(
+										egui::Role::Button,
+										ui.is_enabled(),
+										suppressing,
+										&label,
+									)
+								});
+								response.on_hover_text(label)
 							})
 							.inner
 							.on_disabled_hover_text(crate::i18n::translate_if_key(
@@ -4223,7 +4255,7 @@ const STAGE_MARGIN: f32 = 16.0;
 const TILE_GAP: f32 = 8.0;
 /// Frameless DM tile height and the horizontal room beside each avatar for its name.
 const FRAMELESS_HEIGHT: f32 = 132.0;
-const FRAMELESS_MARGIN: f32 = 20.0;
+const FRAMELESS_MARGIN: f32 = 56.0;
 /// Below these, the enlarged view hides its participant strip instead of overlapping it.
 const MIN_STRIP: f32 = 64.0;
 const MIN_FOCUS: f32 = 80.0;

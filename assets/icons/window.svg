@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <title>Window</title>
+  <desc>An application window: a rounded frame under a solid title bar. Repository artwork, sized to the Phosphor 256-unit grid.</desc>
+  <path fill="#fff" fill-rule="evenodd" d="M60 44h136a32 32 0 0 1 32 32v104a32 32 0 0 1-32 32H60a32 32 0 0 1-32-32V76a32 32 0 0 1 32-32Zm-8 56v80a8 8 0 0 0 8 8h136a8 8 0 0 0 8-8v-80Z"/>
+</svg>
