@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Serein
+Comment=Experimental unofficial native Discord client
+Exec=serein
+Icon=serein
+StartupWMClass=cz.viceverse.serein
+Terminal=false
+Categories=Network;InstantMessaging;

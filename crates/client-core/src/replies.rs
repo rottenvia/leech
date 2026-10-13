@@ -1,0 +1,1153 @@
+use crate::{Command, State, auth::AuthState};
+use model::{Freshness, Id, Message};
+use session_cache::Timeline;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reply {
+	target: Id,
+	pub mention: bool,
+}
+
+impl Reply {
+	pub fn to(target: Id) -> Self {
+		Self {
+			target,
+			mention: true,
+		}
+	}
+
+	pub fn target(self) -> Id {
+		self.target
+	}
+}
+
+/// Accepted known-deleted reply targets from the last applied event (at most 50).
+#[derive(Default)]
+pub struct ReplyDeletions(pub(crate) Vec<(Id, Id)>);
+
+/// One bounded, request-scoped target, independent of the UI's one-shot scroll cue.
+#[derive(Default)]
+pub struct HistoryNavigation {
+	target: Option<(Id, u64, Id)>,
+}
+
+impl HistoryNavigation {
+	pub(crate) fn clear(&mut self) {
+		self.target = None;
+	}
+
+	fn start(&mut self, channel: Id, request: u64, target: Id) {
+		self.target = Some((channel, request, target));
+	}
+
+	pub(crate) fn target(&self, channel: Id, request: u64) -> Option<Id> {
+		self.target
+			.filter(|(id, pending, _)| *id == channel && *pending == request)
+			.map(|(_, _, target)| target)
+	}
+}
+
+impl State {
+	pub fn reply_target(&self) -> Option<Id> {
+		self.reply.map(Reply::target)
+	}
+
+	/// Navigate a Discord chat link without sending messages or joining voice.
+	///
+	/// Only fresh active rows or eligible, previously fresh session-resident rows
+	/// can jump locally. Disconnect makes the active window stale, so it must be
+	/// revalidated online; a dormant resident may still be restored offline.
+	/// Destinations need metadata in navigation or the current safe archive page.
+	pub fn open_chat_link(
+		&mut self,
+		guild: Option<Id>,
+		channel: Id,
+		message: Option<Id>,
+	) -> Result<Option<Command>, &'static str> {
+		if channel.0 == 0 || guild.is_some_and(|id| id.0 == 0) {
+			return Err("This chat link is invalid");
+		}
+		if message.is_some_and(|id| id.0 == 0 || id.0.checked_add(1).is_none()) {
+			return Err("This message link is invalid");
+		}
+		if self.channel(channel).is_none() {
+			if message.is_some()
+				&& (self.auth != AuthState::Authenticated || !self.gateway_connected)
+			{
+				// Admission can retire another transient thread. A message link
+				// needing metadata/history must pass session gates before that mutation.
+				return Err("Message links are unavailable while disconnected");
+			}
+			// Only the existing bounded, permission-checked archive page may resolve
+			// metadata absent from navigation. Never guess a parent or open a DM.
+			let view = self.archives.as_ref().ok_or("This chat is unavailable")?;
+			let thread = view
+				.page
+				.as_ref()
+				.and_then(|page| page.threads.iter().find(|thread| thread.id == channel))
+				.ok_or("This chat is unavailable")?;
+			if thread.guild != guild {
+				return Err("This chat does not belong to the linked server");
+			}
+			if !self
+				.channel(view.parent)
+				.is_some_and(|parent| parent.guild == Some(view.guild))
+			{
+				return Err("This chat is unavailable");
+			}
+			self.admit_archived_thread(channel)
+				.ok_or("This chat is unavailable")?;
+		}
+		let target = self.channel(channel).ok_or("This chat is unavailable")?;
+		if target.guild != guild {
+			return Err("This chat does not belong to the linked server");
+		}
+		if !crate::navigable(target) {
+			return Err("This channel kind is unsupported");
+		}
+		if !self.can_view(channel) {
+			return Err("Channel permissions are unavailable or access was revoked");
+		}
+		let Some(message) = message else {
+			return Ok(self.select(channel));
+		};
+		if !target.supports_text() || !self.can_read_history(channel) {
+			return Err("Message history is unavailable with the current permissions");
+		}
+		if self.auth != AuthState::Authenticated {
+			return Err("Message links are unavailable while disconnected");
+		}
+		if self.selected == Some(channel) {
+			if self.timeline.is_deleted(message) {
+				return Err("This message was deleted");
+			}
+			if self.history_pending
+				&& self.history_navigation.target(channel, self.request) == Some(message)
+			{
+				// A repeat click shares the in-flight page instead of invalidating it.
+				return Ok(None);
+			}
+			if self.freshness == Freshness::Fresh
+				&& !self.history_pending
+				&& self
+					.timeline
+					.get(message)
+					.is_some_and(|m| m.channel == channel)
+			{
+				self.search_target = Some(message);
+				self.restore_scroll = false;
+				self.history_navigation.clear();
+				self.revision += 1;
+				return Ok(None);
+			}
+		}
+		if self.selected != Some(channel)
+			&& self
+				.resident_timeline(channel)
+				.is_some_and(|timeline| timeline.is_deleted(message))
+		{
+			self.status = "This message was deleted";
+			return Err(self.status);
+		}
+		if !self.gateway_connected
+			&& (self.selected == Some(channel)
+				|| !self.resident_timeline(channel).is_some_and(|timeline| {
+					timeline.get(message).is_some_and(|m| m.channel == channel)
+				})) {
+			// Check the exact dormant destination before touching selection,
+			// drafts, the navigation trail, or another conversation's timeline.
+			return Err("Message links are unavailable while disconnected");
+		}
+		// Restore the resident window without first starting a recent-history or
+		// saved-reading-cursor request. Selection alone never sends or joins voice.
+		self.select_chat_link_channel(channel, message)?;
+		if self.timeline.is_deleted(message) {
+			self.status = "This message was deleted";
+			// A window that could not be restored as loaded still needs its recent page.
+			if self.freshness != Freshness::Fresh && self.gateway_connected {
+				return Ok(Some(self.history(None)));
+			}
+			return Err("This message was deleted");
+		}
+		if self.freshness == Freshness::Fresh
+			&& !self.history_pending
+			&& self
+				.timeline
+				.get(message)
+				.is_some_and(|m| m.channel == channel)
+		{
+			self.search_target = Some(message);
+			self.restore_scroll = false;
+			self.revision += 1;
+			return Ok(None);
+		}
+		if !self.gateway_connected {
+			self.status = "Message links are unavailable while disconnected";
+			return Err(self.status);
+		}
+		Ok(self.open_target_window(message))
+	}
+
+	pub(crate) fn deleted_navigation_target(&mut self, channel: Id, target: Id) {
+		if self.selected == Some(channel)
+			&& (self.search_target == Some(target)
+				|| self.history_navigation.target(channel, self.request) == Some(target))
+		{
+			self.search_target = None;
+			self.restore_scroll = false;
+			self.status = "This message was deleted";
+		}
+	}
+
+	pub(crate) fn finish_history_navigation(&mut self, channel: Id, request: u64) {
+		let Some(target) = self.history_navigation.target(channel, request) else {
+			return;
+		};
+		self.history_navigation.clear();
+		if self.timeline.is_deleted(target) {
+			self.search_target = None;
+			self.restore_scroll = false;
+			self.status = "This message was deleted";
+		} else if !self
+			.timeline
+			.get(target)
+			.is_some_and(|m| m.channel == channel)
+		{
+			// Retain the cue for the timeline to mark this detached window as
+			// browsing, but report the outcome even without a UI consuming it.
+			self.status =
+				"Message was not returned; it may have been removed or become unavailable";
+		}
+	}
+
+	/// All effects belong to one channel, with at most 50 distinct targets.
+	pub fn take_reply_deletions(&mut self) -> Vec<(Id, Id)> {
+		std::mem::take(&mut self.reply_deletions.0)
+	}
+	pub(crate) fn accepts_reply_source(&self, message: &Message) -> bool {
+		message.id.0 != 0
+			&& message.channel.0 != 0
+			&& Timeline::valid_message(message)
+			&& self.can_view(message.channel)
+			&& self
+				.channels
+				.iter()
+				.any(|channel| channel.id == message.channel && channel.supports_text())
+			&& (self.selected != Some(message.channel) || self.freshness != Freshness::Unavailable)
+	}
+	pub(crate) fn record_reply_deletion(&mut self, message: &Message) {
+		if !message.reply_deleted {
+			return;
+		}
+		let Some(target) = message
+			.reply_to
+			.filter(|target| target.0 != 0 && *target < message.id)
+		else {
+			return;
+		};
+		let deletion = (message.channel, target);
+		// Only one message or an already validated <=50-message history page calls this.
+		if !self.reply_deletions.0.contains(&deletion) && self.reply_deletions.0.len() < 50 {
+			self.reply_deletions.0.push(deletion);
+		}
+		self.resident.remove(message.channel);
+		self.read_state.activity.delete(message.channel, target);
+		if let Some(channel) = self
+			.channels
+			.iter_mut()
+			.find(|channel| channel.id == message.channel && channel.last_message == Some(target))
+		{
+			self.read_state.activity.observe_latest(channel.id, target);
+			channel.last_message = None;
+		}
+		if self.selected == Some(message.channel) {
+			self.clear_search();
+			self.deleted_navigation_target(message.channel, target);
+			if self.reply_target() == Some(target) {
+				self.reply = None;
+			}
+		}
+	}
+	pub fn can_open_reply_target(&self, target: Id) -> bool {
+		let Some(channel) = self.selected else {
+			return false;
+		};
+		self.auth == AuthState::Authenticated
+			&& self.gateway_connected
+			&& self.freshness == Freshness::Fresh
+			&& !self.history_pending
+			&& target.0 != 0
+			&& target.0.checked_add(1).is_some()
+			&& !self.timeline.is_deleted(target)
+			&& !self.timeline.iter().any(|message| {
+				message.channel == channel
+					&& message.reply_to == Some(target)
+					&& message.reply_deleted
+			}) && self.can_read_history(channel)
+			&& self
+				.channels
+				.iter()
+				.any(|entry| entry.id == channel && entry.supports_text())
+			&& self
+				.timeline
+				.get(target)
+				.is_none_or(|message| message.channel == channel)
+			&& (self.reply_target() == Some(target)
+				|| self
+					.timeline
+					.iter()
+					.any(|message| message.channel == channel && message.reply_to == Some(target)))
+	}
+
+	/// Loaded targets only request a local scroll. Unloaded targets use one bounded
+	/// history page; None can therefore mean either a local jump or a rejected action.
+	pub fn open_reply_target(&mut self, target: Id) -> Option<Command> {
+		if !self.can_open_reply_target(target) {
+			return None;
+		}
+		if self.timeline.get(target).is_some() {
+			self.search_target = Some(target);
+			self.revision += 1;
+			return None;
+		}
+		self.open_target_window(target)
+	}
+
+	pub(crate) fn open_target_window(&mut self, target: Id) -> Option<Command> {
+		if target.0 == 0 || self.timeline.is_deleted(target) {
+			return None;
+		}
+		let before = Id(target.0.checked_add(1)?);
+		let channel = self.selected?;
+		if self.history_pending
+			&& self.history_navigation.target(channel, self.request) == Some(target)
+		{
+			return None;
+		}
+		self.timeline.clear_window_preserving_deletions();
+		self.newer_cursor = None;
+		self.newer_may_have_more = false;
+		self.history_targeted = true;
+		self.revision += 1;
+		let command = self.history(Some(before));
+		if let Command::History {
+			channel, request, ..
+		} = &command
+		{
+			self.search_target = Some(target);
+			self.restore_scroll = false;
+			self.history_navigation.start(*channel, *request, target);
+		}
+		self.enforce_resident_budget();
+		Some(command)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::{Envelope, Event, Pending, auth::Failure};
+	use model::{Channel, Delivery, Message, User};
+
+	fn message(id: u64) -> Message {
+		Message {
+			poll: None,
+			sticker_items: Vec::new(),
+			id: Id(id),
+			channel: Id(1),
+			author: User {
+				primary_guild: None,
+				cosmetics: None,
+				id: Id(9),
+				name: "Synthetic".into(),
+				avatar: None,
+				webhook: false,
+				kind: Default::default(),
+				discriminator: 0,
+			},
+			content: "Synthetic reply".into(),
+			reactions: Some(vec![]),
+			author_nick: None,
+			author_roles: vec![],
+			mention_roles: vec![],
+			mention_everyone: false,
+			suppress_notifications: false,
+			mentions: vec![],
+			edited: false,
+			edited_at: None,
+			revision: 0,
+			nonce: None,
+			reply_to: None,
+			reply_deleted: false,
+			interaction: None,
+			forwarded: false,
+			kind: 0,
+			unsupported: false,
+			components: vec![],
+			application_id: None,
+			flags: 0,
+			ephemeral: false,
+			extra_content: Default::default(),
+			embeds: vec![],
+			attachments: vec![],
+			embeds_suppressed: false,
+		}
+	}
+	fn state() -> State {
+		let mut state = State {
+			user: Some(message(1).author),
+			auth: AuthState::Authenticated,
+			gateway_connected: true,
+			selected: Some(Id(1)),
+			freshness: Freshness::Fresh,
+			channels: (1..=3)
+				.map(|id| Channel {
+					id: Id(id),
+					guild: None,
+					parent_id: None,
+					kind: 1,
+					position: 0,
+					name: "Synthetic DM".into(),
+					recipients: vec![],
+					last_message: None,
+					icon: None,
+					member_list_id: None,
+					tags: None,
+					message_count: None,
+				})
+				.collect(),
+			..State::default()
+		};
+		let mut source = message(100);
+		source.reply_to = Some(Id(50));
+		state.timeline.insert(source, false, false).unwrap();
+		state
+	}
+	fn apply(state: &mut State, event: Event) {
+		state.apply(Envelope {
+			generation: state.generation,
+			event,
+		});
+	}
+
+	#[test]
+	fn explicit_reply_send_preserves_composer_state_and_requires_a_loaded_safe_target() {
+		let mut state = state();
+		state.drafts.insert(Id(1), "Keep draft".into());
+		state.reply = Some(Reply::to(Id(50)));
+		let Command::Send {
+			channel,
+			content,
+			reply,
+			sticker,
+			..
+		} = state
+			.prepare_reply_send(Id(100), "Approved reply", false)
+			.unwrap()
+		else {
+			panic!("expected reply send")
+		};
+		assert_eq!(channel, Id(1));
+		assert_eq!(content, "Approved reply");
+		assert_eq!(sticker, None);
+		assert!(reply.is_some_and(|reply| reply.target() == Id(100) && !reply.mention));
+		assert_eq!(state.drafts[&Id(1)], "Keep draft");
+		assert_eq!(state.reply, Some(Reply::to(Id(50))));
+
+		assert!(state.prepare_reply_send(Id(999), "Unknown", true).is_none());
+		let mut ephemeral = self::state();
+		ephemeral.timeline.clear();
+		let mut message = message(100);
+		message.ephemeral = true;
+		ephemeral.timeline.insert(message, false, false).unwrap();
+		assert!(
+			ephemeral
+				.prepare_reply_send(Id(100), "Ephemeral", true)
+				.is_none()
+		);
+		state.selected = Some(Id(2));
+		assert!(
+			state
+				.prepare_reply_send(Id(100), "Wrong channel", true)
+				.is_none()
+		);
+		assert_eq!(state.pending.len(), 1);
+	}
+	fn deleted_source(id: u64, target: u64, channel: u64) -> Message {
+		let mut source = message(id);
+		source.kind = 19;
+		source.channel = Id(channel);
+		source.reply_to = Some(Id(target));
+		source.reply_deleted = true;
+		source
+	}
+	fn chat_link_state() -> State {
+		let mut state = state();
+		let mut dm = state.channels[0].clone();
+		dm.id = Id(4);
+		for channel in &mut state.channels {
+			channel.guild = Some(Id(if channel.id == Id(3) { 20 } else { 10 }));
+			channel.kind = 0;
+		}
+		state.channels.push(dm);
+		state.guilds = [10, 20]
+			.into_iter()
+			.map(|id| model::Guild {
+				default_message_notifications: None,
+				stickers: None,
+				id: Id(id),
+				name: "Synthetic guild".into(),
+				icon: None,
+				emojis: None,
+			})
+			.collect();
+		state
+			.permissions
+			.replace(model::permissions::Snapshot {
+				guilds: [10, 20]
+					.into_iter()
+					.map(|id| model::permissions::Guild {
+						id: Id(id),
+						owner: Some(Id(9)),
+						roles: None,
+						member: None,
+					})
+					.collect(),
+				channels: vec![],
+			})
+			.unwrap();
+		state.drafts.insert(Id(1), "Unsent draft".into());
+		state
+	}
+
+	#[test]
+	fn chat_links_select_same_server_other_server_and_dm_without_joining_voice() {
+		{
+			for (guild, channel, kind) in [
+				(Some(Id(10)), Id(2), 0),
+				(Some(Id(20)), Id(3), 0),
+				(None, Id(4), 1),
+				(Some(Id(20)), Id(3), 15),
+				(Some(Id(20)), Id(3), 2),
+			] {
+				let mut state = chat_link_state();
+				state
+					.channels
+					.iter_mut()
+					.find(|c| c.id == channel)
+					.unwrap()
+					.kind = kind;
+				let command = state.open_chat_link(guild, channel, None).unwrap();
+				assert_eq!(state.selected, Some(channel));
+				assert!(command.is_none_or(
+					|command| matches!(command, Command::History { channel: id, .. } if id == channel)
+				));
+				assert!(state.voice.active.is_none());
+				assert_eq!(state.drafts[&Id(1)], "Unsent draft");
+			}
+		}
+		{
+			let mut state = chat_link_state();
+			let request = state.request;
+			assert!(
+				state
+					.open_chat_link(Some(Id(10)), Id(1), Some(Id(100)))
+					.unwrap()
+					.is_none()
+			);
+			assert_eq!(state.search_target, Some(Id(100)));
+			assert_eq!(state.request, request);
+			assert!(state.timeline.get(Id(100)).is_some());
+			for (guild, channel) in [(Some(Id(10)), Id(1)), (Some(Id(20)), Id(3)), (None, Id(4))] {
+				let mut state = chat_link_state();
+				let command = state
+					.open_chat_link(guild, channel, Some(Id(50)))
+					.unwrap()
+					.unwrap();
+				assert!(
+					matches!(command, Command::History { channel: id, before: Some(Id(51)), after: None, request } if id == channel && request == state.request)
+				);
+				assert_eq!(state.selected, Some(channel));
+				assert_eq!(state.search_target, Some(Id(50)));
+				assert!(state.history_targeted && state.history_pending);
+				assert_eq!(state.drafts[&Id(1)], "Unsent draft");
+			}
+		}
+	}
+
+	#[test]
+	fn chat_links_reject_invalid_unavailable_and_forbidden_targets_before_navigation() {
+		{
+			for blocked in 0..11 {
+				let mut state = chat_link_state();
+				let mut guild = Some(Id(20));
+				let mut channel = Id(3);
+				let mut message = Some(Id(50));
+				match blocked {
+					0 => channel = Id(0),
+					1 => channel = Id(999),
+					2 => guild = None,
+					3 => message = Some(Id(0)),
+					4 => message = Some(Id(u64::MAX)),
+					5 => state.channels[2].kind = 4,
+					6 => state.user = None,
+					7 => state.gateway_connected = false,
+					8 => state.auth = AuthState::Unauthenticated,
+					9 => state.channels[2].kind = 15,
+					_ => {
+						guild = Some(Id(10));
+						channel = Id(1);
+						state.timeline.delete(Id(50)).unwrap();
+					}
+				}
+				let revision = state.revision;
+				let request = state.request;
+				assert!(
+					state.open_chat_link(guild, channel, message).is_err(),
+					"case {blocked}"
+				);
+				assert_eq!(state.selected, Some(Id(1)));
+				assert_eq!(state.revision, revision);
+				assert_eq!(state.request, request);
+				assert!(state.search_target.is_none());
+				assert!(state.timeline.get(Id(100)).is_some());
+				assert_eq!(state.drafts[&Id(1)], "Unsent draft");
+			}
+		}
+		{
+			let mut state = chat_link_state();
+			state.timeline.delete(Id(50)).unwrap();
+			state.select(Id(2));
+			assert_eq!(state.resident_window_count(), 1);
+			let request = state.request;
+			assert_eq!(
+				state
+					.open_chat_link(Some(Id(10)), Id(1), Some(Id(50)))
+					.err(),
+				Some("This message was deleted")
+			);
+			assert_eq!(state.status, "This message was deleted");
+			assert!(state.search_target.is_none());
+			assert_eq!(state.selected, Some(Id(2)));
+			assert_eq!(state.request, request);
+			assert!(
+				state.history_pending,
+				"keep the unrelated selected-channel request"
+			);
+		}
+	}
+
+	#[test]
+	fn a_resident_without_the_live_target_is_not_presented_as_loaded() {
+		for delete_live in [false, true] {
+			let parked = || {
+				let mut state = chat_link_state();
+				state.timeline.delete(Id(50)).unwrap();
+				if delete_live {
+					// Only deletion placeholders remain in the parked window.
+					state.timeline.delete(Id(100)).unwrap();
+				}
+				state.select(Id(2));
+				assert_eq!(state.resident_window_count(), 1);
+				state
+			};
+			// The restore step alone must not claim a window without the target is loaded.
+			let mut state = parked();
+			state.select_chat_link_channel(Id(1), Id(60)).unwrap();
+			assert_eq!(state.selected, Some(Id(1)));
+			assert_ne!(state.freshness, Freshness::Fresh, "case {delete_live}");
+			let mut state = parked();
+			state.select_chat_link_channel(Id(1), Id(100)).unwrap();
+			assert_eq!(
+				state.freshness == Freshness::Fresh,
+				!delete_live,
+				"only a live target restores locally (case {delete_live})"
+			);
+			// The full link then requests the target's page.
+			let mut state = parked();
+			let command = state
+				.open_chat_link(Some(Id(10)), Id(1), Some(Id(60)))
+				.unwrap();
+			assert!(matches!(
+				command,
+				Some(Command::History {
+					channel: Id(1),
+					before: Some(Id(61)),
+					..
+				})
+			));
+		}
+	}
+
+	#[test]
+	fn accepted_deletion_effects_are_scoped_bounded_and_reset_on_rejected_generation() {
+		{
+			let mut state = state();
+			state.timeline.insert(message(50), false, false).unwrap();
+			apply(&mut state, Event::Message(deleted_source(101, 50, 2)));
+			assert_eq!(state.take_reply_deletions(), vec![(Id(2), Id(50))]);
+			assert!(state.timeline.get(Id(50)).is_some()); // Inactive channel is independent.
+			apply(&mut state, Event::Message(deleted_source(101, 50, 1)));
+			assert!(state.timeline.get(Id(50)).is_none());
+			state.apply(Envelope {
+				generation: state.generation - 1,
+				event: Event::Message(deleted_source(102, 40, 1)),
+			});
+			assert!(state.take_reply_deletions().is_empty());
+			assert!(!state.timeline.is_deleted(Id(40)));
+			state.history(Some(Id(201)));
+			let request = state.request;
+			apply(
+				&mut state,
+				Event::History {
+					channel: Id(1),
+					request,
+					older: true,
+					messages: (1..=50)
+						.map(|target| deleted_source(100 + target, target, 1))
+						.collect(),
+				},
+			);
+			let effects = state.take_reply_deletions();
+			assert_eq!(effects.len(), 50);
+			assert!(effects.iter().all(|(channel, _)| *channel == Id(1)));
+			assert!(state.take_reply_deletions().is_empty());
+		}
+		{
+			for invalid in 0..6 {
+				let mut state = state();
+				state.timeline.insert(message(50), false, false).unwrap();
+				state.history(Some(Id(150)));
+				let mut request = state.request;
+				let mut source = deleted_source(101, 50, 1);
+				let mut messages = vec![];
+				match invalid {
+					0 => request += 1,
+					1 => source.channel = Id(2),
+					2 => source.id = Id(151),
+					3 => messages.push(source.clone()),
+					4 => source.kind = 0,
+					_ => {
+						let mut oversized = message(102);
+						oversized.content = "x".repeat(64 * 1024 + 1);
+						messages.push(oversized);
+					}
+				}
+				messages.push(source);
+				apply(
+					&mut state,
+					Event::History {
+						channel: Id(1),
+						request,
+						older: true,
+						messages,
+					},
+				);
+				assert!(state.take_reply_deletions().is_empty());
+				assert!(state.timeline.get(Id(50)).is_some());
+				assert!(!state.timeline.is_deleted(Id(50)));
+			}
+		}
+	}
+
+	#[test]
+	fn send_deletion_requires_correlation_and_handles_gateway_first_without_replacing_text() {
+		{
+			for invalid in 0..3 {
+				let mut state = state();
+				state.timeline.insert(message(50), false, false).unwrap();
+				if invalid != 0 {
+					state.pending.push(Pending {
+						sticker: None,
+						channel: Id(if invalid == 1 { 2 } else { 1 }),
+						content: "Pending".into(),
+						attachments: vec![],
+						nonce: "synthetic".into(),
+						delivery: Delivery::Ambiguous,
+						confirmed: None,
+					});
+				}
+				let mut source = deleted_source(101, 50, 1);
+				if invalid == 2 {
+					source.author.id = Id(8);
+				}
+				apply(
+					&mut state,
+					Event::SendResult {
+						nonce: "synthetic".into(),
+						result: Ok(source),
+					},
+				);
+				assert!(state.take_reply_deletions().is_empty());
+				assert!(state.timeline.get(Id(50)).is_some());
+			}
+			let mut state = state();
+			state.timeline.insert(message(50), false, false).unwrap();
+			state.pending.push(Pending {
+				sticker: None,
+				channel: Id(1),
+				content: "Pending".into(),
+				attachments: vec![],
+				nonce: "synthetic".into(),
+				delivery: Delivery::Ambiguous,
+				confirmed: None,
+			});
+			let mut source = deleted_source(101, 50, 1);
+			source.reply_deleted = false;
+			source.nonce = Some("synthetic".into());
+			source.content = "Newer Gateway body".into();
+			source.edited_at = Some(20);
+			apply(&mut state, Event::Message(source));
+			assert!(state.pending.is_empty());
+			apply(
+				&mut state,
+				Event::SendResult {
+					nonce: "synthetic".into(),
+					result: Ok(deleted_source(101, 50, 1)),
+				},
+			);
+			assert_eq!(state.take_reply_deletions(), vec![(Id(1), Id(50))]);
+			assert!(state.timeline.is_deleted(Id(50)));
+			let source = state.timeline.get(Id(101)).unwrap();
+			assert_eq!(source.content, "Newer Gateway body");
+			assert!(source.reply_deleted);
+			state.pending.push(Pending {
+				sticker: None,
+				channel: Id(2),
+				content: "Pending".into(),
+				attachments: vec![],
+				nonce: "other".into(),
+				delivery: Delivery::Ambiguous,
+				confirmed: None,
+			});
+			apply(
+				&mut state,
+				Event::SendResult {
+					nonce: "other".into(),
+					result: Ok(deleted_source(102, 40, 2)),
+				},
+			);
+			assert_eq!(state.take_reply_deletions(), vec![(Id(2), Id(40))]);
+			assert!(!state.timeline.is_deleted(Id(40)));
+		}
+		{
+			let mut state = state();
+			state.drafts.insert(Id(1), "Unsent draft".into());
+			state.timeline.insert(message(50), false, false).unwrap();
+			let mut source = deleted_source(101, 50, 1);
+			source.reply_deleted = false;
+			source.nonce = Some("synthetic".into());
+			state.timeline.insert(source, false, false).unwrap();
+			for id in 1000..1000 + session_cache::MAX_MUTATIONS as u64 {
+				state.timeline.delete(Id(id)).unwrap();
+			}
+			apply(
+				&mut state,
+				Event::SendResult {
+					nonce: "synthetic".into(),
+					result: Ok(deleted_source(101, 50, 1)),
+				},
+			);
+			assert!(state.timeline.is_empty());
+			assert_eq!(state.freshness, Freshness::Stale);
+			assert_eq!(state.take_reply_deletions(), vec![(Id(1), Id(50))]);
+			assert_eq!(state.drafts[&Id(1)], "Unsent draft");
+		}
+	}
+
+	#[test]
+	fn loaded_reply_target_only_scrolls_and_preserves_composer_work() {
+		{
+			let mut state = state();
+			state.timeline.insert(message(50), false, false).unwrap();
+			state.reply = Some(Reply::to(Id(100)));
+			state.drafts.insert(Id(1), "Unsent draft".into());
+			state.pending.push(Pending {
+				sticker: None,
+				channel: Id(1),
+				content: "Pending".into(),
+				attachments: vec![],
+				nonce: "synthetic".into(),
+				delivery: Delivery::Ambiguous,
+				confirmed: None,
+			});
+			let request = state.request;
+			let revision = state.revision;
+			let content = state.timeline.get(Id(50)).unwrap().content.as_ptr();
+			assert!(state.can_open_reply_target(Id(50)));
+			assert!(state.open_reply_target(Id(50)).is_none());
+			assert_eq!(state.search_target, Some(Id(50)));
+			assert_eq!(state.request, request);
+			assert_eq!(state.revision, revision + 1);
+			assert!(!state.history_pending);
+			assert_eq!(state.freshness, Freshness::Fresh);
+			assert_eq!(
+				state.timeline.get(Id(50)).unwrap().content.as_ptr(),
+				content
+			);
+			assert_eq!(state.reply_target(), Some(Id(100)));
+			assert_eq!(state.drafts[&Id(1)], "Unsent draft");
+			assert_eq!(state.pending[0].delivery, Delivery::Ambiguous);
+			assert!(state.can_open_reply_target(Id(100))); // Composer context is also a source.
+		}
+		{
+			let mut state = state();
+			state.reply = Some(Reply::to(Id(50)));
+			state.drafts.insert(Id(1), "Unsent draft".into());
+			apply(
+				&mut state,
+				Event::Delete {
+					channel: Id(1),
+					id: Id(40),
+				},
+			);
+			let command = state.open_reply_target(Id(50)).unwrap();
+			let Command::History {
+				channel,
+				before,
+				request,
+				..
+			} = command
+			else {
+				panic!()
+			};
+			assert_eq!(channel, Id(1));
+			assert_eq!(before, Some(Id(51)));
+			assert_eq!(state.timeline.row_count(), 0);
+			assert!(state.timeline.is_deleted(Id(40)));
+			assert_eq!(state.freshness, Freshness::Loading);
+			assert_eq!(state.reply_target(), Some(Id(50)));
+			assert_eq!(state.drafts[&Id(1)], "Unsent draft");
+			assert!(state.open_reply_target(Id(50)).is_none());
+			assert_eq!(state.request, request);
+			// A delete racing the request must also defeat both live and REST bodies.
+			apply(
+				&mut state,
+				Event::Delete {
+					channel: Id(1),
+					id: Id(50),
+				},
+			);
+			apply(&mut state, Event::Message(message(50)));
+			apply(
+				&mut state,
+				Event::History {
+					channel,
+					request,
+					older: true,
+					messages: vec![message(50), message(40), message(30)],
+				},
+			);
+			assert_eq!(state.timeline.row_ids().collect::<Vec<_>>(), vec![Id(30)]);
+			assert!(state.timeline.is_deleted(Id(50)));
+			assert!(!state.can_open_reply_target(Id(50)));
+			assert_eq!(state.freshness, Freshness::Fresh);
+		}
+	}
+
+	#[test]
+	fn reply_targets_require_a_current_scoped_reference_and_safe_state() {
+		{
+			let state = state();
+			assert!(!state.can_open_reply_target(Id(25)));
+			assert!(!state.can_open_reply_target(Id(100))); // Loaded alone is not a reference.
+			for target in [Id(0), Id(u64::MAX)] {
+				let mut invalid = self::state();
+				invalid.reply = Some(Reply::to(target));
+				assert!(!invalid.can_open_reply_target(target));
+				assert!(invalid.open_reply_target(target).is_none());
+			}
+			for blocked in 0..8 {
+				let mut state = self::state();
+				match blocked {
+					0 => state.auth = AuthState::Unauthenticated,
+					1 => state.gateway_connected = false,
+					2 => state.freshness = Freshness::Stale,
+					3 => state.history_pending = true,
+					4 => state.selected = Some(Id(2)),
+					5 => state.channels[0].kind = 2,
+					6 => {
+						state.timeline.delete(Id(50)).unwrap();
+					}
+					_ => {
+						let mut target = message(50);
+						target.channel = Id(2);
+						state.timeline.insert(target, false, false).unwrap();
+					}
+				}
+				assert!(!state.can_open_reply_target(Id(50)));
+				assert!(state.open_reply_target(Id(50)).is_none());
+				assert!(state.search_target.is_none());
+			}
+		}
+		{
+			for transition in 0..4 {
+				let mut state = state();
+				state.open_reply_target(Id(50)).unwrap();
+				let request = state.request;
+				let generation = state.generation;
+				match transition {
+					0 => apply(
+						&mut state,
+						Event::HistoryFailed {
+							channel: Id(1),
+							request,
+							failure: Failure::Network,
+						},
+					),
+					1 => {
+						state.select(Id(2));
+					}
+					2 => state.logout(),
+					_ => apply(&mut state, Event::Unavailable(Id(1))),
+				}
+				assert!(state.search_target.is_none());
+				state.apply(Envelope {
+					generation,
+					event: Event::History {
+						channel: Id(1),
+						request,
+						older: true,
+						messages: vec![message(50)],
+					},
+				});
+				assert!(state.timeline.get(Id(50)).is_none());
+			}
+		}
+	}
+
+	#[test]
+	fn explicit_reference_deletion_retires_composer_and_loaded_target() {
+		{
+			for history in [false, true] {
+				let mut state = state();
+				state.timeline.insert(message(50), false, false).unwrap();
+				state.reply = Some(Reply::to(Id(50)));
+				let mut source = message(101);
+				source.reply_to = Some(Id(50));
+				source.kind = 19;
+				source.reply_deleted = true;
+				if history {
+					state.history(None);
+					let request = state.request;
+					apply(
+						&mut state,
+						Event::History {
+							channel: Id(1),
+							request,
+							older: false,
+							messages: vec![message(50), source],
+						},
+					);
+				} else {
+					apply(&mut state, Event::Message(source));
+				}
+				assert!(state.timeline.get(Id(50)).is_none());
+				assert!(state.timeline.is_deleted(Id(50)));
+				assert!(state.reply.is_none());
+				assert!(!state.can_open_reply_target(Id(50)));
+				assert!(state.open_reply_target(Id(50)).is_none());
+			}
+		}
+		{
+			let mut state = state();
+			for channel in [2, 3, 1] {
+				state.select(Id(channel)).unwrap();
+				let request = state.request;
+				let mut loaded = message(100);
+				loaded.channel = Id(channel);
+				loaded.reply_to = Some(Id(50));
+				apply(
+					&mut state,
+					Event::History {
+						channel: Id(channel),
+						request,
+						older: false,
+						messages: vec![loaded],
+					},
+				);
+			}
+			assert_eq!(state.resident_window_count(), 2);
+			state.open_reply_target(Id(50)).unwrap();
+			let request = state.request;
+			apply(
+				&mut state,
+				Event::History {
+					channel: Id(1),
+					request,
+					older: true,
+					messages: vec![message(50)],
+				},
+			);
+			assert_eq!(state.search_target.take(), Some(Id(50))); // The UI consumes only the cue.
+			assert!(state.history_targeted);
+			assert!(state.resident_history_rows() <= 1475);
+			assert!(state.resident_history_bytes() <= 16 * 1024 * 1024 - 66 * 1024);
+			state.select(Id(2)).unwrap();
+			assert!(!state.history_targeted);
+			state.select(Id(1)).unwrap();
+			assert_eq!(state.timeline.row_count(), 0);
+			assert!(state.search_target.is_none());
+		}
+	}
+
+	#[test]
+	fn search_and_pin_target_windows_preserve_prior_deletions() {
+		for pins in [false, true] {
+			let mut state = state();
+			state.timeline.delete(Id(40)).unwrap();
+			state.search = Some(crate::search::SearchView {
+				pins,
+				channel: Id(1),
+				guild: None,
+				query: "Synthetic".into(),
+				before: None,
+				offset: 0,
+				total: None,
+				pin_before: None,
+				request: 1,
+				loading: false,
+				error: None,
+				page: Some(model::SearchPage {
+					hits: vec![model::SearchHit {
+						id: Id(50),
+						channel: Id(1),
+						author: model::User {
+							kind: model::AccountKind::Human,
+							webhook: false,
+							id: Id(7),
+							name: "Synthetic".into(),
+							avatar: None,
+							discriminator: 0,
+							primary_guild: None,
+							cosmetics: None,
+						},
+						mentions: vec![],
+						excerpt: "Synthetic".into(),
+						attachments: vec![],
+						embeds: vec![],
+					}],
+					total: 1,
+					partial: false,
+					pin_cursor: None,
+				}),
+			});
+			let command = state.open_search_hit(Id(50)).unwrap();
+			let Command::History { request, .. } = command else {
+				panic!()
+			};
+			apply(
+				&mut state,
+				Event::History {
+					channel: Id(1),
+					request,
+					older: true,
+					messages: vec![message(50), message(40)],
+				},
+			);
+			assert!(state.timeline.get(Id(50)).is_some());
+			assert!(state.timeline.get(Id(40)).is_none());
+			assert!(state.timeline.is_deleted(Id(40)));
+		}
+	}
+}

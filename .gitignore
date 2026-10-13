@@ -1,0 +1,9 @@
+/.envrc
+/.direnv/
+/result
+/result-*
+/target/
+/dist/
+.DS_Store
+node_modules/
+__pycache__/

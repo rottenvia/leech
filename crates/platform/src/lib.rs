@@ -1,0 +1,393 @@
+//! Credential persistence and temporary owner-operated login/verification surfaces.
+#[cfg(target_os = "macos")]
+pub mod app_menu;
+pub mod badge;
+pub mod captcha;
+pub mod compositor;
+pub mod game_activity;
+pub mod heic;
+pub mod hotkeys;
+pub mod memory;
+pub mod notifications;
+pub mod pointer;
+pub mod processes;
+pub mod proxy_credentials;
+pub mod save;
+pub mod single_instance;
+pub mod startup;
+pub mod system_theme;
+pub mod tray;
+pub mod video;
+#[cfg(target_os = "macos")]
+pub mod window;
+pub mod window_effects;
+use client_core::auth::{Failure, SessionSecret};
+pub use pointer::cursor_position;
+#[cfg(not(target_os = "linux"))]
+use std::{
+	sync::{
+		Arc,
+		mpsc::{self, Receiver},
+	},
+	time::{Duration, Instant},
+};
+#[cfg(not(target_os = "linux"))]
+use wry::{WebView, WebViewBuilder};
+#[cfg(target_os = "linux")]
+mod login_linux;
+#[cfg(target_os = "linux")]
+pub use login_linux::LoginView;
+
+/// Logical height of the native header the desktop app draws above the login webview.
+pub const LOGIN_HEADER_HEIGHT: f32 = 56.0;
+const SERVICE: &str = "cz.viceverse.serein";
+#[cfg(not(feature = "development-data"))]
+const ACCOUNT: &str = "discord-session";
+#[cfg(feature = "development-data")]
+const ACCOUNT: &str = "discord-session.development";
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialError {
+	/// No OS credential store exists (e.g. Linux without a Secret Service provider).
+	NoStore,
+	Unavailable,
+	Invalid,
+	TimedOut,
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn ensure_gtk_application_id() {
+	static INIT: std::sync::Once = std::sync::Once::new();
+	INIT.call_once(|| {
+		use gtk4::gio::prelude::ApplicationExt;
+		let app = gtk4::gio::Application::new(Some(SERVICE), gtk4::gio::ApplicationFlags::empty());
+		if let Err(error) = app.register(gtk4::gio::Cancellable::NONE) {
+			eprintln!("Linux login/verification: GApplication registration failed: {error}");
+		}
+		std::mem::forget(app);
+	});
+}
+
+/// Check GTK's effective encoding before WebKit starts Flatpak subprocesses.
+#[cfg(target_os = "linux")]
+pub(crate) fn ensure_webkit_locale() -> Result<(), &'static str> {
+	let flatpak = std::path::Path::new("/.flatpak-info").is_file()
+		|| std::env::var_os("FLATPAK_ID").is_some();
+	if flatpak && !gtk4::glib::charset().0 {
+		return Err(
+			"Serein Flatpak login/verification requires a UTF-8 locale. Repair runtime languages and restart Serein; see Flatpak troubleshooting.",
+		);
+	}
+	Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod flatpak_locale_tests {
+	#[test]
+	fn non_utf8_webkit_preflight_is_local_to_flatpak() {
+		const CHILD: &str = "SEREIN_TEST_WEBKIT_LOCALE_CHILD";
+		if let Some(mode) = std::env::var_os(CHILD) {
+			// Fresh processes avoid GLib's cached encoding. Only the explicitly display-backed
+			// regression initializes GTK; neither test constructs WebKit or authenticates.
+			if std::env::var_os("SEREIN_TEST_WEBKIT_INITIALIZE_GTK").is_some() {
+				gtk4::init().expect("display-backed GTK initialization");
+			}
+			assert_eq!(gtk4::glib::charset().0, mode == "utf8");
+			assert_eq!(super::ensure_webkit_locale().is_err(), mode == "flatpak");
+			assert_eq!(
+				std::env::var_os("LC_ALL").as_deref(),
+				Some(std::ffi::OsStr::new("C"))
+			);
+			return;
+		}
+		check_encoding_cases(false);
+	}
+
+	#[test]
+	#[ignore = "requires a Linux display; explicitly exercised under Xvfb in native CI"]
+	fn post_gtk_flatpak_encoding_preflight() {
+		check_encoding_cases(true);
+	}
+
+	fn check_encoding_cases(initialize_gtk: bool) {
+		const CHILD: &str = "SEREIN_TEST_WEBKIT_LOCALE_CHILD";
+		for mode in ["native", "flatpak", "utf8"] {
+			if mode == "native" && std::path::Path::new("/.flatpak-info").is_file() {
+				continue; // A real sandbox marker cannot be removed to simulate a native app.
+			}
+			let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+			child
+				.args([
+					"--exact",
+					"flatpak_locale_tests::non_utf8_webkit_preflight_is_local_to_flatpak",
+				])
+				.env(CHILD, mode)
+				.env("LC_ALL", "C")
+				.env("CHARSET", if mode == "utf8" { "UTF-8" } else { "US-ASCII" })
+				.env_remove("FLATPAK_ID")
+				.env_remove("SEREIN_TEST_WEBKIT_INITIALIZE_GTK");
+			if initialize_gtk {
+				child.env("SEREIN_TEST_WEBKIT_INITIALIZE_GTK", "1");
+			}
+			if mode != "native" {
+				child.env("FLATPAK_ID", "cz.viceverse.serein");
+			}
+			let output = child.output().unwrap();
+			assert!(
+				output.status.success(),
+				"{mode}: {}",
+				String::from_utf8_lossy(&output.stderr)
+			);
+			assert!(
+				String::from_utf8(output.stdout)
+					.unwrap()
+					.contains("running 1 test")
+			);
+		}
+	}
+}
+
+/// The entry restored on launch. Switching accounts rewrites it from the per-account entry.
+pub fn load_session() -> Result<Option<SessionSecret>, CredentialError> {
+	load_entry(ACCOUNT)
+}
+pub fn save_session(secret: &SessionSecret) -> Result<(), CredentialError> {
+	save_entry(ACCOUNT, secret)
+}
+pub fn forget_session() -> Result<(), CredentialError> {
+	forget_entry(ACCOUNT)
+}
+/// One entry per remembered account, so the switcher never keeps a second copy in memory.
+fn account_entry(account: model::Id) -> String {
+	format!("{ACCOUNT}.{account}")
+}
+pub fn load_account_session(account: model::Id) -> Result<Option<SessionSecret>, CredentialError> {
+	load_entry(&account_entry(account))
+}
+pub fn save_account_session(
+	account: model::Id,
+	secret: &SessionSecret,
+) -> Result<(), CredentialError> {
+	save_entry(&account_entry(account), secret)
+}
+pub fn forget_account_session(account: model::Id) -> Result<(), CredentialError> {
+	forget_entry(&account_entry(account))
+}
+fn entry(name: &str) -> Result<keyring_core::Entry, CredentialError> {
+	credential_store()?;
+	keyring_core::Entry::new(SERVICE, name).map_err(|error| match error {
+		keyring_core::Error::NoDefaultStore => CredentialError::NoStore,
+		_ => CredentialError::Unavailable,
+	})
+}
+#[cfg(not(target_os = "linux"))]
+fn credential_store() -> Result<(), CredentialError> {
+	keyring::Entry::store_status()
+		.as_ref()
+		.copied()
+		.map_err(|_| CredentialError::NoStore)
+}
+/// Unlike keyring's one-shot default, a missing Secret Service is retried, so a provider that
+/// starts after Serein (or KWallet, which may need activating) is still found.
+#[cfg(target_os = "linux")]
+fn credential_store() -> Result<(), CredentialError> {
+	const RETRY: std::time::Duration = std::time::Duration::from_secs(15);
+	static LAST_FAILURE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+	let mut last_failure = LAST_FAILURE
+		.lock()
+		.unwrap_or_else(std::sync::PoisonError::into_inner);
+	if keyring_core::get_default_store().is_some() {
+		return Ok(());
+	}
+	if last_failure.is_some_and(|at| at.elapsed() < RETRY) {
+		return Err(CredentialError::NoStore);
+	}
+	let store = zbus_secret_service_keyring_store::Store::new().or_else(|_| {
+		activate_kwallet();
+		zbus_secret_service_keyring_store::Store::new()
+	});
+	match store {
+		Ok(store) => {
+			keyring_core::set_default_store(store);
+			*last_failure = None;
+			Ok(())
+		}
+		Err(_) => {
+			*last_failure = Some(std::time::Instant::now());
+			Err(CredentialError::NoStore)
+		}
+	}
+}
+/// KWallet serves the Secret Service API but, unlike GNOME Keyring, often is not D-Bus
+/// activatable under that name, so outside a Plasma session nothing starts it. Start the
+/// wallet daemon itself, then wait briefly for it to claim the Secret Service name.
+#[cfg(target_os = "linux")]
+fn activate_kwallet() {
+	use zbus::names::WellKnownName;
+	let Ok(connection) = zbus::blocking::Connection::session() else {
+		return;
+	};
+	let Ok(bus) = zbus::blocking::fdo::DBusProxy::new(&connection) else {
+		return;
+	};
+	let started = ["org.kde.kwalletd6", "org.kde.kwalletd5"]
+		.into_iter()
+		.any(|daemon| {
+			bus.start_service_by_name(WellKnownName::from_static_str_unchecked(daemon), 0)
+				.is_ok()
+		});
+	if !started {
+		return;
+	}
+	let secrets = WellKnownName::from_static_str_unchecked("org.freedesktop.secrets");
+	for _ in 0..20 {
+		if bus.name_has_owner(secrets.clone().into()).unwrap_or(false) {
+			return;
+		}
+		std::thread::sleep(std::time::Duration::from_millis(100));
+	}
+}
+fn load_entry(name: &str) -> Result<Option<SessionSecret>, CredentialError> {
+	match entry(name)?.get_password() {
+		Ok(value) => SessionSecret::from_owner_input(value)
+			.map(Some)
+			.map_err(|_| CredentialError::Invalid),
+		Err(keyring_core::Error::NoEntry) => Ok(None),
+		Err(_) => Err(CredentialError::Unavailable),
+	}
+}
+fn save_entry(name: &str, secret: &SessionSecret) -> Result<(), CredentialError> {
+	entry(name)?
+		.set_password(secret.expose())
+		.map_err(|_| CredentialError::Unavailable)
+}
+fn forget_entry(name: &str) -> Result<(), CredentialError> {
+	match entry(name)?.delete_credential() {
+		Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
+		Err(_) => Err(CredentialError::Unavailable),
+	}
+}
+fn discord_origin(value: &str) -> bool {
+	url::Url::parse(value).is_ok_and(|url| {
+		url.scheme() == "https"
+			&& url.host_str() == Some("discord.com")
+			&& url.port_or_known_default() == Some(443)
+			&& url.username().is_empty()
+			&& url.password().is_none()
+	})
+}
+#[cfg(any(not(target_os = "linux"), test))]
+fn login_navigation(value: &str) -> bool {
+	discord_origin(value) || captcha::hcaptcha_origin(value)
+}
+/// Receives only the account token used by THIS ephemeral, owner-operated login page.
+/// No browser-profile reads, password interception, console instructions, or QR exchange implementation.
+#[cfg(not(target_os = "linux"))]
+pub struct LoginView {
+	view: WebView,
+	tokens: Receiver<SessionSecret>,
+	opened: Instant,
+}
+#[cfg(not(target_os = "linux"))]
+impl LoginView {
+	pub fn open(
+		parent: Arc<winit::window::Window>,
+		wake: impl Fn() + Send + Sync + 'static,
+	) -> Result<Self, Failure> {
+		let (send, tokens) = mpsc::sync_channel(1);
+		let mut random = [0_u8; 32];
+		getrandom::fill(&mut random).map_err(|_| Failure::Protocol)?;
+		let capability = random
+			.iter()
+			.map(|byte| format!("{byte:02x}"))
+			.collect::<String>()
+			+ ":";
+		let script =
+			include_str!("login-handoff.js").replace("__SEREIN_LOGIN_CAPABILITY__", &capability);
+		let builder = WebViewBuilder::new()
+			.with_url("https://discord.com/login")
+			.with_incognito(true)
+			.with_devtools(false)
+			.with_initialization_script_for_main_only(script, true)
+			.with_navigation_handler(|url| login_navigation(&url))
+			.with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny)
+			.with_download_started_handler(|_, _| false)
+			.with_ipc_handler(move |request| {
+				if !discord_origin(&request.uri().to_string()) || request.body().len() > 2113 {
+					return;
+				}
+				let body = zeroize::Zeroizing::new(request.into_body());
+				let Some(value) = body.strip_prefix(&capability) else {
+					return;
+				};
+				if let Ok(secret) = SessionSecret::from_owner_input(value.to_owned()) {
+					let _ = send.try_send(secret);
+					wake();
+				}
+			});
+		let view = builder
+			.with_bounds(bounds(&parent))
+			.build_as_child(parent.as_ref())
+			.map_err(|_| Failure::Protocol)?;
+		Ok(Self {
+			view,
+			tokens,
+			opened: Instant::now(),
+		})
+	}
+	pub fn token(&self) -> Option<SessionSecret> {
+		self.tokens.try_recv().ok()
+	}
+	pub fn expired(&self) -> bool {
+		self.opened.elapsed() > Duration::from_secs(600)
+	}
+	pub fn crashed(&self) -> bool {
+		false
+	}
+	pub fn resize(&self, parent: &winit::window::Window) {
+		let _ = self.view.set_bounds(bounds(parent));
+	}
+	pub fn pump(&self) {}
+}
+#[cfg(not(target_os = "linux"))]
+fn bounds(parent: &winit::window::Window) -> wry::Rect {
+	let size = parent.inner_size();
+	let header = (LOGIN_HEADER_HEIGHT as f64 * parent.scale_factor()).round() as u32;
+	wry::Rect {
+		position: wry::dpi::PhysicalPosition::new(0, header as i32).into(),
+		size: wry::dpi::PhysicalSize::new(size.width, size.height.saturating_sub(header)).into(),
+	}
+}
+#[cfg(test)]
+mod tests {
+	use super::*;
+	#[test]
+	fn credential_account_names_are_profile_scoped() {
+		#[cfg(feature = "development-data")]
+		assert_eq!(ACCOUNT, "discord-session.development");
+		#[cfg(not(feature = "development-data"))]
+		assert_eq!(ACCOUNT, "discord-session");
+		assert_eq!(account_entry(model::Id(7)), format!("{ACCOUNT}.7"));
+	}
+	#[test]
+	fn handoff_accepts_only_our_discord_origin() {
+		assert!(discord_origin("https://discord.com/login"));
+		for value in [
+			"http://discord.com",
+			"https://discord.com.evil.test",
+			"https://evil.test/discord.com",
+			"https://user@discord.com",
+			"https://discord.com:444",
+		] {
+			assert!(!discord_origin(value));
+		}
+		let script = include_str!("login-handoff.js");
+		assert!(!script.contains("localStorage"));
+		assert!(!script.contains("password"));
+
+		{
+			assert!(login_navigation("https://newassets.hcaptcha.com/captcha/"));
+			assert!(!login_navigation("http://hcaptcha.com/"));
+			assert!(!login_navigation("https://hcaptcha.com.evil.test/"));
+		}
+	}
+}
