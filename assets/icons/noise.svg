@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <title>Noise suppression</title>
+  <desc>Three voice bars with a four-point spark above them: the voice, cleaned. Repository artwork, sized to the Phosphor 256-unit grid.</desc>
+  <g stroke="#fff" stroke-width="30" stroke-linecap="round">
+    <line x1="50" y1="124" x2="50" y2="180"/>
+    <line x1="106" y1="76" x2="106" y2="212"/>
+    <line x1="162" y1="140" x2="162" y2="196"/>
+  </g>
+  <path d="M196 26c4 32 14 42 46 46-32 4-42 14-46 46-4-32-14-42-46-46 32-4 42-14 46-46Z" fill="#fff"/>
+</svg>

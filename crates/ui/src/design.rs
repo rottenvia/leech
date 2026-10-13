@@ -1128,6 +1128,16 @@ pub fn apply(ctx: &egui::Context) {
 			egui::vec2(f32::from(button_padding[0]), f32::from(button_padding[1]));
 		style.spacing.interact_size.y = f32::from(metrics.control_height.unwrap_or(32));
 		style.spacing.menu_margin = egui::Margin::same(8);
+		// Scroll bars stay out of the picture: nothing at rest, a faint thread while the
+		// pointer is over the area, a soft handle only when the bar itself is grabbed.
+		style.spacing.scroll = egui::style::ScrollStyle {
+			bar_width: 8.0,
+			floating_width: 3.0,
+			active_handle_opacity: 0.22,
+			interact_background_opacity: 0.0,
+			interact_handle_opacity: 0.45,
+			..egui::style::ScrollStyle::floating()
+		};
 		style.visuals.panel_fill = p.chat;
 		style.visuals.text_options.font_hinting = false;
 		style.visuals.text_options.subpixel_binning = true;

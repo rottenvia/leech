@@ -214,10 +214,13 @@ impl Body<'_> {
 	pub fn scroll<R>(&mut self, reserved: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
 		let max = (self.available_height - reserved).clamp(120.0, 620.0);
 		self.content(|ui| {
+			// No bar: it floats over the right edge of rows and switches. The cut-off last
+			// row already says the sheet scrolls.
 			egui::ScrollArea::vertical()
 				.max_height(max)
 				.auto_shrink([false, true])
 				.animated(false)
+				.scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
 				.show(ui, |ui| {
 					ui.set_width(ui.available_width());
 					add(ui)

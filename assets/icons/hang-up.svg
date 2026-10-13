@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <title>Hang up</title>
+  <desc>A handset laid face down: one arched grip between two round pads. Repository artwork, sized to the Phosphor 256-unit grid.</desc>
+  <g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" transform="translate(0 8)">
+    <path d="M46 134C46 82 210 82 210 134" stroke-width="38"/>
+    <path d="M46 138v10M210 138v10" stroke-width="56"/>
+  </g>
+</svg>

@@ -124,13 +124,18 @@ pub enum Icon {
 	/// Stacked servers, for mutual-server counts.
 	Servers,
 	Fullscreen,
+	/// Noise suppression on: voice bars under a spark.
+	Noise,
+	NoiseOff,
+	/// An application window, as a share source.
+	Window,
 	/// Horizontally mirrored reply glyph from the shared atlas.
 	Forward,
 }
 
 impl Icon {
 	/// Canonical atlas cells; Forward reuses the mirrored Reply cell.
-	pub const ALL: [Icon; 107] = [
+	pub const ALL: [Icon; 110] = [
 		Icon::ChevronDown,
 		Icon::ChevronRight,
 		Icon::Gear,
@@ -238,6 +243,9 @@ impl Icon {
 		Icon::DeviceMobile,
 		Icon::Servers,
 		Icon::Fullscreen,
+		Icon::Noise,
+		Icon::NoiseOff,
+		Icon::Window,
 	];
 	/// Upstream icon name recorded in `index.tsv`.
 	fn asset(self) -> &'static str {
@@ -261,7 +269,10 @@ impl Icon {
 			Icon::Bell => "bell",
 			Icon::Phone => "phone",
 			Icon::InCall => "phone-call",
-			Icon::HangUp => "phone-disconnect",
+			Icon::HangUp => "hang-up",
+			Icon::Noise => "noise",
+			Icon::NoiseOff => "noise-slash",
+			Icon::Window => "window",
 			Icon::Video => "video-camera",
 			Icon::VideoSlash => "video-camera-slash",
 			Icon::ScreenShare => "monitor-arrow-up",
@@ -471,7 +482,7 @@ pub(crate) fn immediate_tooltip(response: Response, label: &str) -> Response {
 }
 
 /// Corner radius of every icon button plate; matches the shared 8px widget radius.
-pub(crate) const PLATE_RADIUS: u8 = 8;
+pub const PLATE_RADIUS: u8 = 8;
 
 /// State fill behind an icon button. A veil of the strong text colour rather than a fixed
 /// surface tone, so hover and pressed read on every surface, `raised` cards included.
