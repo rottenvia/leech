@@ -252,8 +252,13 @@ const fn rgba(value: u32, alpha: u8) -> Color32 {
 		alpha,
 	)
 }
-/// Serein azure: the house accent, packed for call sites that speak in integer colours.
-pub const DEFAULT_PRIMARY_RGB: u32 = 0x1a72e8;
+/// Leech rose: the house accent, packed for call sites that speak in integer colours. Light
+/// appearances fill with it under white text; dark ones use [`DARK_ACCENT`].
+pub const DEFAULT_PRIMARY_RGB: u32 = 0xd6336c;
+/// The rose lifted to a pastel for dark surfaces, where it carries dark text and doubles as a
+/// tint that stays clear of the red `danger` tone.
+const DARK_ACCENT: Color32 = rgb(0xf0719b);
+const DARK_ACCENT_TEXT: Color32 = rgb(0x1c0810);
 pub const DEFAULT_PRIMARY_COLOR: [u8; 3] = [
 	(DEFAULT_PRIMARY_RGB >> 16) as u8,
 	(DEFAULT_PRIMARY_RGB >> 8) as u8,
@@ -282,17 +287,17 @@ fn dark_common(
 		hover,
 		selected,
 		border,
-		text_strong: rgb(0xededef),
-		text: rgb(0xcfcfd4),
-		muted: rgb(0x94949c),
-		link: rgb(0x54abff),
-		accent: PRIMARY,
-		accent_text: Color32::WHITE,
+		text_strong: rgb(0xf4ecef),
+		text: rgb(0xd8ccd1),
+		muted: rgb(0xa08d96),
+		link: rgb(0xff9dbb),
+		accent: DARK_ACCENT,
+		accent_text: DARK_ACCENT_TEXT,
 		positive: rgb(0x2fb87a),
 		warning: rgb(0xe8a33d),
-		danger: rgb(0xef5561),
+		danger: rgb(0xf2564a),
 		mention_bg: MENTION_BG,
-		mention_text: rgb(0xbcd9ff),
+		mention_text: rgb(0xffc7d8),
 		backdrop: None,
 		canvas: chat,
 		surface: sidebar,
@@ -315,37 +320,38 @@ fn gradient(stops: [u32; 2]) -> Palette {
 }
 pub fn builtin_colors(dark: bool, variant: Variant) -> Palette {
 	let palette = match variant {
+		// House neutrals carry a plum cast, so the rose accent sits in the surfaces' own hue.
 		Variant::Standard if dark => dark_common(
-			rgb(0x0e0e10),
-			rgb(0x141416),
-			rgb(0x18181b),
-			rgb(0x202023),
-			rgb(0x242427),
-			rgb(0x2e2e32),
-			rgb(0x27272a),
+			rgb(0x0f090c),
+			rgb(0x150d11),
+			rgb(0x191015),
+			rgb(0x22161c),
+			rgb(0x291b22),
+			rgb(0x35232c),
+			rgb(0x30212a),
 		),
 		Variant::Standard => Palette {
-			base: rgb(0xe4e4e7),
-			sidebar: rgb(0xf2f2f4),
+			base: rgb(0xece4e8),
+			sidebar: rgb(0xf6f1f3),
 			chat: Color32::WHITE,
-			raised: rgb(0xebebee),
-			hover: rgb(0xe8e8eb),
-			selected: rgb(0xdadade),
-			border: rgb(0xe0e0e4),
-			text_strong: rgb(0x0f0f11),
-			text: rgb(0x2f2f34),
-			muted: rgb(0x62626a),
-			link: rgb(0x0b63d6),
+			raised: rgb(0xf1eaed),
+			hover: rgb(0xece3e7),
+			selected: rgb(0xe0d4da),
+			border: rgb(0xe6dce1),
+			text_strong: rgb(0x14090e),
+			text: rgb(0x33262c),
+			muted: rgb(0x6b5a62),
+			link: rgb(0xb0204f),
 			accent: PRIMARY,
 			accent_text: Color32::WHITE,
 			positive: rgb(0x1c9c63),
 			warning: rgb(0xc8860f),
 			danger: rgb(0xd23742),
 			mention_bg: MENTION_BG,
-			mention_text: rgb(0x14508f),
+			mention_text: rgb(0x8f1a44),
 			backdrop: None,
 			canvas: Color32::WHITE,
-			surface: rgb(0xf2f2f4),
+			surface: rgb(0xf6f1f3),
 		},
 		Variant::Eclipse => dark_common(
 			Color32::BLACK,
@@ -610,7 +616,8 @@ impl MessageCardSurface {
 pub fn glass(ui: &egui::Ui, color: Color32) -> (Color32, Stroke) {
 	let behind = u16::from(chat_alpha(ui));
 	if behind == 255 {
-		return (color, Stroke::NONE);
+		// Opaque surfaces keep their fill and take the same hairline, the house edge.
+		return (color, hairline(ui));
 	}
 	let alpha = behind + (255 - behind) * 9 / 20;
 	let [r, g, b, _] = color.to_srgba_unmultiplied();
@@ -620,8 +627,8 @@ pub fn glass(ui: &egui::Ui, color: Color32) -> (Color32, Stroke) {
 	)
 }
 
-/// The faint edge that outlines glass and see-through cards.
-fn hairline(ui: &egui::Ui) -> Stroke {
+/// The faint edge that outlines cards, fields and floating controls on any surface.
+pub fn hairline(ui: &egui::Ui) -> Stroke {
 	Stroke::new(
 		1.0,
 		if ui.visuals().dark_mode {
@@ -683,7 +690,7 @@ pub fn account_card_surface(ui: &egui::Ui) -> (Color32, Stroke) {
 	if layered_sections(ui) {
 		(Color32::TRANSPARENT, hairline(ui))
 	} else {
-		(palette(ui).raised, Stroke::NONE)
+		(palette(ui).raised, hairline(ui))
 	}
 }
 
@@ -1131,7 +1138,7 @@ pub fn apply(ctx: &egui::Context) {
 		};
 		style.visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
 		style.visuals.window_fill = p.raised.to_opaque();
-		style.visuals.window_corner_radius = metrics.window_radius.unwrap_or(12).into();
+		style.visuals.window_corner_radius = metrics.window_radius.unwrap_or(14).into();
 		style.visuals.menu_corner_radius = metrics.menu_radius.unwrap_or(12).into();
 		style.visuals.window_stroke = Stroke::new(1.0, p.border);
 		style.visuals.window_shadow = egui::epaint::Shadow {
@@ -1164,21 +1171,33 @@ pub fn apply(ctx: &egui::Context) {
 			&mut style.visuals.widgets.active,
 			&mut style.visuals.widgets.open,
 		] {
-			widget.corner_radius = metrics.widget_radius.unwrap_or(8).into();
+			widget.corner_radius = metrics.widget_radius.unwrap_or(10).into();
 			widget.fg_stroke = Stroke::new(1.0, p.text);
 			widget.bg_stroke = Stroke::NONE;
 			widget.expansion = 0.0;
 		}
+		// Every framed control (button, field, combo box, check box) wears a hairline: a veil
+		// of the text colour, so the edge reads on any surface without a per-surface tone.
+		style.visuals.widgets.inactive.bg_stroke =
+			Stroke::new(1.0, p.text_strong.gamma_multiply(0.09));
+		style.visuals.widgets.hovered.bg_stroke =
+			Stroke::new(1.0, p.text_strong.gamma_multiply(0.16));
+		style.visuals.widgets.active.bg_stroke =
+			Stroke::new(1.0, p.text_strong.gamma_multiply(0.2));
+		style.visuals.widgets.open.bg_stroke = Stroke::new(1.0, p.text_strong.gamma_multiply(0.2));
 		style.visuals.widgets.noninteractive.bg_fill = p.sidebar;
 		style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
+		// Framed buttons lift off `raised` by a share of the text colour: a button filled with
+		// `raised` itself vanished on cards and composers, which are `raised` or a step above.
+		let button = |lift: f32| mix(p.raised, p.text_strong, lift);
 		style.visuals.widgets.inactive.bg_fill = p.raised;
-		style.visuals.widgets.inactive.weak_bg_fill = p.raised;
+		style.visuals.widgets.inactive.weak_bg_fill = button(0.09);
 		style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, p.text);
 		style.visuals.widgets.hovered.bg_fill = p.selected;
-		style.visuals.widgets.hovered.weak_bg_fill = p.hover;
+		style.visuals.widgets.hovered.weak_bg_fill = button(0.15);
 		style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, p.text_strong);
 		style.visuals.widgets.active.bg_fill = p.selected;
-		style.visuals.widgets.active.weak_bg_fill = p.selected;
+		style.visuals.widgets.active.weak_bg_fill = button(0.2);
 		style.visuals.widgets.active.fg_stroke = Stroke::new(1.0, p.text_strong);
 		style.visuals.widgets.open.bg_fill = p.selected;
 		style.visuals.widgets.open.weak_bg_fill = p.selected;
@@ -1501,11 +1520,11 @@ fn wide_button(
 		text.gamma_multiply(0.6)
 	};
 	let painter = ui.painter();
-	painter.rect(rect, 8, fill, stroke, egui::StrokeKind::Inside);
+	painter.rect(rect, 10, fill, stroke, egui::StrokeKind::Inside);
 	if response.has_focus() {
 		painter.rect_stroke(
 			rect.expand(2.0),
-			10,
+			12,
 			Stroke::new(2.0, p.accent),
 			egui::StrokeKind::Outside,
 		);
@@ -1871,7 +1890,14 @@ mod tests {
 				assert_eq!((p.text, p.raised), (base.text, base.raised));
 			}
 			assert_eq!(customize(base, None), base);
-			assert_eq!(base.accent, rgb(DEFAULT_PRIMARY_RGB));
+			assert_eq!(
+				base.accent,
+				if dark {
+					DARK_ACCENT
+				} else {
+					rgb(DEFAULT_PRIMARY_RGB)
+				}
+			);
 		}
 
 		{
@@ -2226,11 +2252,11 @@ pub fn button(ui: &mut egui::Ui, label: &str, kind: ButtonKind) -> egui::Respons
 		text.gamma_multiply(0.5)
 	};
 	let painter = ui.painter();
-	painter.rect(rect, 8, fill, stroke, egui::StrokeKind::Inside);
+	painter.rect(rect, 10, fill, stroke, egui::StrokeKind::Inside);
 	if response.has_focus() {
 		painter.rect_stroke(
 			rect.expand(2.0),
-			10,
+			12,
 			Stroke::new(2.0, p.accent),
 			egui::StrokeKind::Outside,
 		);
@@ -2269,7 +2295,7 @@ pub fn input(ui: &mut egui::Ui, edit: egui::TextEdit<'_>) -> egui::Response {
 			.frame(
 				egui::Frame::new()
 					.fill(colors.base)
-					.corner_radius(8)
+					.corner_radius(10)
 					.inner_margin(egui::Margin::symmetric(12, 9)),
 			),
 	);
@@ -2279,7 +2305,7 @@ pub fn input(ui: &mut egui::Ui, edit: egui::TextEdit<'_>) -> egui::Response {
 		Stroke::new(1.0, colors.border)
 	};
 	ui.painter()
-		.rect_stroke(response.rect, 8, stroke, egui::StrokeKind::Inside);
+		.rect_stroke(response.rect, 10, stroke, egui::StrokeKind::Inside);
 	response
 }
 

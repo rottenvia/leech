@@ -1,8 +1,8 @@
 # Serein interface direction
 
 Serein follows the familiar three-column messaging layout and density of a modern desktop chat
-client, but it is not a visual clone: it uses its own cool blue-grey neutrals, the Serein azure
-accent, softer corner radii and its own server-rail selection language. The palette, typography
+client, but it is not a visual clone: it uses its own plum-cast neutrals, a rose accent,
+hairline edges, softer corner radii and its own server-rail selection language. The palette, typography
 and spacing live in `crates/ui/src/design.rs`; every view resolves colours through
 `design::palette(ui)`.
 
@@ -10,8 +10,8 @@ and spacing live in `crates/ui/src/design.rs`; every view resolves colours throu
 
 The `Palette` carries surface roles: `base` (title strip and server rail), `sidebar`
 (channel and member lists), `chat`, `raised` (composer, cards, search field, popovers), `hover`,
-`selected`, `border`, `text_strong`/`text`/`muted`, `link`, `accent` (Serein azure `#1a72e8`),
-presence
+`selected`, `border`, `text_strong`/`text`/`muted`, `link`, `accent` (rose: pastel `#f0719b`
+under dark text on dark appearances, `#d6336c` under white text on light ones), presence
 colours, mention colours and an optional two-stop `backdrop` gradient. `canvas` and `surface`
 remain as aliases of `chat` and `sidebar` for older call sites.
 
@@ -19,7 +19,7 @@ A process-wide `Variant` recolours the whole application on top of egui's light/
 
 | Preset | Surfaces |
 |---|---|
-| Serein | House neutral greys: dark (`#0e0e10` / `#141416` / `#18181b` / `#202023`) or light (`#e4e4e7` / `#f2f2f4` / white), following System/Light/Dark |
+| Serein | House plum-cast neutrals: dark (`#0f090c` / `#150d11` / `#191015` / `#22161c`) or light (`#ece4e8` / `#f6f1f3` / white), following System/Light/Dark |
 | Eclipse | Deep black surfaces for OLED displays |
 | Slate | Lighter blue-grey surfaces (`#1b1f2a` / `#262b38` / `#2c3140`) |
 | Nightfall, Ember, Verdant, Afterglow | Gradient backdrop painted under translucent dark surfaces |
@@ -47,8 +47,19 @@ and the Direct Messages tile at the top of the server rail.
 Server tiles keep one constant rounded-square silhouette instead of morphing between a circle and
 a squircle. Selection and unread state are shown by `notifications::rail_indicator`: a 3px accent
 underline below the tile (wide when selected, narrower on hover), a short neutral tick for unread,
-and a 2px accent ring around the selected tile. Controls use an 8px widget radius and 12px
-window/menu radius, softer than the 4px/8px pair the layout started from.
+and a 2px accent ring around the selected tile. Controls use a 10px widget radius, 12px menus and
+cards and 14px windows.
+
+## Buttons and edges
+
+Framed controls (buttons, fields, combo boxes, check boxes) lift off `raised` by a share of the
+text colour and wear a one-pixel hairline, a translucent veil of the text colour, so they read
+on every surface. Cards, the composer and the account card take the same hairline.
+
+Icon buttons come from `crates/ui/src/icons.rs`: bare (plate on hover), framed (resting
+hairline, the composer's attach) and accent (filled while enabled, the composer's send). Their
+hover and pressed plates are veils of the text colour with an 8px radius. Toggles keep a faint
+plate while on. Account labels (APP, BOT) are tinted accent chips, not solid blocks.
 
 ## Typography
 
@@ -136,8 +147,12 @@ Voice follows Discord's call screens: a black stage with 80px participant avatar
 above the conversation) or 16:9 tiles with name badges (guild channels), a bottom control bar
 of dark pills (mute with settings chevron, camera, screen share, activities, soundboard, more)
 and a red hang-up button, a green "In a call" badge in the header, mute/deafen toggles in the
-account card, and a "Voice Connected" panel above it while connected. Camera, screen share,
-activities and soundboard are shown disabled: Serein has no such features.
+account card, and a "Voice Connected" panel above it while connected. The panel follows
+Discord's: noise suppression and a red disconnect beside the title, then two equal cells for
+camera (split with its settings chevron) and screen share, filled with the accent while on.
+Each mute/deafen toggle shares one plate with its settings chevron and turns red while latched;
+the call bar tints its microphone half the same way. Activities and soundboard are absent:
+Serein has no such features.
 
 ## Verification notes
 

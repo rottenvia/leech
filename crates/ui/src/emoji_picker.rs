@@ -854,14 +854,14 @@ impl Picker {
 		let trigger = crate::icons::toggle(
 			ui,
 			crate::icons::Icon::Smile,
-			28.0,
+			32.0,
 			self.open && self.tab == Tab::Emoji,
 			&crate::i18n::translate("emoji-picker-show-insert-an-emoji"),
 		);
 		let gif_trigger = crate::icons::toggle(
 			ui,
 			crate::icons::Icon::Gif,
-			28.0,
+			32.0,
 			self.open && self.tab == Tab::Gifs,
 			&crate::i18n::translate("emoji-picker-show-send-a-gif"),
 		);

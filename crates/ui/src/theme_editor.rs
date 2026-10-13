@@ -882,8 +882,8 @@ impl ThemeEditor {
 									[12, 6],
 								);
 								for (label, value, default) in [
-									("Control corners", &mut style.widget_radius, 8),
-									("Window corners", &mut style.window_radius, 12),
+									("Control corners", &mut style.widget_radius, 10),
+									("Window corners", &mut style.window_radius, 14),
 									("Menu corners", &mut style.menu_radius, 12),
 								] {
 									changed |= metric(ui, label, value, default, 0..=24);
