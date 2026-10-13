@@ -2119,7 +2119,16 @@ impl MessagingUi {
 					} else {
 						egui::Color32::TRANSPARENT
 					})
-					.inner_margin(egui::Margin::symmetric(16, 0)),
+					.inner_margin(egui::Margin::symmetric(16, 0))
+					// Spanning the search pane, it still stops at the card's right edge.
+					.outer_margin(if search_open && design::floating_panels(ui) {
+						egui::Margin {
+							right: design::PANEL_GAP,
+							..Default::default()
+						}
+					} else {
+						egui::Margin::ZERO
+					}),
 			)
 			.show(ui, |ui| {
 				let rect = ui.max_rect();
@@ -4206,9 +4215,17 @@ impl MessagingUi {
 		// See-through chrome paints each section once; a shared column coat would stack under
 		// the rail and account strip and make them denser than the title bar.
 		let layered = design::layered_sections(ui);
+		// Plain themes float the lists, the conversation and the member pane as rounded
+		// cards on the rail's tone, a gap apart; the backdrop goes down before any of them.
+		let floating = design::floating_panels(ui);
+		let gap = design::PANEL_GAP;
+		if floating {
+			ui.painter()
+				.rect_filled(ui.available_rect_before_wrap(), 0, background.base);
+		}
 		let navigation = egui::Panel::left("navigation")
 			.resizable(true)
-			.show_separator_line(!design::has_window_background(ui))
+			.show_separator_line(!design::has_window_background(ui) && !floating)
 			.default_size(rail + f32::from(self.reading_preferences.sidebar_width).min(sidebar_max))
 			.size_range(rail + 190.0..=rail + sidebar_max)
 			.frame(
@@ -4252,12 +4269,18 @@ impl MessagingUi {
 					.show(ui, |ui| self.account_card(ui, state, &mut commands));
 				self.notification_rail(ui, state, &mut commands);
 				// The lists sit on their own rounded surface beside the rail, above the card.
-				let lists = ui.available_rect_before_wrap();
+				let mut lists = ui.available_rect_before_wrap();
+				if floating {
+					// Same right edge as the account card below, a gap short of the conversation.
+					lists.max.x -= f32::from(gap);
+				}
 				// A window image continues the lists into the card strip, so only it stays square.
 				let rounded = !design::has_window_background(ui);
 				ui.painter().rect_filled(
 					lists,
-					if rounded {
+					if floating {
+						egui::CornerRadius::same(design::PANEL_RADIUS as u8)
+					} else if rounded {
 						egui::CornerRadius {
 							nw: 8,
 							sw: 8,
@@ -4287,7 +4310,14 @@ impl MessagingUi {
 						design::paint_corner_notch(ui.painter(), corner, inward, 8.0, notch);
 					}
 				}
-				self.sidebar(ui, state, &title, &mut commands);
+				if floating {
+					ui.scope_builder(egui::UiBuilder::new().max_rect(lists), |ui| {
+						self.sidebar(ui, state, &title, &mut commands);
+					});
+					design::finish_panel(ui, lists, background.base);
+				} else {
+					self.sidebar(ui, state, &title, &mut commands);
+				}
 			});
 		self.record_reading_sidebar(navigation.response.rect.width() - rail);
 		if self.channel_preferences_changed {
@@ -4323,6 +4353,9 @@ impl MessagingUi {
 			commands.push(command);
 		}
 		let wide_members = ui.available_width() >= 720.0;
+		// Everything right of the navigation column; the floating cards are cut out of it.
+		let shell = ui.available_rect_before_wrap();
+		let mut members_edge = None;
 		if !settings_open
 			&& !self.switcher_frame
 			&& !self.ime_active
@@ -4374,10 +4407,11 @@ impl MessagingUi {
 			} else {
 				(ui.available_width() * 0.6).max(240.0)
 			};
+			// Search results share the conversation's card: one sheet with a divider.
 			egui::Panel::right("search-pane")
 				.resizable(false)
 				.show_separator_line(!design::has_window_background(ui))
-				.exact_size(width)
+				.exact_size(width + if floating { f32::from(gap) } else { 0.0 })
 				.frame(
 					egui::Frame::new()
 						.fill(design::section_surface(
@@ -4385,7 +4419,16 @@ impl MessagingUi {
 							background.sidebar,
 							design::ImageSection::MemberList,
 						))
-						.inner_margin(egui::Margin::same(12)),
+						.inner_margin(egui::Margin::same(12))
+						.outer_margin(if floating {
+							egui::Margin {
+								right: gap,
+								bottom: gap,
+								..Default::default()
+							}
+						} else {
+							egui::Margin::ZERO
+						}),
 				)
 				.show(ui, |ui| {
 					self.search.pane(
@@ -4412,10 +4455,20 @@ impl MessagingUi {
 				commands.push(command);
 			}
 			if wide_members {
-				egui::Panel::right("people-pane")
+				let around = if floating {
+					egui::Margin {
+						left: gap,
+						right: gap,
+						top: 0,
+						bottom: gap,
+					}
+				} else {
+					egui::Margin::ZERO
+				};
+				let people = egui::Panel::right("people-pane")
 					.resizable(false)
-					.show_separator_line(!design::has_window_background(ui))
-					.exact_size(240.0)
+					.show_separator_line(!design::has_window_background(ui) && !floating)
+					.exact_size(240.0 + around.sum().x)
 					.frame(
 						egui::Frame::new()
 							.fill(design::section_surface(
@@ -4428,11 +4481,17 @@ impl MessagingUi {
 								right: 8,
 								top: 8,
 								bottom: 8,
-							}),
+							})
+							.outer_margin(around),
 					)
 					.show(ui, |ui| {
 						self.member_rows(ui, state, &mut commands);
 					});
+				if floating {
+					let card = people.response.rect - around;
+					design::finish_panel(ui, card, background.base);
+					members_edge = Some(people.response.rect.left());
+				}
 			} else {
 				let response = dialog::Dialog::new("members-narrow", language.text("members"))
 					.subtitle(language.text("members-description"))
@@ -4460,7 +4519,20 @@ impl MessagingUi {
 					} else {
 						background.chat
 					})
-					.inner_margin(0),
+					.inner_margin(0)
+					.outer_margin(if floating {
+						egui::Margin {
+							right: if search_open || members_edge.is_some() {
+								0
+							} else {
+								gap
+							},
+							bottom: gap,
+							..Default::default()
+						}
+					} else {
+						egui::Margin::ZERO
+					}),
 			)
 			.show(ui, |ui| {
 				let message_surface =
@@ -4607,13 +4679,14 @@ impl MessagingUi {
 							} else {
 								egui::Color32::TRANSPARENT
 							})
-							// The bottom inset matches the account card's, so the input and the
-							// account pill sit on one line across the window.
+							// Inside a floating card the input keeps the same 16px from the
+							// card's bottom edge as from its sides; flat columns keep the
+							// account card's inset, so both pills sit on one line.
 							.inner_margin(egui::Margin {
 								left: 16,
 								right: 16,
 								top: 2,
-								bottom: 8,
+								bottom: if floating { 16 } else { 8 },
 							}),
 					)
 					.show(ui, |ui| {
@@ -4837,6 +4910,18 @@ impl MessagingUi {
 						}
 					});
 			});
+		if floating {
+			// The conversation card runs from the navigation column to the member card, or to
+			// the window's gap; an open search pane lives inside it.
+			let card = egui::Rect::from_min_max(
+				shell.min,
+				egui::pos2(
+					members_edge.unwrap_or(shell.right() - f32::from(gap)),
+					shell.bottom() - f32::from(gap),
+				),
+			);
+			design::finish_panel(ui, card, background.base);
+		}
 		if state
 			.archives
 			.as_ref()

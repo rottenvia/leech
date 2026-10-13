@@ -663,6 +663,34 @@ pub fn layered_sections(ui: &egui::Ui) -> bool {
 	has_window_background(ui) || (enabled && transparency > 0)
 }
 
+/// Gap between the main window's floating panels and from them to the window edge.
+pub const PANEL_GAP: i8 = 8;
+/// Corner radius of a floating panel, the house radius for cards.
+pub const PANEL_RADIUS: f32 = 12.0;
+
+/// Whether the main window draws its columns as floating rounded panels on the backdrop.
+/// See-through chrome and window images keep the flat columns: a corner cannot be cut out of
+/// a picture with a flat colour.
+pub fn floating_panels(ui: &egui::Ui) -> bool {
+	!layered_sections(ui)
+}
+
+/// Round a panel whose content was painted square: cover its four corners with the backdrop,
+/// then draw the house hairline. Call it after the panel's content, so headers, stages and
+/// media inside never need to know about the corners.
+pub fn finish_panel(ui: &egui::Ui, rect: egui::Rect, backdrop: Color32) {
+	let painter = ui.painter().with_clip_rect(rect.expand(1.0));
+	for (corner, inward) in [
+		(rect.left_top(), egui::vec2(1.0, 1.0)),
+		(rect.right_top(), egui::vec2(-1.0, 1.0)),
+		(rect.left_bottom(), egui::vec2(1.0, -1.0)),
+		(rect.right_bottom(), egui::vec2(-1.0, -1.0)),
+	] {
+		paint_corner_notch(&painter, corner, inward, PANEL_RADIUS, backdrop);
+	}
+	painter.rect_stroke(rect, PANEL_RADIUS, hairline(ui), egui::StrokeKind::Inside);
+}
+
 /// Fill the notches outside a rounded corner at `corner`, for surfaces that cannot paint a
 /// shared coat underneath. `inward` points from the corner into the rounded rect.
 pub fn paint_corner_notch(

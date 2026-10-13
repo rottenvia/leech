@@ -106,7 +106,13 @@ The bundled faces remain upstream's hinted TrueType builds. See `assets/README.m
   immediately for tiling window managers; the device preference also applies at startup.
 - 72px server rail (`base`): 48px home button and server icons (circle, rounded square when
   hovered/selected), white edge pill (8px unread, 20px hover, 40px selected), red mention badges.
-- The lists and conversation share one rounded surface beside the rail. Channel sidebar
+- The shell is three floating panels on the `base` backdrop: the lists, the conversation and
+  the member pane are rounded cards (12px radius, one-pixel hairline) with an 8px gap between
+  them and to the window edge; the account card under the lists shares their right edge. An
+  open search pane lives inside the conversation card behind a divider. Content is painted
+  square and `design::finish_panel` rounds each card afterwards, so headers, the call stage and
+  media need no corner handling. Window images and see-through chrome keep flat columns, since
+  a corner cannot be cut out of a picture with a flat colour. Channel sidebar
   (240px default, resizable): 48px header with the server name, category eyebrows with chevrons,
   32px rows with `#`/speaker/forum/thread glyphs, `selected`/`hover` fills, unread edge pill,
   mention badge; DM rows are 44px with 32px avatars. Forum rows open their post archive.
