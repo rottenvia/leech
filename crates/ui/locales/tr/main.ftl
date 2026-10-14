@@ -4058,13 +4058,9 @@ video-show-player-video-volume = Video hacmi
 
 ## crates/ui/src/voice.rs
 # Context: call_bar
-voice-call-bar-call-in-progress = Arama devam ediyor
-# Context: call_bar
 voice-call-bar-incoming-call = Gelen arama…
 # Context: call_bar
 voice-call-bar-join-call = Görüşmeye katıl
-# Context: call_bar
-voice-call-bar-reconnect-to-refresh-call = Aramayı yenilemek için yeniden bağlanın
 # Context: call_controls
 voice-call-controls-disconnect = Bağlantıyı kes
 # Context: call_controls

@@ -94,7 +94,7 @@ impl Screen {
 		self.closing = None;
 		// Keep one in-flight OS enumeration tracked until it completes.
 		self.retire_live();
-		self.status = "Screen sharing stopped";
+		self.status = "";
 	}
 
 	fn retire_live(&mut self) {
@@ -199,7 +199,7 @@ impl Screen {
 				if let Some(reason) = reason {
 					self.status = reason;
 				} else if !ours || self.status == STOPPING {
-					self.status = "Screen sharing stopped";
+					self.status = "";
 				}
 			}
 			screen::Event::Failed(message) => self.request_stop(message),

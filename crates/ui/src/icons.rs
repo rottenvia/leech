@@ -145,13 +145,15 @@ pub enum Icon {
 	Prohibit,
 	UserMinus,
 	At,
+	Signal,
+	Sticker,
 	/// Horizontally mirrored reply glyph from the shared atlas.
 	Forward,
 }
 
 impl Icon {
 	/// Canonical atlas cells; Forward reuses the mirrored Reply cell.
-	pub const ALL: [Icon; 126] = [
+	pub const ALL: [Icon; 128] = [
 		Icon::ChevronDown,
 		Icon::ChevronRight,
 		Icon::Gear,
@@ -278,6 +280,8 @@ impl Icon {
 		Icon::Prohibit,
 		Icon::UserMinus,
 		Icon::At,
+		Icon::Signal,
+		Icon::Sticker,
 	];
 	/// Upstream icon name recorded in `index.tsv`.
 	fn asset(self) -> &'static str {
@@ -305,6 +309,8 @@ impl Icon {
 			Icon::Noise => "noise",
 			Icon::NoiseOff => "noise-slash",
 			Icon::Window => "window",
+			Icon::Sticker => "sticker",
+			Icon::Signal => "signal",
 			Icon::BellSlash => "bell-slash",
 			Icon::Envelope => "envelope-simple",
 			Icon::Prohibit => "prohibit",
@@ -564,15 +570,8 @@ pub(crate) fn plate(ui: &egui::Ui, response: &Response, active: bool) -> Color32
 enum Face {
 	/// Glyph only; the plate appears on hover.
 	Bare,
-	/// Glyph inside a resting hairline, for a standalone action.
-	Framed,
 	/// Filled with the accent while enabled: the one confirming action in a row.
 	Accent,
-}
-
-/// Icon button with a resting hairline, for a standalone action such as the composer's attach.
-pub(crate) fn framed_button(ui: &mut egui::Ui, icon: Icon, size: f32, label: &str) -> Response {
-	button_with_tooltip(ui, icon, size, label, false, Face::Framed)
 }
 
 /// Icon button filled with the accent while enabled, for the one confirming action in a row.

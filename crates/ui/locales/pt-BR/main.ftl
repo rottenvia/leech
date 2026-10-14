@@ -4064,13 +4064,9 @@ video-show-player-video-volume = Volume do vídeo
 
 ## crates/ui/src/voice.rs
 # Context: call_bar
-voice-call-bar-call-in-progress = Chamada em andamento
-# Context: call_bar
 voice-call-bar-incoming-call = Chamada recebida…
 # Context: call_bar
 voice-call-bar-join-call = Participar da chamada
-# Context: call_bar
-voice-call-bar-reconnect-to-refresh-call = Reconecte para atualizar a chamada
 # Context: call_controls
 voice-call-controls-disconnect = Desconectar
 # Context: call_controls

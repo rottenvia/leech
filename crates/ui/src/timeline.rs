@@ -459,7 +459,12 @@ fn reserved_chrome(ui: &egui::Ui, message: &Message, width: f32) -> f32 {
 
 pub(crate) fn fill_header_line(ui: &mut egui::Ui, compact: bool, text_line: egui::Rect) {
 	let slack = MESSAGE_LINE - text_line.height();
-	if !compact && slack > 0.0 && ui.min_rect().bottom() - text_line.bottom() < 1.0 {
+	// An empty body (a system row, an attachment alone) has no line to pad.
+	if !compact
+		&& text_line.height() > 0.0
+		&& slack > 0.0
+		&& ui.min_rect().bottom() - text_line.bottom() < 1.0
+	{
 		ui.expand_to_include_y(text_line.bottom() + slack);
 	}
 }
@@ -1817,6 +1822,8 @@ fn show_system(
 	let (open_thread, open_all) = targets;
 	{
 		let colors = crate::design::palette(ui);
+		// One message line tall, not the 32-point control height rows default to.
+		let interact = std::mem::replace(&mut ui.spacing_mut().interact_size.y, MESSAGE_LINE);
 		ui.horizontal_wrapped(|ui| {
 			ui.spacing_mut().item_spacing = egui::vec2(0.0, 2.0);
 			for segment in &crate::i18n::system_segments(system) {
@@ -1907,6 +1914,7 @@ fn show_system(
 				.on_hover_text_with(|| format!("{time} UTC"));
 			surface.exclude(stamp.rect);
 		});
+		ui.spacing_mut().interact_size.y = interact;
 	}
 }
 impl TimelineView {
@@ -2796,6 +2804,9 @@ impl TimelineView {
 
 				let compact =
 					self.compact_messages || grouped(previous, message, self.unread_boundary);
+				// Discord packs consecutive system rows (calls, joins) one line apart.
+				let system_run = message.system_message().is_some()
+					&& previous.is_some_and(|previous| previous.system_message().is_some());
 				let new_day = previous
 					.is_none_or(|previous| timestamp(previous.id).date() != timestamp(id).date());
 				let response = ui.scope_builder(egui::UiBuilder::new().scope_id(row_id), |ui| {
@@ -2824,6 +2835,8 @@ impl TimelineView {
 							right: 16,
 							top: if self.compact_messages {
 								3
+							} else if system_run {
+								0
 							} else if compact {
 								1
 							} else {
@@ -3245,6 +3258,16 @@ impl TimelineView {
 											egui::Layout::left_to_right(egui::Align::Center),
 											|ui| {
 												ui.spacing_mut().item_spacing.x = 8.0;
+												// Discord shows the author's server tag between
+												// the name and the time.
+												let tag = message.author.primary_guild.as_deref();
+												let reserve = 48.0
+													+ tag.map_or(0.0, |tag| {
+														8.0 + crate::profiles::server_tag_width(
+															ui,
+															Some(tag),
+														)
+													});
 												let author = crate::account_badge::name(
 													ui,
 													&message.author,
@@ -3256,7 +3279,7 @@ impl TimelineView {
 														colors.chat,
 													),
 													egui::Sense::click(),
-													48.0,
+													reserve,
 												)
 												.on_hover_cursor(egui::CursorIcon::PointingHand);
 												if avatar_hot || author.hovered() {
@@ -3281,6 +3304,12 @@ impl TimelineView {
 													&message.author,
 												);
 												surface.keep(&author);
+												if let Some(tag) = tag {
+													let tag = crate::profiles::server_tag(
+														ui, tag, avatars, state.demo,
+													);
+													surface.keep(&tag);
+												}
 												let time = timestamp(id);
 												let time = ui
 													.label(
@@ -6789,6 +6818,67 @@ mod tests {
 			);
 		}
 	}
+	#[test]
+	fn consecutive_call_rows_sit_one_line_apart_like_discord() {
+		fn tops(shape: &egui::Shape, out: &mut Vec<f32>) {
+			match shape {
+				egui::Shape::Text(t) if t.galley.job.text == "Robin" => out.push(t.pos.y),
+				egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| tops(s, out)),
+				_ => {}
+			}
+		}
+		let ctx = egui::Context::default();
+		crate::design::apply(&ctx);
+		let mut state = State {
+			selected: Some(Id(20)),
+			demo: true,
+			..Default::default()
+		};
+		for id in 1..=3 {
+			let mut message = text_message(id);
+			message.kind = 3;
+			message.content.clear();
+			state.timeline.insert(message, false, false).unwrap();
+		}
+		let mut view = TimelineView::default();
+		let mut avatars = crate::avatars::Avatars::default();
+		let mut painted = vec![];
+		for _ in 0..5 {
+			painted.clear();
+			let output = ctx.run_ui(
+				egui::RawInput {
+					screen_rect: Some(egui::Rect::from_min_size(
+						egui::Pos2::ZERO,
+						egui::vec2(900.0, 800.0),
+					)),
+					..Default::default()
+				},
+				|ui| {
+					view.show(
+						ui,
+						&mut state,
+						&mut None,
+						&mut None,
+						(
+							&mut avatars,
+							&mut crate::profiles::ProfileSession::default(),
+						),
+						None,
+					);
+				},
+			);
+			for shape in &output.shapes {
+				tops(&shape.shape, &mut painted);
+			}
+			output.drop_without_applying_deltas();
+		}
+		assert_eq!(painted.len(), 3, "{painted:?}");
+		for pair in painted.windows(2) {
+			let pitch = pair[1] - pair[0];
+			assert!((22.0..=30.0).contains(&pitch), "system rows {pitch} apart");
+		}
+	}
+
 	#[test]
 	fn system_events_render_wrap_and_keep_unknown_fallbacks() {
 		fn text(shape: &egui::Shape, out: &mut Vec<String>) {

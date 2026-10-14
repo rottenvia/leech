@@ -4077,13 +4077,9 @@ video-show-player-video-volume = Hlasitost videa
 
 ## crates/ui/src/voice.rs
 # Context: call_bar
-voice-call-bar-call-in-progress = Probíhá hovor
-# Context: call_bar
 voice-call-bar-incoming-call = Příchozí hovor…
 # Context: call_bar
 voice-call-bar-join-call = Připojte se k hovoru
-# Context: call_bar
-voice-call-bar-reconnect-to-refresh-call = Pro obnovení hovoru se znovu připojte
 # Context: call_controls
 voice-call-controls-disconnect = Odpojit
 # Context: call_controls

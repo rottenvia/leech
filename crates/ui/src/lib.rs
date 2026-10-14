@@ -422,6 +422,8 @@ pub struct MessagingUi {
 	pub voice_focus_participants: bool,
 	/// How far the call stage's hover chrome (and tile name badges) has faded out: 0 shown.
 	voice_chrome_hidden: f32,
+	/// DM call joined with "Join with video": the camera starts once it connects.
+	voice_camera_on_join: Option<Id>,
 	/// Session-only visibility of the selected guild voice channel's chat.
 	pub voice_chat_open: bool,
 	/// Tile click to start (`Some(user)`) or stop (`None`) watching, applied by the stage.
@@ -1756,13 +1758,41 @@ impl MessagingUi {
 						self.server_menu.header(ui, state, guild, title);
 						return;
 					}
-					ui.add(
-						egui::Label::new(
-							design::semibold(ui, title, 15.0).color(colors.text_strong),
+					// Discord's DM column keeps the conversation search in its header strip.
+					let ctx = ui.ctx().clone();
+					let find = ui
+						.add_enabled_ui(
+							!self.ime_active
+								&& !ctx.input(|input| {
+									input
+										.events
+										.iter()
+										.any(|event| matches!(event, egui::Event::Ime(_)))
+								}),
+							|ui| {
+								ui.add_sized(
+									[ui.available_width(), 30.0],
+									egui::Button::new(
+										RichText::new(language.text("find-conversation"))
+											.size(13.0),
+									)
+									.fill(design::field_fill(&colors))
+									.truncate(),
+								)
+							},
 						)
-						.truncate()
-						.selectable(false),
-					);
+						.inner
+						.on_hover_text(language.text("find-conversation-tooltip"));
+					find.widget_info(|| {
+						egui::WidgetInfo::labeled(
+							egui::Role::Button,
+							ui.is_enabled(),
+							language.text("find-conversation"),
+						)
+					});
+					if find.clicked() {
+						self.switcher.open(&ctx);
+					}
 				});
 				ui.painter().hline(
 					rect.x_range().expand(16.0),
@@ -1778,57 +1808,58 @@ impl MessagingUi {
 				bottom: 0,
 			})
 			.show(ui, |ui| {
-				let ctx = ui.ctx().clone();
 				if self.guild.is_none() {
-					// Search and Friends share one row; Friends is the compact glyph beside it.
-					ui.horizontal(|ui| {
-						ui.spacing_mut().item_spacing.x = 6.0;
-						let find = ui
-							.add_enabled_ui(
-								!self.ime_active
-									&& !ctx.input(|input| {
-										input
-											.events
-											.iter()
-											.any(|event| matches!(event, egui::Event::Ime(_)))
-									}),
-								|ui| {
-									ui.add_sized(
-										[(ui.available_width() - 36.0).max(60.0), 30.0],
-										// Inset like the header search field, not a raised action.
-										egui::Button::new(language.text("find-conversation"))
-											.fill(colors.raised)
-											.truncate(),
-									)
-								},
-							)
-							.inner
-							.on_hover_text(language.text("find-conversation-tooltip"));
-						find.widget_info(|| {
-							egui::WidgetInfo::labeled(
-								egui::Role::Button,
-								ui.is_enabled(),
-								language.text("find-conversation"),
-							)
-						});
-						if find.clicked() {
-							self.switcher.open(&ctx);
-						}
-						let friends = state.selected.is_none();
-						if icons::toggle(
-							ui,
-							icons::Icon::People,
-							30.0,
-							friends,
-							&language.text("friends"),
+					// Discord's Friends row, in the geometry of the conversation rows below it.
+					let selected = state.selected.is_none();
+					let (rect, response) = ui.allocate_exact_size(
+						egui::vec2(ui.available_width(), 44.0),
+						egui::Sense::click(),
+					);
+					let row = rect.shrink2(egui::vec2(0.0, 1.0));
+					let hovered = response.hovered() || response.has_focus();
+					if selected {
+						ui.painter().rect_filled(row, 8, colors.selected);
+					} else if hovered {
+						ui.painter().rect_filled(
+							row,
+							8,
+							design::row_highlight(ui, colors.hover, 1.0),
+						);
+					}
+					let ink = if selected || hovered {
+						colors.text_strong
+					} else {
+						colors.muted
+					};
+					icons::paint(
+						ui.painter(),
+						icons::Icon::People,
+						egui::Rect::from_center_size(
+							egui::pos2(row.left() + 24.0, row.center().y),
+							egui::Vec2::splat(22.0),
+						),
+						ink,
+					);
+					ui.painter().text(
+						egui::pos2(row.left() + 52.0, row.center().y),
+						egui::Align2::LEFT_CENTER,
+						language.text("friends"),
+						egui::FontId::new(15.0, design::medium_family(ui.ctx())),
+						ink,
+					);
+					response.widget_info(|| {
+						egui::WidgetInfo::selected(
+							egui::Role::Button,
+							true,
+							selected,
+							language.text("friends"),
 						)
-						.clicked()
-						{
-							state.open_home();
-							self.guild = None;
-							self.search.open = false;
-						}
 					});
+					if response.clicked() {
+						state.open_home();
+						self.guild = None;
+						self.search.open = false;
+					}
 					ui.add_space(8.0);
 				}
 				if let Some(guild) = self.guild
@@ -2015,38 +2046,78 @@ impl MessagingUi {
 														.truncate()
 														.selectable(false),
 													);
-													ui.add(
-														egui::Label::new(
-															RichText::new(
-																if !self
-																	.own_presence
-																	.custom_status
-																	.is_empty()
-																{
-																	self.own_presence
-																		.custom_status
-																		.clone()
-																} else if let Some(game) = self
-																	.own_game
-																	.as_deref()
-																	.filter(|_| {
-																		self.share_game_activity
-																	}) {
-																	game.to_owned()
-																} else if state.demo {
-																	language.text("offline-preview")
-																} else if state.gateway_connected {
-																	language.text(account_menu::presence_status_key(self.own_presence.status))
-																} else {
-																	language.text("reconnecting")
-																},
-															)
-															.size(12.0)
-															.color(colors.muted),
+													// Discord swaps the status for a green
+													// handset and "In a call" while connected.
+													let in_call =
+														state.voice.active.as_ref().is_some_and(
+															|call| {
+																matches!(
+															call.phase,
+															client_core::voice::Phase::Connected
+																| client_core::voice::Phase::Waiting
 														)
-														.truncate()
-														.selectable(false),
-													);
+															},
+														);
+													if in_call {
+														ui.horizontal(|ui| {
+															ui.spacing_mut().item_spacing.x = 4.0;
+															ui.spacing_mut().interact_size.y = 0.0;
+															icons::inline(
+																ui,
+																icons::Icon::InCall,
+																12.0,
+																colors.positive,
+															);
+															ui.add(
+																egui::Label::new(
+																	RichText::new(
+																		language.text("in-a-call"),
+																	)
+																	.size(12.0)
+																	.color(colors.muted),
+																)
+																.truncate()
+																.selectable(false),
+															);
+														});
+													} else {
+														ui.add(
+															egui::Label::new(
+																RichText::new(
+																	if !self
+																		.own_presence
+																		.custom_status
+																		.is_empty()
+																	{
+																		self.own_presence
+																			.custom_status
+																			.clone()
+																	} else if let Some(game) = self
+																		.own_game
+																		.as_deref()
+																		.filter(|_| {
+																			self.share_game_activity
+																		}) {
+																		game.to_owned()
+																	} else if state.demo {
+																		language
+																			.text("offline-preview")
+																	} else if state
+																		.gateway_connected
+																	{
+																		language.text(account_menu::presence_status_key(self.own_presence.status))
+																	} else {
+																		language
+																			.text("reconnecting")
+																	},
+																)
+																.size(12.0)
+																.color(colors.muted),
+															)
+															.truncate()
+															.selectable(false),
+														);
+													}
 												})
 												.response;
 											let identity = ui
@@ -2316,14 +2387,15 @@ impl MessagingUi {
 						}
 					}
 					ui.add_space(4.0);
-					if icons::toggle(
-						ui,
-						icons::Icon::People,
-						32.0,
-						show_members,
-						&language.text("show-member-list"),
-					)
-					.clicked()
+					if !dm
+						&& icons::toggle(
+							ui,
+							icons::Icon::People,
+							32.0,
+							show_members,
+							&language.text("show-member-list"),
+						)
+						.clicked()
 					{
 						if wide_members {
 							let shown = self.members_preference(state);
@@ -2380,17 +2452,23 @@ impl MessagingUi {
 					});
 					let can_reconnect = state.auth == client_core::auth::AuthState::Authenticated
 						&& !state.gateway_connected;
-					let reload = ui
-						.add_enabled_ui(can_reload || can_reconnect, |ui| {
-							icons::button(
-								ui,
-								icons::Icon::Reload,
-								32.0,
-								&language.text("reload-history"),
-							)
-						})
-						.inner;
-					if reload.clicked() {
+					// Discord has no reload button; it appears only when history failed, went
+					// stale or the connection is lost.
+					let needed = can_reconnect
+						|| (can_reload
+							&& matches!(
+								state.freshness,
+								Freshness::Stale | Freshness::Unavailable
+							));
+					if needed
+						&& icons::button(
+							ui,
+							icons::Icon::Reload,
+							32.0,
+							&language.text("reload-history"),
+						)
+						.clicked()
+					{
 						if can_reconnect {
 							self.reconnect_requested = true;
 						}
@@ -2400,12 +2478,18 @@ impl MessagingUi {
 						}
 					}
 				}
-				if let Some(channel) = state.selected.filter(|_| {
+				// Discord's DM header offers voice and video calls only outside that call.
+				if let Some(channel) = state.selected.filter(|id| {
 					channel
 						.as_ref()
 						.is_some_and(|c| c.guild.is_none() && matches!(c.kind, 1 | 3))
+						&& state
+							.voice
+							.active
+							.as_ref()
+							.is_none_or(|call| call.channel != *id)
 				}) {
-					self.voice_settings(ui, state.demo, state.voice.active.is_some());
+					self.video_call_button(ui, state, channel, commands);
 					self.call_button(ui, state, channel, commands);
 				}
 				ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -2431,7 +2515,7 @@ impl MessagingUi {
 									| client_core::voice::Phase::Waiting
 							)
 					});
-					// The "In a call" label beside the name already says it while we share the call.
+					// The stage already shows who shares our call.
 					let in_voice = !in_call
 						&& channel
 							.as_ref()
@@ -2495,17 +2579,6 @@ impl MessagingUi {
 							}
 						}
 					});
-					if in_call {
-						ui.add_space(4.0);
-						icons::inline(ui, icons::Icon::InCall, 16.0, colors.positive);
-						ui.add(
-							egui::Label::new(
-								design::medium(ui, language.text("in-a-call"), 14.0)
-									.color(colors.positive),
-							)
-							.selectable(false),
-						);
-					}
 				});
 			});
 		});
@@ -3314,7 +3387,7 @@ impl MessagingUi {
                     } else {
                         Some(ui
                             .add_enabled_ui(can_attach || can_create_poll, |ui| {
-                                icons::framed_button(ui, icons::Icon::Plus, 32.0, &crate::i18n::translate("lib-ime-updates-text-attach-files"))
+                                icons::button(ui, icons::Icon::Plus, 32.0, &crate::i18n::translate("lib-ime-updates-text-attach-files"))
                             })
                             .inner
                             .on_hover_text(crate::i18n::translate("lib-ime-updates-text-choose-drop-or-paste-files-ctrl-cmd-option-v-up")))
@@ -4383,7 +4456,13 @@ impl MessagingUi {
 		self.search.sync(&ctx, state, &mut commands);
 		let search_open =
 			self.search.results_visible(state) && state.selected.is_some() && !selected_voice;
+		// Like Discord, a one-to-one DM has no member list: the stage and header name both people.
+		let direct_message = state
+			.selected
+			.and_then(|id| state.channel(id))
+			.is_some_and(|c| c.kind == 1 && c.guild.is_none());
 		let show_members = !selected_voice
+			&& !direct_message
 			&& !search_open
 			&& state.selected.is_some()
 			&& if wide_members {
@@ -8407,7 +8486,8 @@ mod composer_tests {
 					if clear {
 						0
 					} else if dm {
-						3
+						// The DM list and the header; a one-to-one DM has no member list.
+						2
 					} else {
 						1
 					},
