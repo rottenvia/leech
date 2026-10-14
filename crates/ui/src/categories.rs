@@ -384,7 +384,7 @@ fn category_header(
 		color,
 	);
 	let mut job = egui::text::LayoutJob::simple_singleline(
-		name.to_uppercase(),
+		name.to_owned(),
 		egui::FontId::new(12.0, crate::design::semibold_family(ui.ctx())),
 		color,
 	);
@@ -438,7 +438,12 @@ fn eyebrow_row(ui: &mut egui::Ui, label: &str, row_height: f32) -> egui::Rect {
 		egui::Layout::left_to_right(egui::Align::Center),
 		|ui| {
 			ui.add_space(8.0);
-			ui.add(egui::Label::new(design::eyebrow(ui, label, colors.muted)).selectable(false));
+			// The app's own list headings read in sentence case, like Discord's; server
+			// categories keep their capitals.
+			ui.add(
+				egui::Label::new(design::semibold(ui, label, 12.0).color(colors.muted))
+					.selectable(false),
+			);
 		},
 	)
 	.response
@@ -689,10 +694,11 @@ impl MessagingUi {
 								&& state.can_manage_channel(category.id);
 							let collapsed =
 								self.channel_preferences.category_collapsed(category.id);
+							// Server categories keep Discord's capitals.
 							let response = category_header(
 								ui,
 								category.id,
-								&category.name,
+								&category.name.to_uppercase(),
 								count,
 								collapsed,
 								row_height,
