@@ -1752,12 +1752,8 @@ impl MessagingUi {
 			{
 				notices.push((error.into(), true));
 			}
-			if self.screen.context == Some((state.generation, channel, call.request)) {
-				let status = self.screen.capture_status.unwrap_or(self.screen.status);
-				if !status.is_empty() {
-					notices.push((status.into(), false));
-				}
-			}
+			// Screen-share status stays in the share dialog and the button's tooltip: as a stage
+			// notice it pushed the DM avatars into a smaller band (Discord shows none).
 			if !self.voice_camera_status.is_empty() {
 				notices.push((self.voice_camera_status.into(), false));
 			}
