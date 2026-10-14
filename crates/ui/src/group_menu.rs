@@ -55,7 +55,6 @@ impl GroupMenu {
 			return;
 		}
 		ui.set_width(224.0);
-		let colors = design::palette(ui);
 		let enabled = (state.demo || state.gateway_connected)
 			&& !state.group_action_pending()
 			&& !state.user_action_pending();
@@ -64,12 +63,13 @@ impl GroupMenu {
 			.add_enabled_ui(view.available(), |ui| {
 				row(
 					ui,
+					crate::icons::Icon::Pin,
 					if pinned {
 						"group-menu-menu-unpin-dm"
 					} else {
 						"group-menu-menu-pin-dm"
 					},
-					colors.text,
+					false,
 				)
 			})
 			.inner
@@ -83,7 +83,14 @@ impl GroupMenu {
 		}
 		ui.separator();
 		ui.add_enabled_ui(enabled, |ui| {
-			if row(ui, "group-menu-menu-edit-group", colors.text).clicked() {
+			if row(
+				ui,
+				crate::icons::Icon::Pencil,
+				"group-menu-menu-edit-group",
+				false,
+			)
+			.clicked()
+			{
 				self.open(state, channel, true);
 				ui.close();
 			}
@@ -92,11 +99,16 @@ impl GroupMenu {
 			if row(
 				ui,
 				if muted {
+					crate::icons::Icon::Bell
+				} else {
+					crate::icons::Icon::BellSlash
+				},
+				if muted {
 					"group-menu-menu-unmute-conversation"
 				} else {
 					"group-menu-menu-mute-conversation"
 				},
-				colors.text,
+				false,
 			)
 			.on_hover_text(crate::i18n::translate(
 				"group-menu-menu-mute-notifications-until-you-unmute-this-conversation",
@@ -107,7 +119,14 @@ impl GroupMenu {
 				ui.close();
 			}
 			ui.separator();
-			if row(ui, "group-menu-menu-leave-group", colors.danger).clicked() {
+			if row(
+				ui,
+				crate::icons::Icon::SignOut,
+				"group-menu-menu-leave-group",
+				true,
+			)
+			.clicked()
+			{
 				self.open(state, channel, false);
 				ui.close();
 			}
@@ -421,15 +440,8 @@ impl MessagingUi {
 		Ok(())
 	}
 }
-fn row(ui: &mut egui::Ui, label: &str, color: egui::Color32) -> egui::Response {
-	let label = crate::i18n::translate_if_key(label);
-	ui.add_sized(
-		[ui.available_width(), 40.0],
-		egui::Button::new(())
-			.left_text(design::medium(ui, label, 14.0).color(color))
-			.frame_when_inactive(false)
-			.corner_radius(4),
-	)
+fn row(ui: &mut egui::Ui, icon: crate::icons::Icon, label: &str, danger: bool) -> egui::Response {
+	design::menu_item(ui, Some(icon), label, danger)
 }
 
 #[cfg(test)]

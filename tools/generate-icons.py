@@ -138,6 +138,11 @@ ICONS = [
     ("swatches", "fill/swatches-fill.svg", "499fbd1be1e31084489cd44aadb33931fc9b327d2c0d1b05374494767dae802e"),
     ("puzzle-piece", "fill/puzzle-piece-fill.svg", "1067dab98fff3cdaf27b39f0ebf6e0caa9de0500e72b1655ba932d3e17f06e6d"),
     ("sign-out", "fill/sign-out-fill.svg", "2f2f2255d122c68badef3828451ac608c35b0a4b50a70242ca1a18029d44dd8f"),
+    ("bell-slash", "fill/bell-slash-fill.svg", "3d874ce4d52dcc3bd861d76f3b4b4e38d464fcfeef380a34181fe9ebe708fd02"),
+    ("envelope-simple", "fill/envelope-simple-fill.svg", "6cde9c0a359e967e36a6d3e54b720c67df75ce78f39e9adc7f29a7799bd09b54"),
+    ("prohibit", "fill/prohibit-fill.svg", "f4082e6bde36411618d4da65fe087cd3b746bb0e8070fec3d2e11b5aee059675"),
+    ("user-minus", "fill/user-minus-fill.svg", "2ed888f2c19b2f6c6d23f660678bb5cfbf0325ab2522df0dce57b72644b3ea9f"),
+    ("at", "bold/at-bold.svg", "1c1ede3364fe072f606d30f3ffd098b6e40c56e36ac4161961d283b68eb1c8c2"),
 ]
 LICENSE_SHA256 = "ddbe6082ec3cf979db47e5af549d2849c5d6182b3e005ef91ce1dbb9eb122f11"
 

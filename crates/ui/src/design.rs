@@ -2851,6 +2851,98 @@ pub fn row<R>(
 	.inner
 }
 
+/// One entry of a context or drop-down menu: a leading glyph, the label, and red when it
+/// destroys something. Menus draw their rows with this so every menu reads the same.
+pub fn menu_item(
+	ui: &mut egui::Ui,
+	icon: Option<crate::icons::Icon>,
+	label: &str,
+	danger: bool,
+) -> egui::Response {
+	let label = crate::i18n::translate_if_key(label);
+	let p = palette(ui);
+	let enabled = ui.is_enabled();
+	let inset = if icon.is_some() { 38.0 } else { 10.0 };
+	let galley = ui.painter().layout_no_wrap(
+		label.to_owned(),
+		FontId::new(14.0, medium_family(ui.ctx())),
+		p.text,
+	);
+	let width = ui.available_width().max(galley.size().x + inset + 14.0);
+	let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 32.0), egui::Sense::click());
+	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &label));
+	let hot = enabled && (response.hovered() || response.has_focus());
+	let painter = ui.painter();
+	if hot {
+		painter.rect_filled(
+			rect,
+			6,
+			if danger {
+				p.danger.gamma_multiply(0.16)
+			} else {
+				p.text_strong.gamma_multiply(0.08)
+			},
+		);
+	}
+	let ink = if danger {
+		p.danger
+	} else if hot {
+		p.text_strong
+	} else {
+		p.text
+	};
+	let ink = if enabled {
+		ink
+	} else {
+		ink.gamma_multiply(0.45)
+	};
+	if let Some(icon) = icon {
+		crate::icons::paint(
+			painter,
+			icon,
+			egui::Rect::from_center_size(
+				egui::pos2(rect.left() + 19.0, rect.center().y),
+				egui::Vec2::splat(18.0),
+			),
+			ink,
+		);
+	}
+	painter.galley_with_override_text_color(
+		egui::pos2(rect.left() + inset, rect.center().y - galley.size().y * 0.5),
+		galley,
+		ink,
+	);
+	response
+}
+
+/// Leading glyph for a submenu row, sized and placed like a [`menu_item`] glyph so the rows
+/// of one menu line up: `ui.menu_button((menu_glyph(icon, ink), label), ...)`.
+pub fn menu_glyph(icon: crate::icons::Icon, color: Color32) -> egui::Atom<'static> {
+	egui::Atom::paint(egui::vec2(24.0, 18.0), move |ui, args| {
+		crate::icons::paint(
+			ui.painter(),
+			icon,
+			egui::Rect::from_center_size(
+				egui::pos2(args.rect.left() + 9.0, args.rect.center().y),
+				egui::Vec2::splat(18.0),
+			),
+			color,
+		);
+	})
+}
+
+/// [`menu_item`] that is greyed out and inert unless `enabled`.
+pub fn menu_item_if(
+	ui: &mut egui::Ui,
+	enabled: bool,
+	icon: Option<crate::icons::Icon>,
+	label: &str,
+	danger: bool,
+) -> egui::Response {
+	ui.add_enabled_ui(enabled, |ui| menu_item(ui, icon, label, danger))
+		.inner
+}
+
 /// Quiet inline action for secondary verbs such as "Reset" or "Try again": muted text that
 /// brightens and underlines on hover instead of a full button.
 pub fn text_action(ui: &mut egui::Ui, label: &str) -> egui::Response {

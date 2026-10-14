@@ -377,32 +377,8 @@ fn menu_row(
 	label: &str,
 	color: egui::Color32,
 ) -> egui::Response {
-	let label = crate::i18n::translate_if_key(label);
-	ui.scope(|ui| {
-		ui.spacing_mut().button_padding = egui::vec2(36.0, 8.0);
-		let response = ui.add_sized(
-			[ui.available_width(), 36.0],
-			egui::Button::new(())
-				.left_text(design::medium(ui, label, 14.0).color(color))
-				.frame_when_inactive(false)
-				.corner_radius(4),
-		);
-		icons::paint(
-			ui.painter(),
-			icon,
-			egui::Rect::from_center_size(
-				egui::pos2(response.rect.left() + 18.0, response.rect.center().y),
-				egui::Vec2::splat(20.0),
-			),
-			if ui.is_enabled() {
-				color
-			} else {
-				color.gamma_multiply(0.5)
-			},
-		);
-		response
-	})
-	.inner
+	let danger = color == design::palette(ui).danger;
+	design::menu_item(ui, Some(icon), label, danger)
 }
 
 #[cfg(test)]

@@ -70,6 +70,7 @@ impl PostMenu {
 				let mut intent = None;
 				if row(
 					ui,
+					Some(crate::icons::Icon::Check),
 					"post-menu-context-mark-as-read",
 					state.can_mark_channel_read(post.id),
 					false,
@@ -81,6 +82,7 @@ impl PostMenu {
 				ui.separator();
 				if row(
 					ui,
+					Some(crate::icons::Icon::Star),
 					if view.contains(Shortcut::Favorite, post.id) {
 						"post-menu-context-remove-from-favorites"
 					} else {
@@ -101,6 +103,7 @@ impl PostMenu {
 				let followed = details.is_some_and(|d| d.followed);
 				if row(
 					ui,
+					Some(crate::icons::Icon::Bell),
 					&if followed {
 						noun_action(
 							noun,
@@ -126,6 +129,7 @@ impl PostMenu {
 				if state.can_edit_post(post.id)
 					&& row(
 						ui,
+						Some(crate::icons::Icon::ArrowCircleUp),
 						&if archived {
 							noun_action(
 								noun,
@@ -149,6 +153,7 @@ impl PostMenu {
 				if state.can_manage_post(post.id)
 					&& row(
 						ui,
+						Some(crate::icons::Icon::Lock),
 						&if locked {
 							noun_action(
 								noun,
@@ -172,6 +177,7 @@ impl PostMenu {
 				if state.can_edit_post(post.id)
 					&& row(
 						ui,
+						Some(crate::icons::Icon::Pencil),
 						&noun_action(
 							noun,
 							"post-menu-context-edit-post",
@@ -184,7 +190,15 @@ impl PostMenu {
 				{
 					intent = Some(Intent::Edit);
 				}
-				if row(ui, "post-menu-context-copy-link", true, false).clicked() {
+				if row(
+					ui,
+					Some(crate::icons::Icon::Link),
+					"post-menu-context-copy-link",
+					true,
+					false,
+				)
+				.clicked()
+				{
 					if let Some(guild) = post.guild {
 						ui.ctx()
 							.copy_text(format!("https://discord.com/channels/{guild}/{}", post.id));
@@ -198,7 +212,9 @@ impl PostMenu {
 						"post-menu-context-unmute-post",
 						"post-menu-context-unmute-thread",
 					);
-					if details.is_some_and(|d| d.muted) && row(ui, &unmute, true, false).clicked() {
+					if details.is_some_and(|d| d.muted)
+						&& row(ui, Some(crate::icons::Icon::Bell), &unmute, true, false).clicked()
+					{
 						intent = Some(Intent::Write(Action::PostMute(Mute::Unmute)));
 					}
 					let mute = noun_action(
@@ -206,31 +222,38 @@ impl PostMenu {
 						"post-menu-context-mute-post",
 						"post-menu-context-mute-thread",
 					);
-					ui.menu_button(mute, |ui| {
-						for (label, mute) in [
-							(
-								"channel-menu-report-capacity-for-15-minutes",
-								Mute::For(900),
-							),
-							("channel-menu-report-capacity-for-1-hour", Mute::For(3600)),
-							("channel-menu-report-capacity-for-3-hours", Mute::For(10800)),
-							("channel-menu-report-capacity-for-8-hours", Mute::For(28800)),
-							(
-								"channel-menu-report-capacity-for-24-hours",
-								Mute::For(86400),
-							),
-							(
-								"channel-menu-context-until-i-turn-it-back-on",
-								Mute::Forever,
-							),
-						] {
-							if row(ui, label, true, false).clicked() {
-								intent = Some(Intent::Write(Action::PostMute(mute)));
-							}
-						}
-					});
+					let ink = design::palette(ui).text;
 					ui.menu_button(
-						crate::i18n::translate("post-menu-context-notification-settings"),
+						(design::menu_glyph(crate::icons::Icon::BellSlash, ink), mute),
+						|ui| {
+							for (label, mute) in [
+								(
+									"channel-menu-report-capacity-for-15-minutes",
+									Mute::For(900),
+								),
+								("channel-menu-report-capacity-for-1-hour", Mute::For(3600)),
+								("channel-menu-report-capacity-for-3-hours", Mute::For(10800)),
+								("channel-menu-report-capacity-for-8-hours", Mute::For(28800)),
+								(
+									"channel-menu-report-capacity-for-24-hours",
+									Mute::For(86400),
+								),
+								(
+									"channel-menu-context-until-i-turn-it-back-on",
+									Mute::Forever,
+								),
+							] {
+								if row(ui, None, label, true, false).clicked() {
+									intent = Some(Intent::Write(Action::PostMute(mute)));
+								}
+							}
+						},
+					);
+					ui.menu_button(
+						(
+							design::menu_glyph(crate::icons::Icon::Bell, ink),
+							crate::i18n::translate("post-menu-context-notification-settings"),
+						),
 						|ui| {
 							for (level, label) in [
 								(0, "channel-menu-report-capacity-all-messages"),
@@ -262,6 +285,7 @@ impl PostMenu {
 					let pinned = details.is_some_and(|d| d.pinned);
 					if row(
 						ui,
+						None,
 						&if pinned {
 							noun_action(
 								noun,
@@ -284,6 +308,7 @@ impl PostMenu {
 					}
 					if row(
 						ui,
+						None,
 						&noun_action(
 							noun,
 							"post-menu-context-delete-post",
@@ -298,7 +323,15 @@ impl PostMenu {
 					}
 				}
 				ui.separator();
-				if row(ui, "post-menu-context-copy-thread-id", true, false).clicked() {
+				if row(
+					ui,
+					Some(crate::icons::Icon::IdCard),
+					"post-menu-context-copy-thread-id",
+					true,
+					false,
+				)
+				.clicked()
+				{
 					ui.ctx().copy_text(post.id.to_string());
 					ui.close();
 				}
