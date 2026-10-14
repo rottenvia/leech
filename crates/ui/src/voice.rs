@@ -1534,7 +1534,8 @@ impl MessagingUi {
 
 	fn stream_audio_controls(&mut self, ui: &mut egui::Ui) {
 		ui.set_width(220.0);
-		ui.checkbox(
+		design::checkbox(
+			ui,
 			&mut self.voice_stream_muted,
 			crate::i18n::translate("voice-stream-audio-controls-mute-stream-audio"),
 		);

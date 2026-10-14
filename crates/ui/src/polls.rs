@@ -856,13 +856,13 @@ fn multiple_answers(ui: &mut egui::Ui, checked: &mut bool, enabled: bool) {
 				egui::Color32::TRANSPARENT
 			};
 		}
-		ui.add_enabled(
-			enabled,
-			egui::Checkbox::new(
+		ui.add_enabled_ui(enabled, |ui| {
+			crate::design::checkbox(
+				ui,
 				checked,
 				RichText::new(translate("polls-creator-multiple-answers")).size(14.0),
-			),
-		);
+			)
+		});
 	});
 }
 

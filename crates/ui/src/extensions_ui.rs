@@ -2855,7 +2855,7 @@ pub(crate) fn render_elements(
 					.or_insert_with(|| checked.to_string());
 				let mut checked = value == "true";
 				if ui
-					.push_id(id, |ui| ui.checkbox(&mut checked, label))
+					.push_id(id, |ui| design::checkbox(ui, &mut checked, label))
 					.inner
 					.changed()
 				{
