@@ -6,11 +6,13 @@
 fetched through the jsDelivr npm mirror on September 10, 2026. The unmodified license is
 `LICENSE` and is staged in both packages as `licenses/Phosphor-Icons-MIT.txt`.
 
-Ninety-three unmodified Phosphor `assets/fill/*.svg` and `assets/bold/*.svg` files are scaled
-to 56×56 pixels, filled white, and rasterized by `resvg` 0.45.1 into one transparent PNG atlas
-with 64×64 cells (8 columns, 14 rows). `headphones-slash` is derived from `headphones-fill.svg`
-by masking a diagonal knockout and adding a 16-unit round-capped stroke, matching the style of
-Phosphor's own `*-slash` icons. The application tints glyphs at draw time; no icon font,
+A hundred and ten unmodified Phosphor files are scaled to 56×56 pixels, filled white, and
+rasterized by `resvg` 0.45.1 into one transparent PNG atlas with 64×64 cells (8 columns,
+16 rows). Interface glyphs use the bold weight (`assets/bold/*.svg`, 84 files); brand logos,
+badges, the filled star and file types keep the fill weight (`assets/fill/*.svg`, 26 files).
+The interface moved from fill to bold on October 14, 2026, refetched from the same pinned
+2.1.1 package. `headphones-slash` is derived from `headphones-bold.svg` by masking a diagonal
+knockout and adding a 24-unit round-capped stroke, matching the bold weight. The application tints glyphs at draw time; no icon font,
 JavaScript or per-icon file is bundled.
 
 Ten brand marks Phosphor does not ship (PlayStation, Battle.net, Epic Games, League of Legends,
@@ -31,11 +33,11 @@ four-point spark, noise suppression; `noise-slash` is the same file with the gen
 diagonal knockout) and `window.svg` (a rounded frame under a solid title bar, a window as a
 share source).
 
-- `atlas.png`: 512×896, 29,821 bytes as a 256-entry white palette (the generator's Pillow
+- `atlas.png`: 512×1024, 38,235 bytes as a 256-entry white palette (the generator's Pillow
   fallback when `oxipng` is absent). SHA-256
-  `68f5e5a09396d47bac442400ff0ebbccff74cc38e1c9209826418a1020198a73`.
+  `31561bb7524f8461708d7f46c96b2a9c4035acd1430b15b52664868e09f6f929`.
 - `index.tsv`: icon name, tab, zero-based cell; SHA-256
-  `82238b9f6f35dced0972836d437f9fe74ce1561c0a71ebfdc772a8a1a43b9dd1`.
+  `3f119bf0048d55b03b01a5204a19b604b052b4f1aa5cca6b79e264566b2c6461`.
 
 Every upstream SVG's SHA-256 is pinned in `tools/generate-icons.py`, which refuses to build
 from mismatching files. Regenerate from the repository root:
@@ -49,8 +51,8 @@ PNG compression bytes can vary with the resvg/png versions; decoded pixels and c
 are deterministic. `cargo test -p ui icons` checks that every `Icon` variant maps to a
 distinct, non-blank cell and that the atlas stays below 256 KiB.
 
-The folder and open-folder glyphs are unmodified Phosphor `folder-fill.svg` and
-`folder-open-fill.svg`, fetched from the same pinned 2.1.1 package on September 11, 2026.
+The folder and open-folder glyphs are unmodified Phosphor `folder-bold.svg` and
+`folder-open-bold.svg` from the same pinned 2.1.1 package.
 
 The media-viewer caret and download glyphs are unmodified Phosphor `caret-left-bold.svg` and
 `download-simple-bold.svg`, fetched from the same pinned 2.1.1 package on September 11, 2026.

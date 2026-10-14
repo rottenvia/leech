@@ -244,7 +244,6 @@ archives-active-threads = 活躍討論串
 # Context: show
 archives-show-active-threads-come-from-the-session-older-threads-load-25 = 活躍討論串來自本次工作階段；較舊的討論串每次載入 25 個。開啟只會載入訊息，不會加入。
 # Context: show
-archives-show-archives-active-threads = 封存中的活躍討論串
 # Context: show
 archives-show-archives-are-unavailable-while-disconnected-or-without-channel-access = 斷線或無頻道權限時無法使用封存。
 # Context: show

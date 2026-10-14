@@ -244,7 +244,6 @@ archives-active-threads = HILOS ACTIVOS
 # Context: show
 archives-show-active-threads-come-from-the-session-older-threads-load-25 = Los hilos activos provienen de la sesión; Los hilos más antiguos cargan 25 a la vez. Al abrir se cargan mensajes sin unirse.
 # Context: show
-archives-show-archives-active-threads = archiva hilos activos
 # Context: show
 archives-show-archives-are-unavailable-while-disconnected-or-without-channel-access = Los archivos no están disponibles mientras está desconectado o sin acceso al canal.
 # Context: show

@@ -56,9 +56,9 @@ impl ArchivesUi {
 						section(
 							ui,
 							&format!(
-								"{} {}",
-								shown.len(),
-								crate::i18n::translate("archives-show-archives-active-threads")
+								"{} — {}",
+								crate::i18n::translate("archives-active-threads"),
+								shown.len()
 							),
 							&colors,
 						);

@@ -244,7 +244,6 @@ archives-active-threads = AKTIVNÍ nitě
 # Context: show
 archives-show-active-threads-come-from-the-session-older-threads-load-25 = Aktivní vlákna pocházejí z relace; starší vlákna se načítají 25 najednou. Otevření načte zprávy bez připojení.
 # Context: show
-archives-show-archives-active-threads = archivuje aktivní vlákna
 # Context: show
 archives-show-archives-are-unavailable-while-disconnected-or-without-channel-access = Při odpojení nebo bez přístupu ke kanálu nejsou archivy dostupné.
 # Context: show

@@ -244,7 +244,6 @@ archives-active-threads = TÓPICOS ATIVOS
 # Context: show
 archives-show-active-threads-come-from-the-session-older-threads-load-25 = Threads ativos vêm da sessão; threads mais antigos carregam 25 por vez. A abertura carrega mensagens sem ingressar.
 # Context: show
-archives-show-archives-active-threads = arquiva tópicos ativos
 # Context: show
 archives-show-archives-are-unavailable-while-disconnected-or-without-channel-access = Os arquivos ficam indisponíveis enquanto estiver desconectado ou sem acesso ao canal.
 # Context: show

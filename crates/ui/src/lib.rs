@@ -2278,12 +2278,10 @@ impl MessagingUi {
 								language.text("search"),
 							)
 						});
-						ui.painter().rect(
+						ui.painter().rect_filled(
 							pill,
 							icons::PLATE_RADIUS,
-							colors.raised,
-							design::hairline(ui),
-							egui::StrokeKind::Inside,
+							design::field_fill(&colors),
 						);
 						let pill_text = if enabled {
 							colors.muted

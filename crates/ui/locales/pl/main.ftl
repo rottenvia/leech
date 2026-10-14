@@ -244,7 +244,6 @@ archives-active-threads = AKTYWNE WĄTKI
 # Context: show
 archives-show-active-threads-come-from-the-session-older-threads-load-25 = Aktywne wątki pochodzą z sesji; starsze wątki ładują 25 na raz. Otwarcie ładuje wiadomości bez dołączania.
 # Context: show
-archives-show-archives-active-threads = archiwizuje aktywne wątki
 # Context: show
 archives-show-archives-are-unavailable-while-disconnected-or-without-channel-access = Archiwa są niedostępne po rozłączeniu lub braku dostępu do kanału.
 # Context: show

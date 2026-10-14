@@ -244,7 +244,6 @@ archives-active-threads = 活跃帖子
 # Context: show
 archives-show-active-threads-come-from-the-session-older-threads-load-25 = 活跃帖子来自本次会话；较旧的帖子每次加载 25 个。开启只会加载消息，不会加入。
 # Context: show
-archives-show-archives-active-threads = 归档中的活跃帖子
 # Context: show
 archives-show-archives-are-unavailable-while-disconnected-or-without-channel-access = 断线或无频道权限时无法使用归档。
 # Context: show
