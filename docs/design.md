@@ -199,7 +199,7 @@ voice-only DM call opens only as tall as its avatars and the bar) or hairlined 1
 name badges (guild channels), a bottom control bar of dark pills (mute with settings chevron,
 camera, screen share, more) and a red hang-up button, mute/deafen toggles in the account card,
 whose status line reads "In a call" with a green handset, and a "Voice Connected" panel above
-it while connected. Routine screen-share status ("stopped") is not shown on the stage. A DM call
+it while connected. Screen-share status is not shown on the stage; the share dialog and the button tooltip carry it. A DM call
 that rings or runs without this device shows the same stage with whoever is in it and green
 buttons to join with video or voice (and a red decline while it rings here); a call ringing in
 another conversation keeps a slim banner. The header and the bar
