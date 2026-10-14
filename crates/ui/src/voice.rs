@@ -2416,33 +2416,7 @@ impl MessagingUi {
 				);
 			}
 		});
-		let (rect, _) =
-			ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::hover());
-		let level = ((self.voice_preview_level.unwrap_or(-100.0) + 80.0) / 80.0).clamp(0.0, 1.0);
-		let bars = (rect.width() / 9.0).floor().max(1.0) as usize;
-		for index in 0..bars {
-			let fraction = index as f32 / bars as f32;
-			let color = if fraction < level {
-				if fraction > 0.9 {
-					colors.danger
-				} else if fraction > 0.7 {
-					colors.warning
-				} else {
-					colors.positive
-				}
-			} else {
-				colors.border
-			};
-			let left = rect.left() + index as f32 * rect.width() / bars as f32;
-			ui.painter().rect_filled(
-				egui::Rect::from_min_size(
-					egui::pos2(left, rect.top()),
-					egui::vec2((rect.width() / bars as f32 - 3.0).max(1.0), rect.height()),
-				),
-				2.0,
-				color,
-			);
-		}
+		level_meter(ui, self.voice_preview_level, 18.0);
 		if !self.voice_preview_status.is_empty() {
 			ui.label(
 				RichText::new(crate::i18n::translate_if_key(self.voice_preview_status))
@@ -2450,6 +2424,83 @@ impl MessagingUi {
 					.color(colors.muted),
 			);
 		}
+	}
+
+	/// The voice card's noise suppression popover: one switch, the filter and its strength,
+	/// and the live microphone level, with a way into the full voice settings.
+	fn noise_popup(&mut self, trigger: &egui::Response) {
+		egui::Popup::menu(trigger)
+			.width(300.0)
+			.gap(8.0)
+			.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+			.frame(
+				egui::Frame::popup(&trigger.ctx.style_of(trigger.ctx.theme()))
+					.inner_margin(16)
+					.corner_radius(12),
+			)
+			.show(|ui| {
+				let colors = design::palette(ui);
+				ui.set_width(268.0);
+				ui.spacing_mut().item_spacing.y = 8.0;
+				let current = self.voice_processing.effective();
+				let mut on = current.suppression != NoiseSuppression::Off;
+				if design::switch(
+					ui,
+					"Noise suppression",
+					Some(
+						"Filters keyboard, fan and room noise out of your microphone, so people hear your voice.",
+					),
+					&mut on,
+				)
+				.changed()
+				{
+					self.voice_processing.edit().suppression = if on {
+						NoiseSuppression::default()
+					} else {
+						NoiseSuppression::Off
+					};
+				}
+				let current = self.voice_processing.effective();
+				if current.suppression != NoiseSuppression::Off {
+					design::card_divider(ui);
+					for (value, label, detail) in [
+						(
+							NoiseSuppression::RnNoise,
+							"RNNoise",
+							"Neural filter that keeps speech clear. Best for most rooms.",
+						),
+						(
+							NoiseSuppression::WebRtc,
+							"WebRTC",
+							"Lighter filter with a strength you choose.",
+						),
+					] {
+						if design::radio_row(ui, current.suppression == value, label, Some(detail))
+							.clicked()
+						{
+							self.voice_processing.edit().suppression = value;
+						}
+					}
+					if current.suppression == NoiseSuppression::WebRtc
+						&& let Some(level) = design::segmented(
+							ui,
+							&["Low", "Moderate", "High", "Very high"],
+							usize::from(current.suppression_level.min(3)),
+						) {
+						self.voice_processing.edit().suppression_level = level as u8;
+					}
+				}
+				design::card_divider(ui);
+				ui.label(design::medium(ui, "Microphone level", 13.0).color(colors.text_strong));
+				level_meter(ui, self.voice_preview_level, 10.0);
+				design::card_divider(ui);
+				if design::text_action(ui, "voice-voice-settings-popup-all-voice-settings")
+					.clicked()
+				{
+					self.open_voice_settings();
+					ui.close();
+				}
+			});
 	}
 
 	pub(super) fn voice_settings_content(
@@ -3536,8 +3587,12 @@ impl MessagingUi {
 			let height = if stage {
 				(ui.available_height() * 0.74).clamp(320.0, 900.0)
 			} else {
-				(ui.available_height() * 0.36).clamp(240.0, 320.0)
-					+ if header.is_some() { 48.0 } else { 0.0 }
+				// Like Discord's voice call, only as tall as the avatars and the bar: no band of
+				// empty stage between them. Dragging the edge still makes it taller.
+				STAGE_MARGIN
+					+ FRAMELESS_HEIGHT
+					+ TILE_GAP + CONTROL_HEIGHT
+					+ STAGE_MARGIN + if header.is_some() { 48.0 } else { 0.0 }
 			};
 			// Dragging the bottom edge resizes the call; video and voice-only keep separate sizes.
 			// The conversation and composer below always keep at least 160 points.
@@ -3869,29 +3924,30 @@ impl MessagingUi {
 								});
 								let (rect, response) = ui
 									.allocate_exact_size(egui::Vec2::splat(32.0), egui::Sense::click());
-								// Red plate: the one destructive action in the card; solid on hover.
-								let hot = response.hovered() || response.has_focus();
+								// Quiet like the rest of Discord's panel header; it turns red only
+								// under the pointer, where a click would end the call.
+								let hot = ui.is_enabled() && (response.hovered() || response.has_focus());
 								ui.painter().rect_filled(
 									rect,
 									crate::icons::PLATE_RADIUS,
-									colors.danger.gamma_multiply(if !ui.is_enabled() {
-										0.1
-									} else if hot {
-										1.0
+									if hot {
+										colors.danger.gamma_multiply(
+											if response.is_pointer_button_down_on() { 0.3 } else { 0.18 },
+										)
 									} else {
-										0.18
-									}),
+										egui::Color32::TRANSPARENT
+									},
 								);
 								crate::icons::paint(
 									ui.painter(),
 									crate::icons::Icon::HangUp,
 									rect.shrink(6.0),
 									if !ui.is_enabled() {
-										colors.danger.gamma_multiply(0.5)
+										colors.muted.gamma_multiply(0.5)
 									} else if hot {
-										egui::Color32::WHITE
-									} else {
 										colors.danger
+									} else {
+										colors.muted
 									},
 								);
 								response.widget_info(|| {
@@ -3909,36 +3965,33 @@ impl MessagingUi {
 						{
 							commands.push(command);
 						}
-						// Noise suppression sits beside disconnect, as in Discord's panel.
+						// Noise suppression sits beside disconnect, as in Discord's panel. It opens
+						// a popover with the filter choice; the glyph shows whether it is on.
 						let suppressing =
 							self.voice_processing.effective().suppression != NoiseSuppression::Off;
 						let suppression = ui
 							.add_enabled_ui(processing, |ui| {
-								let label = crate::i18n::translate_if_key(if suppressing {
-									"Turn off noise suppression"
-								} else {
-									"Turn on noise suppression"
-								});
+								let label = crate::i18n::translate_if_key("Noise suppression");
 								let (rect, response) = ui
 									.allocate_exact_size(egui::Vec2::splat(32.0), egui::Sense::click());
-								let hot = response.hovered() || response.has_focus();
-								// Lit in the accent while it cleans the microphone and a bare
-								// slashed glyph when off, so the state reads without hovering.
-								let (fill, ink, icon) = if suppressing {
-									(
-										colors.accent.gamma_multiply(if hot { 0.3 } else { 0.18 }),
-										colors.accent,
-										crate::icons::Icon::Noise,
-									)
+								let open = egui::Popup::is_id_open(
+									ui.ctx(),
+									egui::Popup::default_response_id(&response),
+								);
+								ui.painter().rect_filled(
+									rect,
+									crate::icons::PLATE_RADIUS,
+									crate::icons::plate(ui, &response, open),
+								);
+								let hot = response.hovered() || response.has_focus() || open;
+								let (icon, ink) = if suppressing {
+									(crate::icons::Icon::Noise, colors.accent)
 								} else {
 									(
-										crate::icons::plate(ui, &response, false),
-										if hot { colors.text_strong } else { colors.muted },
 										crate::icons::Icon::NoiseOff,
+										if hot { colors.text_strong } else { colors.muted },
 									)
 								};
-								ui.painter()
-									.rect_filled(rect, crate::icons::PLATE_RADIUS, fill);
 								crate::icons::paint(ui.painter(), icon, rect.shrink(6.0), ink);
 								response.widget_info(|| {
 									egui::WidgetInfo::selected(
@@ -3948,19 +4001,17 @@ impl MessagingUi {
 										&label,
 									)
 								});
-								response.on_hover_text(label)
+								if open {
+									response
+								} else {
+									response.on_hover_text(label)
+								}
 							})
 							.inner
 							.on_disabled_hover_text(crate::i18n::translate_if_key(
 								"Noise suppression is unavailable in this build or preview.",
 							));
-						if suppression.clicked() {
-							self.voice_processing.edit().suppression = if suppressing {
-								NoiseSuppression::Off
-							} else {
-								NoiseSuppression::default()
-							};
-						}
+						self.noise_popup(&suppression);
 						ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
 							ui.vertical(|ui| {
 								ui.spacing_mut().item_spacing.y = 0.0;
@@ -4868,6 +4919,41 @@ fn elapsed_label(call: &client_core::voice::Call) -> Option<String> {
 		seconds / 60 % 60,
 		seconds % 60
 	))
+}
+
+/// Segmented input meter: green while speaking, amber when loud, red when clipping. `level`
+/// is in dBFS; None draws the empty track.
+fn level_meter(ui: &mut egui::Ui, level: Option<f32>, height: f32) {
+	let colors = design::palette(ui);
+	let (rect, _) = ui.allocate_exact_size(
+		egui::vec2(ui.available_width(), height),
+		egui::Sense::hover(),
+	);
+	let level = ((level.unwrap_or(-100.0) + 80.0) / 80.0).clamp(0.0, 1.0);
+	let bars = (rect.width() / 9.0).floor().max(1.0) as usize;
+	for index in 0..bars {
+		let fraction = index as f32 / bars as f32;
+		let color = if fraction < level {
+			if fraction > 0.9 {
+				colors.danger
+			} else if fraction > 0.7 {
+				colors.warning
+			} else {
+				colors.positive
+			}
+		} else {
+			colors.border
+		};
+		let left = rect.left() + index as f32 * rect.width() / bars as f32;
+		ui.painter().rect_filled(
+			egui::Rect::from_min_size(
+				egui::pos2(left, rect.top()),
+				egui::vec2((rect.width() / bars as f32 - 3.0).max(1.0), rect.height()),
+			),
+			2.0,
+			color,
+		);
+	}
 }
 
 fn status_icon(ui: &mut egui::Ui, icon: crate::icons::Icon, color: egui::Color32, label: &str) {
