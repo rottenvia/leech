@@ -2917,7 +2917,7 @@ impl MessagingUi {
 					"voice-voice-processing-controls-removes-keyboard-fan-and-room-noise-from-your-microphone",
 				),
 				|ui| {
-					egui::ComboBox::from_id_salt("voice-noise-suppression")
+					crate::design::combo("voice-noise-suppression")
 						.selected_text(crate::i18n::translate_if_key(
 							choices
 								.iter()
@@ -2944,7 +2944,7 @@ impl MessagingUi {
 					"voice-voice-processing-controls-suppression-strength",
 					None,
 					|ui| {
-						egui::ComboBox::from_id_salt("voice-suppression-strength")
+						crate::design::combo("voice-suppression-strength")
 							.selected_text(crate::i18n::translate_if_key(
 								strength[usize::from(processing.suppression_level.min(3))],
 							))
@@ -4999,7 +4999,7 @@ fn device_combo(
 			|(_, label)| label.clone(),
 		),
 	};
-	egui::ComboBox::from_id_salt(id)
+	crate::design::combo(id)
 		.selected_text(&label)
 		.width(ui.available_width())
 		.truncate()

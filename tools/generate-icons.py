@@ -127,6 +127,17 @@ ICONS = [
     ("noise", "repo:assets/icons/noise.svg", "739df297725815e76f63df9e773eff82b5b0b1ff0c1d7709e74c64c94ae50ccf"),
     ("noise-slash", "repo:assets/icons/noise.svg", "739df297725815e76f63df9e773eff82b5b0b1ff0c1d7709e74c64c94ae50ccf"),
     ("window", "repo:assets/icons/window.svg", "65e22a650723dba7bf87c29b6b4864314a67c284a9d5fe00225d89d71b77eec4"),
+    ("user", "fill/user-fill.svg", "9e011a83732426181c4e18ebfe0322635ed7a222ccd572072b1233a91f88fd0b"),
+    ("identification-card", "fill/identification-card-fill.svg", "1ab3b4b94b739bdfb871cdae5455be56e0ad59639d3f3b23f908858a5e0c7b69"),
+    ("shield-check", "fill/shield-check-fill.svg", "16ebdabca38405206b1d36869ae74b0e9f69d34a23bc77d7cbe61dfa34bef1d7"),
+    ("database", "fill/database-fill.svg", "4d58652b0dd16a1c6de08174c3ec6617da5d90dd2fa4d5f0147bfa44722fa5ec"),
+    ("palette", "fill/palette-fill.svg", "c8f6bdc5d4ddff5ad039a926e13efe7ceb92f5a57e6a755df516ca05deadba53"),
+    ("chat-circle-text", "fill/chat-circle-text-fill.svg", "151178dbebb30d17ebc6b36878213426a9e7f66fb05b275ddfbc259f8cbe385d"),
+    ("keyboard", "fill/keyboard-fill.svg", "43d265edc6585ecc2a8a28edd15abe550ad5aa9ffe916c439e8cd76d6ea7df54"),
+    ("arrow-circle-up", "fill/arrow-circle-up-fill.svg", "49e83ad23514b1cb00d38af84adf59bb4c9651224dcb2233d05fad31e7075508"),
+    ("swatches", "fill/swatches-fill.svg", "499fbd1be1e31084489cd44aadb33931fc9b327d2c0d1b05374494767dae802e"),
+    ("puzzle-piece", "fill/puzzle-piece-fill.svg", "1067dab98fff3cdaf27b39f0ebf6e0caa9de0500e72b1655ba932d3e17f06e6d"),
+    ("sign-out", "fill/sign-out-fill.svg", "2f2f2255d122c68badef3828451ac608c35b0a4b50a70242ca1a18029d44dd8f"),
 ]
 LICENSE_SHA256 = "ddbe6082ec3cf979db47e5af549d2849c5d6182b3e005ef91ce1dbb9eb122f11"
 

@@ -129,13 +129,24 @@ pub enum Icon {
 	NoiseOff,
 	/// An application window, as a share source.
 	Window,
+	User,
+	IdCard,
+	ShieldCheck,
+	Database,
+	Palette,
+	ChatText,
+	Keyboard,
+	ArrowCircleUp,
+	Swatches,
+	PuzzlePiece,
+	SignOut,
 	/// Horizontally mirrored reply glyph from the shared atlas.
 	Forward,
 }
 
 impl Icon {
 	/// Canonical atlas cells; Forward reuses the mirrored Reply cell.
-	pub const ALL: [Icon; 110] = [
+	pub const ALL: [Icon; 121] = [
 		Icon::ChevronDown,
 		Icon::ChevronRight,
 		Icon::Gear,
@@ -246,6 +257,17 @@ impl Icon {
 		Icon::Noise,
 		Icon::NoiseOff,
 		Icon::Window,
+		Icon::User,
+		Icon::IdCard,
+		Icon::ShieldCheck,
+		Icon::Database,
+		Icon::Palette,
+		Icon::ChatText,
+		Icon::Keyboard,
+		Icon::ArrowCircleUp,
+		Icon::Swatches,
+		Icon::PuzzlePiece,
+		Icon::SignOut,
 	];
 	/// Upstream icon name recorded in `index.tsv`.
 	fn asset(self) -> &'static str {
@@ -273,6 +295,17 @@ impl Icon {
 			Icon::Noise => "noise",
 			Icon::NoiseOff => "noise-slash",
 			Icon::Window => "window",
+			Icon::User => "user",
+			Icon::IdCard => "identification-card",
+			Icon::ShieldCheck => "shield-check",
+			Icon::Database => "database",
+			Icon::Palette => "palette",
+			Icon::ChatText => "chat-circle-text",
+			Icon::Keyboard => "keyboard",
+			Icon::ArrowCircleUp => "arrow-circle-up",
+			Icon::Swatches => "swatches",
+			Icon::PuzzlePiece => "puzzle-piece",
+			Icon::SignOut => "sign-out",
 			Icon::Video => "video-camera",
 			Icon::VideoSlash => "video-camera-slash",
 			Icon::ScreenShare => "monitor-arrow-up",
@@ -419,6 +452,15 @@ fn texture(ctx: &egui::Context) -> TextureHandle {
 
 /// Paint `icon` centred in `rect` with `color`.
 pub fn paint(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
+	paint_oriented(painter, icon, rect, color, false);
+}
+
+/// `icon` upside down, for a chevron that points up while its list is open.
+pub fn paint_flipped(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
+	paint_oriented(painter, icon, rect, color, true);
+}
+
+fn paint_oriented(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32, flip: bool) {
 	let size = rect.width().min(rect.height());
 	let rect = Rect::from_center_size(rect.center(), Vec2::splat(size))
 		.round_to_pixels(painter.pixels_per_point());
@@ -433,6 +475,9 @@ pub fn paint(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
 	);
 	if icon == Icon::Forward {
 		std::mem::swap(&mut uv.min.x, &mut uv.max.x);
+	}
+	if flip {
+		std::mem::swap(&mut uv.min.y, &mut uv.max.y);
 	}
 	// Glyphs occupy 56 of every 64 cell pixels; draw the cell slightly larger so the visible
 	// glyph fills `rect` like the previous painted icons did.

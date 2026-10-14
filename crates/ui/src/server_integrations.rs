@@ -840,7 +840,7 @@ impl IntegrationsUi {
 				muted,
 			));
 		}
-		egui::ComboBox::from_id_salt("webhook-destination")
+		crate::design::combo("webhook-destination")
 			.selected_text(label)
 			.width(ui.available_width())
 			.show_ui(ui, |ui| {

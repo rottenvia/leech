@@ -618,22 +618,29 @@ impl Editor {
 					|| matches!(page, Page::Members | Page::Integrations | Page::AuditLog)
 					|| (page == Page::Roles && !Page::Members.allowed(state, guild))
 				{
-					ui.add_space(10.0);
-					ui.separator();
-					ui.add_space(8.0);
-					ui.label(design::eyebrow(
-						ui,
-						crate::i18n::translate_if_key(if page == Page::AuditLog {
-							"server-settings-show-moderation"
-						} else if page == Page::Integrations {
-							"server-settings-show-apps"
-						} else if matches!(page, Page::Emoji | Page::Stickers) {
-							"server-settings-show-expression"
-						} else {
-							"server-settings-show-people"
-						}),
-						colors.muted,
-					));
+					ui.add_space(14.0);
+					ui.horizontal(|ui| {
+						ui.add_space(8.0);
+						ui.label(
+							design::semibold(
+								ui,
+								design::sentence_case(&crate::i18n::translate_if_key(
+									if page == Page::AuditLog {
+										"server-settings-show-moderation"
+									} else if page == Page::Integrations {
+										"server-settings-show-apps"
+									} else if matches!(page, Page::Emoji | Page::Stickers) {
+										"server-settings-show-expression"
+									} else {
+										"server-settings-show-people"
+									},
+								)),
+								12.0,
+							)
+							.color(colors.muted),
+						);
+					});
+					ui.add_space(4.0);
 				}
 				if crate::settings::nav_item(ui, page.label(), self.page == page).clicked() {
 					self.page = page;
@@ -1680,7 +1687,7 @@ fn channel_picker(
 		));
 	}
 	let empty = choices.is_empty();
-	let response = egui::ComboBox::from_id_salt(("server-channel", voice))
+	let response = crate::design::combo(("server-channel", voice))
 		.selected_text(label)
 		.width(PICKER_WIDTH.min(ui.available_width()))
 		.show_ui(ui, |ui| {
@@ -1708,7 +1715,7 @@ fn channel_picker(
 	}
 }
 fn timeout_picker(ui: &mut egui::Ui, timeout: &mut u32) {
-	egui::ComboBox::from_id_salt("server-afk-timeout")
+	crate::design::combo("server-afk-timeout")
 		.selected_text(format!(
 			"{} {}",
 			*timeout / 60,

@@ -1,5 +1,5 @@
-//! User settings modal in Discord's layout: a sidebar of pages on the left, the selected page
-//! on the right, and a round close control with its Escape hint.
+//! User settings modal in Discord's layout: your account and the pages in a sidebar on the
+//! left, the selected page in a centred column on the right under its title and close button.
 use crate::{MessagingUi, design, i18n::Language, icons};
 use client_core::State;
 use egui::RichText;
@@ -99,6 +99,24 @@ impl Page {
 	}
 	fn label(self, language: Language) -> String {
 		language.text(self.label_key())
+	}
+	fn icon(self) -> icons::Icon {
+		match self {
+			Self::Account => icons::Icon::User,
+			Self::Profile => icons::Icon::IdCard,
+			Self::MessagingPermissions => icons::Icon::ShieldCheck,
+			Self::Storage => icons::Icon::Database,
+			Self::Appearance => icons::Icon::Palette,
+			Self::Chat => icons::Icon::ChatText,
+			Self::Notifications => icons::Icon::Bell,
+			Self::Voice => icons::Icon::Microphone,
+			Self::Keybinds => icons::Icon::Keyboard,
+			Self::Activity => icons::Icon::GameController,
+			Self::General => icons::Icon::Gear,
+			Self::Updates => icons::Icon::ArrowCircleUp,
+			Self::Themes => icons::Icon::Swatches,
+			Self::Extensions => icons::Icon::PuzzlePiece,
+		}
 	}
 	fn description_key(self) -> &'static str {
 		match self {
@@ -325,7 +343,7 @@ impl MessagingUi {
 				ui.set_height(height);
 				if wide {
 					egui::Panel::left("settings-navigation")
-						.exact_size(232.0)
+						.exact_size(248.0)
 						.resizable(false)
 						.frame(
 							egui::Frame::new()
@@ -338,8 +356,8 @@ impl MessagingUi {
 								})
 								.inner_margin(egui::Margin {
 									left: 12,
-									right: 8,
-									top: 20,
+									right: 12,
+									top: 16,
 									bottom: 16,
 								}),
 						)
@@ -347,10 +365,10 @@ impl MessagingUi {
 				}
 				egui::CentralPanel::default()
 					.frame(egui::Frame::new().inner_margin(egui::Margin {
-						left: if wide { 40 } else { 20 },
-						right: 20,
-						top: 24,
-						bottom: 24,
+						left: if wide { 24 } else { 16 },
+						right: 16,
+						top: 12,
+						bottom: 0,
 					}))
 					.show(ui, |ui| {
 						let editing_theme =
@@ -360,31 +378,24 @@ impl MessagingUi {
 						} else {
 							self.settings.page.label(self.language)
 						};
-						let description = if editing_theme {
-							self.language.text("theme-maker-description")
-						} else {
-							self.settings.page.description(self.language)
-						};
-						ui.horizontal_top(|ui| {
-							ui.vertical(|ui| {
-								ui.spacing_mut().item_spacing.y = 2.0;
-								ui.label(
-									design::semibold(ui, &heading, 20.0).color(colors.text_strong),
-								);
-								ui.label(
-									RichText::new(&description).size(13.0).color(colors.muted),
-								);
-							});
-							ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-								if close_control(ui).clicked() {
-									self.settings.open = false;
-								}
-							});
+						ui.horizontal(|ui| {
+							ui.set_height(32.0);
+							ui.label(
+								design::semibold(ui, &heading, 15.0).color(colors.text_strong),
+							);
+							ui.with_layout(
+								egui::Layout::right_to_left(egui::Align::Center),
+								|ui| {
+									if close_control(ui).clicked() {
+										self.settings.open = false;
+									}
+								},
+							);
 						});
 						if !wide {
 							ui.add_space(8.0);
 							self.settings_search(ui);
-							egui::ComboBox::from_id_salt("settings-page")
+							crate::design::combo("settings-page")
 								.selected_text(self.settings.page.label(self.language))
 								.width(ui.available_width())
 								.show_ui(ui, |ui| {
@@ -402,7 +413,7 @@ impl MessagingUi {
 									}
 								});
 						}
-						ui.add_space(16.0);
+						ui.add_space(8.0);
 						if self.settings.page == Page::Themes && self.extensions.editing_theme() {
 							self.extensions.theme_editor_toolbar(ui);
 							ui.add_space(12.0);
@@ -427,67 +438,85 @@ impl MessagingUi {
 								} else {
 									0.0
 								};
-								ui.set_width((ui.available_width() - scroll_padding).min(720.0));
-								ui.spacing_mut().item_spacing.y = 12.0;
-								let query = self.settings.query.to_lowercase();
-								if !Page::ALL
-									.into_iter()
-									.any(|p| p.matches(&query, self.language))
-								{
-									ui.label(
-										design::semibold(
-											ui,
-											self.language.text("no-settings-found"),
-											16.0,
-										)
-										.color(colors.text_strong),
-									);
-									ui.weak(self.language.text("search-suggestion"));
-									return;
-								}
-								match self.settings.page {
-									Page::General => self.general_settings(ui, state.demo),
-									Page::Account => self.account_page(ui, state),
-									Page::Profile => self.settings.editor.show(
-										ui,
-										state,
-										&mut self.avatars,
-										commands,
-									),
-									Page::Appearance => self.appearance_settings(ui, state.demo),
-									Page::Chat => self.chat_settings(ui, state.demo),
-									Page::MessagingPermissions => {
-										self.messaging_permissions_settings(ui, state, commands)
-									}
-									Page::Notifications => {
-										self.notification_settings(ui, state.demo)
-									}
-									Page::Activity => self.activity_settings(ui, state),
-									Page::Voice => self.voice_settings_content(
-										ui,
-										state.demo,
-										state.voice.active.is_some(),
-										false,
-									),
-									Page::Storage => self.storage_page(ui, state),
-									Page::Updates => self.update_settings(ui, state.demo),
-									Page::Keybinds => crate::keybinds::show(
-										ui,
-										&mut self.keybinds,
-										&mut self.keybind_capture,
-										self.global_keybind_status,
-									),
-									Page::Extensions | Page::Themes => {
-										self.extensions
-											.select_themes(self.settings.page == Page::Themes);
-										self.extensions.settings(ui, state);
-									}
-								}
-								if state.demo {
-									ui.add_space(20.0);
-									design::hint(ui, &self.language.text("offline-preview"));
-								}
-								ui.add_space(24.0);
+								let column = (ui.available_width() - scroll_padding).min(720.0);
+								let inset = ((ui.available_width() - scroll_padding - column)
+									* 0.5)
+									.floor()
+									.max(0.0);
+								ui.horizontal_top(|ui| {
+									ui.add_space(inset);
+									ui.vertical(|ui| {
+										ui.set_width(column);
+										ui.add_space(12.0);
+										ui.spacing_mut().item_spacing.y = 12.0;
+										let query = self.settings.query.to_lowercase();
+										if !Page::ALL
+											.into_iter()
+											.any(|p| p.matches(&query, self.language))
+										{
+											ui.label(
+												design::semibold(
+													ui,
+													self.language.text("no-settings-found"),
+													16.0,
+												)
+												.color(colors.text_strong),
+											);
+											ui.weak(self.language.text("search-suggestion"));
+											return;
+										}
+										match self.settings.page {
+											Page::General => self.general_settings(ui, state.demo),
+											Page::Account => self.account_page(ui, state),
+											Page::Profile => self.settings.editor.show(
+												ui,
+												state,
+												&mut self.avatars,
+												commands,
+											),
+											Page::Appearance => {
+												self.appearance_settings(ui, state.demo)
+											}
+											Page::Chat => self.chat_settings(ui, state.demo),
+											Page::MessagingPermissions => self
+												.messaging_permissions_settings(
+													ui, state, commands,
+												),
+											Page::Notifications => {
+												self.notification_settings(ui, state.demo)
+											}
+											Page::Activity => self.activity_settings(ui, state),
+											Page::Voice => self.voice_settings_content(
+												ui,
+												state.demo,
+												state.voice.active.is_some(),
+												false,
+											),
+											Page::Storage => self.storage_page(ui, state),
+											Page::Updates => self.update_settings(ui, state.demo),
+											Page::Keybinds => crate::keybinds::show(
+												ui,
+												&mut self.keybinds,
+												&mut self.keybind_capture,
+												self.global_keybind_status,
+											),
+											Page::Extensions | Page::Themes => {
+												self.extensions.select_themes(
+													self.settings.page == Page::Themes,
+												);
+												self.extensions.settings(ui, state);
+											}
+										}
+										if state.demo {
+											ui.add_space(20.0);
+											design::hint(
+												ui,
+												&self.language.text("offline-preview"),
+											);
+										}
+										ui.add_space(32.0);
+									});
+								});
 							});
 					});
 			});
@@ -511,39 +540,53 @@ impl MessagingUi {
 	fn settings_navigation(&mut self, ui: &mut egui::Ui, state: &State) {
 		let colors = design::palette(ui);
 		let language = self.language;
-		// The version lines stay pinned under the list so the fold never cuts them.
-		let footer = 40.0;
-		let list = ui.available_rect_before_wrap();
-		let mut pinned = ui.new_child(
-			egui::UiBuilder::new()
-				.max_rect(egui::Rect::from_min_max(
-					egui::pos2(list.left(), list.bottom() - footer + 6.0),
-					list.right_bottom(),
-				))
-				.layout(egui::Layout::top_down(egui::Align::Min)),
-		);
-		pinned.spacing_mut().item_spacing.y = 1.0;
-		pinned.label(
-			RichText::new(format!("Leech {}", self.build.version))
-				.size(12.0)
-				.color(colors.muted),
-		);
-		pinned.add(
-			egui::Label::new(
-				RichText::new(language.text("unofficial"))
-					.size(11.0)
-					.color(colors.muted),
-			)
-			.truncate(),
-		);
 		egui::ScrollArea::vertical()
 			.id_salt("settings-navigation-scroll")
 			.auto_shrink([false, false])
-			.max_height(list.height() - footer)
 			.show(ui, |ui| {
 				ui.spacing_mut().item_spacing.y = 2.0;
+				if let Some(user) = state.user.clone() {
+					ui.horizontal(|ui| {
+						ui.spacing_mut().item_spacing.x = 10.0;
+						ui.add_space(4.0);
+						self.avatars.show_plain(ui, &user, 40.0, state.demo);
+						ui.vertical(|ui| {
+							ui.spacing_mut().item_spacing.y = 0.0;
+							ui.add(
+								egui::Label::new(
+									design::semibold(ui, state.user_display_name(&user), 15.0)
+										.color(colors.text_strong),
+								)
+								.truncate(),
+							);
+							let edit = ui
+								.add(
+									egui::Label::new(
+										RichText::new(crate::i18n::translate(
+											"settings-account-page-edit-profile",
+										))
+										.size(13.0)
+										.color(colors.muted),
+									)
+									.sense(egui::Sense::click()),
+								)
+								.on_hover_cursor(egui::CursorIcon::PointingHand);
+							if edit.hovered() {
+								ui.painter().hline(
+									edit.rect.x_range(),
+									edit.rect.bottom() - 1.0,
+									egui::Stroke::new(1.0, colors.muted),
+								);
+							}
+							if edit.clicked() {
+								self.settings.page = Page::Profile;
+							}
+						});
+					});
+					ui.add_space(10.0);
+				}
 				self.settings_search(ui);
-				ui.add_space(12.0);
+				ui.add_space(8.0);
 				let query = self.settings.query.to_lowercase();
 				for (heading, pages) in Page::SECTIONS {
 					let visible: Vec<Page> = pages
@@ -554,15 +597,22 @@ impl MessagingUi {
 					if visible.is_empty() {
 						continue;
 					}
-					ui.add_space(6.0);
-					ui.add(egui::Label::new(design::eyebrow(
-						ui,
-						language.text(heading),
-						colors.muted,
-					)));
-					ui.add_space(2.0);
+					ui.add_space(14.0);
+					ui.horizontal(|ui| {
+						ui.add_space(8.0);
+						ui.label(
+							design::semibold(ui, language.text(heading), 12.0).color(colors.muted),
+						);
+					});
+					ui.add_space(4.0);
 					for page in visible {
-						if nav_item(ui, &page.label(language), self.settings.page == page).clicked()
+						if nav_item_with_icon(
+							ui,
+							Some(page.icon()),
+							&page.label(language),
+							self.settings.page == page,
+						)
+						.clicked()
 						{
 							if page == Page::MessagingPermissions && self.settings.page != page {
 								self.settings.messaging_permissions.requested = false;
@@ -570,43 +620,64 @@ impl MessagingUi {
 							self.settings.page = page;
 						}
 						if page == Page::MessagingPermissions && self.settings.page == page {
-							ui.indent("messaging-permission-sections", |ui| {
-								for tab in crate::messaging_permissions::Tab::ALL {
-									if nav_item(
-										ui,
-										tab.label(),
-										self.settings.messaging_permissions.active == tab,
-									)
-									.clicked()
-									{
-										self.settings.messaging_permissions.jump = Some(tab);
-										self.settings.messaging_permissions.active = tab;
-									}
+							for tab in crate::messaging_permissions::Tab::ALL {
+								if nav_subitem(
+									ui,
+									tab.label(),
+									self.settings.messaging_permissions.active == tab,
+								)
+								.clicked()
+								{
+									self.settings.messaging_permissions.jump = Some(tab);
+									self.settings.messaging_permissions.active = tab;
 								}
-							});
+							}
 						}
 						if page == Page::Notifications && self.settings.page == page {
-							ui.indent("notification-sections", |ui| {
-								for tab in crate::notification_settings::Tab::ALL {
-									if nav_item(
-										ui,
-										tab.label(),
-										self.settings.notifications.active == tab,
-									)
-									.clicked()
-									{
-										self.settings.notifications.jump = Some(tab);
-										self.settings.notifications.active = tab;
-									}
+							for tab in crate::notification_settings::Tab::ALL {
+								if nav_subitem(
+									ui,
+									tab.label(),
+									self.settings.notifications.active == tab,
+								)
+								.clicked()
+								{
+									self.settings.notifications.jump = Some(tab);
+									self.settings.notifications.active = tab;
 								}
-							});
+							}
 						}
 					}
 				}
-				ui.add_space(8.0);
-				ui.separator();
-				ui.add_space(4.0);
+				ui.add_space(10.0);
+				let (rule, _) = ui.allocate_exact_size(
+					egui::vec2(ui.available_width(), 1.0),
+					egui::Sense::hover(),
+				);
+				ui.painter()
+					.hline(rule.x_range(), rule.center().y, design::hairline(ui));
+				ui.add_space(6.0);
 				self.settings_logout(ui, state.demo);
+				ui.add_space(12.0);
+				ui.horizontal(|ui| {
+					ui.add_space(8.0);
+					ui.vertical(|ui| {
+						ui.spacing_mut().item_spacing.y = 1.0;
+						ui.label(
+							RichText::new(format!("Leech {}", self.build.version))
+								.size(12.0)
+								.color(colors.muted),
+						);
+						ui.add(
+							egui::Label::new(
+								RichText::new(language.text("unofficial"))
+									.size(11.0)
+									.color(colors.muted),
+							)
+							.truncate(),
+						);
+					});
+				});
 				ui.add_space(8.0);
 			});
 	}
@@ -615,22 +686,21 @@ impl MessagingUi {
 		let colors = design::palette(ui);
 		let language = self.language;
 		egui::Frame::new()
-			.fill(colors.raised)
-			.stroke(design::hairline(ui))
-			.corner_radius(10)
-			.inner_margin(egui::Margin::symmetric(10, 5))
+			.fill(design::field_fill(&colors))
+			.corner_radius(8)
+			.inner_margin(egui::Margin::symmetric(10, 4))
 			.show(ui, |ui| {
 				ui.horizontal(|ui| {
 					ui.spacing_mut().item_spacing.x = 6.0;
+					icons::inline(ui, icons::Icon::Search, 16.0, colors.muted);
 					let response = ui.add(
 						egui::TextEdit::singleline(&mut self.settings.query)
 							.align(egui::Align2::LEFT_CENTER)
 							.hint_text(language.text("search"))
 							.char_limit(64)
 							.frame(egui::Frame::NONE)
-							.desired_width(ui.available_width() - 24.0),
+							.desired_width(ui.available_width()),
 					);
-					icons::inline(ui, icons::Icon::Search, 16.0, colors.muted);
 					if response.changed() {
 						let query = self.settings.query.to_lowercase();
 						if !self.settings.page.matches(&query, language)
@@ -656,20 +726,20 @@ impl MessagingUi {
 		if response.hovered() || response.has_focus() {
 			ui.painter().rect_filled(rect, 8, colors.hover);
 		}
+		icons::paint(
+			ui.painter(),
+			icons::Icon::SignOut,
+			egui::Rect::from_center_size(
+				egui::pos2(rect.left() + 20.0, rect.center().y),
+				egui::Vec2::splat(18.0),
+			),
+			colors.danger,
+		);
 		ui.painter().text(
-			egui::pos2(rect.left() + 10.0, rect.center().y),
+			egui::pos2(rect.left() + 40.0, rect.center().y),
 			egui::Align2::LEFT_CENTER,
 			&label,
 			egui::FontId::new(15.0, design::medium_family(ui.ctx())),
-			colors.danger,
-		);
-		icons::paint(
-			ui.painter(),
-			icons::Icon::External,
-			egui::Rect::from_center_size(
-				egui::pos2(rect.right() - 18.0, rect.center().y),
-				egui::Vec2::splat(16.0),
-			),
 			colors.danger,
 		);
 		if response.clicked() {
@@ -685,22 +755,22 @@ impl MessagingUi {
 			.as_ref()
 			.map_or("Your account", |u| u.name.as_str())
 			.to_owned();
+		let well = design::field_fill(&colors);
 		egui::Frame::new()
-			.fill(colors.raised)
-			.stroke(egui::Stroke::new(1.0, colors.border))
-			.corner_radius(8)
+			.fill(well)
+			.corner_radius(12)
 			.show(ui, |ui| {
 				ui.set_width(ui.available_width());
 				ui.spacing_mut().item_spacing.y = 0.0;
 				let (banner, _) = ui.allocate_exact_size(
-					egui::vec2(ui.available_width(), 96.0),
+					egui::vec2(ui.available_width(), 100.0),
 					egui::Sense::hover(),
 				);
 				ui.painter().rect_filled(
 					banner,
 					egui::CornerRadius {
-						nw: 8,
-						ne: 8,
+						nw: 12,
+						ne: 12,
 						sw: 0,
 						se: 0,
 					},
@@ -739,8 +809,8 @@ impl MessagingUi {
 						});
 						ui.add_space(16.0);
 						egui::Frame::new()
-							.fill(colors.chat)
-							.corner_radius(8)
+							.fill(colors.text_strong.gamma_multiply(0.04))
+							.corner_radius(10)
 							.inner_margin(egui::Margin::symmetric(16, 12))
 							.show(ui, |ui| {
 								ui.set_width(ui.available_width());
@@ -778,8 +848,7 @@ impl MessagingUi {
 					banner.left_bottom() + egui::vec2(16.0, -40.0),
 					egui::Vec2::splat(80.0),
 				);
-				ui.painter()
-					.circle_filled(avatar.center(), 44.0, colors.raised);
+				ui.painter().circle_filled(avatar.center(), 46.0, well);
 				ui.scope_builder(egui::UiBuilder::new().max_rect(avatar), |ui| {
 					if let Some(user) = &state.user {
 						self.avatars.with_avatar_animation(true, |avatars| {
@@ -825,7 +894,7 @@ impl MessagingUi {
 			let label = language.text("language-label");
 			let description = language.text("language-description");
 			design::row(ui, &label, Some(&description), |ui| {
-				egui::ComboBox::from_id_salt("display-language")
+				crate::design::combo("display-language")
 					.selected_text(self.language.name(language))
 					.width(ui.available_width().min(220.0))
 					.show_ui(ui, |ui| {
@@ -915,7 +984,7 @@ impl MessagingUi {
 			};
 			let label = language.text("general-render-with");
 			design::row(ui, &label, Some(&detail), |ui| {
-				egui::ComboBox::from_id_salt("gpu-preference")
+				crate::design::combo("gpu-preference")
 					.selected_text(gpu_label(language, self.gpu_preference))
 					.width(ui.available_width().min(220.0))
 					.show_ui(ui, |ui| {
@@ -979,12 +1048,9 @@ impl MessagingUi {
 	}
 
 	fn appearance_settings(&mut self, ui: &mut egui::Ui, demo: bool) {
-		let colors = design::palette(ui);
-		ui.add_space(4.0);
-		ui.label(design::eyebrow(
+		ui.label(design::heading(
 			ui,
 			crate::i18n::translate("settings-appearance-settings-theme"),
-			colors.muted,
 		));
 		theme_preference_cards(ui);
 		self.colour_preset_settings(ui);
@@ -1201,7 +1267,7 @@ impl MessagingUi {
 	}
 
 	fn activity_settings(&mut self, ui: &mut egui::Ui, state: &State) {
-		design::card(ui, |ui| {
+		design::group(ui, "Activity sharing", |ui| {
 			design::switch(
 				ui,
 				"settings-activity-settings-share-game-activity",
@@ -1246,7 +1312,7 @@ impl MessagingUi {
 				}
 			});
 		});
-		ui.add_space(24.0);
+		ui.add_space(12.0);
 		self.registered_games_settings(ui, state.demo);
 	}
 
@@ -1411,7 +1477,7 @@ fn preset_combo<T: Copy + PartialEq>(
 	presets: &[T],
 	label: impl Fn(&T) -> String,
 ) {
-	egui::ComboBox::from_id_salt(id)
+	crate::design::combo(id)
 		.selected_text(label(value))
 		.width(ui.available_width().min(120.0))
 		.show_ui(ui, |ui| {
@@ -1436,7 +1502,7 @@ fn account_row(ui: &mut egui::Ui, label: &str, value: &str) {
 		ui.vertical(|ui| {
 			ui.set_width((ui.available_width() - 160.0).max(100.0));
 			ui.spacing_mut().item_spacing.y = 2.0;
-			ui.label(design::eyebrow(ui, label, colors.muted));
+			ui.label(design::medium(ui, label, 13.0).color(colors.muted));
 			ui.add(
 				egui::Label::new(RichText::new(value).size(15.0).color(colors.text_strong))
 					.truncate(),
@@ -1447,6 +1513,59 @@ fn account_row(ui: &mut egui::Ui, label: &str, value: &str) {
 
 /// Sidebar entry in the settings modal; the selected page uses the strong surface and text.
 pub(super) fn nav_item(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
+	nav_item_with_icon(ui, None, label, selected)
+}
+
+/// One section of the open page, drawn under it on a guide line as in Discord's sidebar.
+fn nav_subitem(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
+	let label = crate::i18n::translate_if_key(label);
+	let colors = design::palette(ui);
+	let (rect, response) =
+		ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::click());
+	response.widget_info(|| {
+		egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, &label)
+	});
+	let hot = response.hovered() || response.has_focus();
+	let guide = rect.left() + 20.0;
+	// The guide runs through every row; the open section lights its own stretch of it.
+	ui.painter().vline(
+		guide,
+		rect.y_range(),
+		egui::Stroke::new(1.0, colors.text_strong.gamma_multiply(0.12)),
+	);
+	if selected {
+		ui.painter().rect_filled(
+			egui::Rect::from_center_size(egui::pos2(guide, rect.center().y), egui::vec2(2.0, 18.0)),
+			1,
+			colors.text_strong,
+		);
+	}
+	let color = if selected || hot {
+		colors.text_strong
+	} else {
+		colors.muted
+	};
+	let mut job = egui::text::LayoutJob::simple_singleline(
+		label.clone(),
+		egui::FontId::new(14.0, design::medium_family(ui.ctx())),
+		color,
+	);
+	job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 44.0);
+	let galley = ui.painter().layout_job(job);
+	ui.painter().galley(
+		egui::pos2(guide + 14.0, rect.center().y - galley.size().y / 2.0),
+		galley,
+		color,
+	);
+	response
+}
+
+pub(super) fn nav_item_with_icon(
+	ui: &mut egui::Ui,
+	icon: Option<icons::Icon>,
+	label: &str,
+	selected: bool,
+) -> egui::Response {
 	let label = crate::i18n::translate_if_key(label);
 	let colors = design::palette(ui);
 	let (rect, response) =
@@ -1465,22 +1584,9 @@ pub(super) fn nav_item(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::
 			.animate_bool_with_time(response.id.with("nav-selected"), selected, time * 1.5);
 	if chosen > 0.0 || lit > 0.0 {
 		let fill = colors
-			.hover
-			.gamma_multiply(lit.max(chosen))
-			.lerp_to_gamma(colors.selected, chosen);
+			.text_strong
+			.gamma_multiply(0.06 * lit.max(chosen) + 0.04 * chosen);
 		ui.painter().rect_filled(rect, 8, fill);
-	}
-	if chosen > 0.0 {
-		// Discord marks the open page with an accent rail at the left edge.
-		let height = 16.0 * egui::emath::easing::cubic_out(chosen);
-		ui.painter().rect_filled(
-			egui::Rect::from_min_size(
-				egui::pos2(rect.left(), rect.center().y - height * 0.5),
-				egui::vec2(3.0, height),
-			),
-			2,
-			colors.accent,
-		);
 	}
 	if response.has_focus() {
 		ui.painter().rect_stroke(
@@ -1503,11 +1609,26 @@ pub(super) fn nav_item(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::
 		egui::FontId::new(15.0, design::medium_family(ui.ctx())),
 		color,
 	);
-	job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 24.0);
+	let indent = if icon.is_some() { 40.0 } else { 12.0 };
+	if let Some(icon) = icon {
+		icons::paint(
+			ui.painter(),
+			icon,
+			egui::Rect::from_center_size(
+				egui::pos2(rect.left() + 20.0, rect.center().y),
+				egui::Vec2::splat(18.0),
+			),
+			color,
+		);
+	}
+	job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - indent - 12.0);
 	let galley = ui.painter().layout_job(job);
 	let elided = galley.elided;
 	ui.painter().galley(
-		egui::pos2(rect.left() + 12.0, rect.center().y - galley.size().y / 2.0),
+		egui::pos2(
+			rect.left() + indent,
+			rect.center().y - galley.size().y / 2.0,
+		),
 		galley,
 		color,
 	);
@@ -1518,49 +1639,29 @@ pub(super) fn nav_item(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::
 	}
 }
 
-/// Discord's round close button with the "ESC" hint underneath.
+/// Close button at the top right of a settings page; Escape closes too, as its label says.
 pub(super) fn close_control(ui: &mut egui::Ui) -> egui::Response {
 	let colors = design::palette(ui);
-	let (rect, response) = ui.allocate_exact_size(egui::vec2(40.0, 56.0), egui::Sense::click());
-	response.widget_info(|| {
-		egui::WidgetInfo::labeled(
-			egui::Role::Button,
-			ui.is_enabled(),
-			crate::i18n::translate("settings-close-control-close-settings-esc"),
-		)
-	});
+	let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(32.0), egui::Sense::click());
+	let label = crate::i18n::translate("settings-close-control-close-settings-esc");
+	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), &label));
 	let hot = response.hovered() || response.has_focus();
-	let center = egui::pos2(rect.center().x, rect.top() + 18.0);
-	ui.painter().circle(
-		center,
-		18.0,
-		if hot {
-			colors.hover
-		} else {
-			egui::Color32::TRANSPARENT
-		},
-		egui::Stroke::new(2.0, if hot { colors.text } else { colors.muted }),
+	ui.painter().rect_filled(
+		rect,
+		icons::PLATE_RADIUS,
+		icons::plate(ui, &response, false),
 	);
 	icons::paint(
 		ui.painter(),
 		icons::Icon::Close,
-		egui::Rect::from_center_size(center, egui::Vec2::splat(16.0)),
+		rect.shrink(8.0),
 		if hot {
 			colors.text_strong
 		} else {
 			colors.muted
 		},
 	);
-	ui.painter().text(
-		egui::pos2(rect.center().x, rect.bottom() - 6.0),
-		egui::Align2::CENTER_CENTER,
-		"ESC",
-		egui::FontId::new(11.0, design::semibold_family(ui.ctx())),
-		colors.muted,
-	);
-	response.on_hover_text(crate::i18n::translate(
-		"settings-close-control-close-settings-esc",
-	))
+	response.on_hover_text(label)
 }
 
 /// Dark, light or system cards with a miniature of each palette and a radio marker.
