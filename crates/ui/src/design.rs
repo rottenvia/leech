@@ -691,6 +691,18 @@ pub fn finish_panel(ui: &egui::Ui, rect: egui::Rect, backdrop: Color32) {
 	painter.rect_stroke(rect, PANEL_RADIUS, hairline(ui), egui::StrokeKind::Inside);
 }
 
+/// Fill for a loading placeholder. It breathes slowly instead of spinning, and only asks for
+/// frames while a placeholder is drawn. `strength` sets the resting opacity of the muted colour.
+pub fn placeholder_fill(ui: &egui::Ui, strength: f32) -> Color32 {
+	let time = ui.input(|input| input.time);
+	let pulse = 0.5 - 0.5 * (time * std::f64::consts::TAU / 1.8).cos() as f32;
+	ui.ctx()
+		.request_repaint_after(std::time::Duration::from_millis(33));
+	palette(ui)
+		.muted
+		.gamma_multiply(strength * (0.7 + 0.45 * pulse))
+}
+
 /// Fill the notches outside a rounded corner at `corner`, for surfaces that cannot paint a
 /// shared coat underneath. `inward` points from the corner into the rounded rect.
 pub fn paint_corner_notch(

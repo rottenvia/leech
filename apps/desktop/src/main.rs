@@ -1521,6 +1521,17 @@ impl Desktop {
 			let _ = state.select(model::Id(29));
 		}
 		#[cfg(feature = "demo")]
+		if demo && std::env::args().any(|arg| arg == "--demo-loading") {
+			// The selected channel's history and people are still on their way.
+			state.timeline.clear();
+			state.freshness = model::Freshness::Loading;
+			if let Some(list) = state.members.as_mut() {
+				list.slots.clear();
+				list.lazy = false;
+				list.freshness = model::Freshness::Loading;
+			}
+		}
+		#[cfg(feature = "demo")]
 		if demo && std::env::args().any(|arg| arg == "--demo-voice-failed") {
 			let call = state
 				.voice
@@ -4241,6 +4252,10 @@ impl Desktop {
 					let Some(channel) = channel else {
 						return;
 					};
+					// `--demo-loading` keeps the people list waiting for its first page.
+					if std::env::args().any(|arg| arg == "--demo-loading") {
+						return;
+					}
 					Event::Members(demo_members(&self.state, guild, channel, request))
 				}
 				Command::ForumPosts { .. } | Command::ForumSummaries { .. } => return,

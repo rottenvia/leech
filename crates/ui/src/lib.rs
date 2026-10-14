@@ -1388,13 +1388,14 @@ impl MessagingUi {
 		}
 		if !has_entry {
 			ui.add_space(8.0);
-			if list.freshness != Freshness::Fresh {
-				let text = if list.freshness == Freshness::Unavailable {
-					language.text("people-unavailable")
-				} else {
-					language.text("loading-people")
-				};
-				ui.label(RichText::new(text).small().color(colors.muted));
+			if list.freshness == Freshness::Unavailable {
+				ui.label(
+					RichText::new(language.text("people-unavailable"))
+						.small()
+						.color(colors.muted),
+				);
+			} else if list.freshness != Freshness::Fresh {
+				loading_people(ui, &language.text("loading-people"));
 			} else {
 				ui.label(
 					RichText::new(language.text("no-people"))
@@ -9703,3 +9704,45 @@ pub fn debug_pr565(mut state: State, mut user: model::User) {
 
 #[cfg(all(debug_assertions, feature = "demo"))]
 pub use timeline::debug_copy_feedback_check;
+
+/// The member list while it loads: a group heading and rows of avatars with names, in the
+/// member rows' own geometry, so the real list replaces it without moving anything.
+fn loading_people(ui: &mut egui::Ui, label: &str) {
+	const NAMES: [f32; 12] = [
+		0.62, 0.44, 0.7, 0.52, 0.38, 0.66, 0.48, 0.58, 0.4, 0.68, 0.5, 0.36,
+	];
+	let height = (ui.available_height() - 8.0).max(0.0);
+	let (rect, response) = ui.allocate_exact_size(
+		egui::vec2(ui.available_width(), height),
+		egui::Sense::hover(),
+	);
+	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, false, label));
+	if !ui.is_rect_visible(rect) {
+		return;
+	}
+	let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
+	let heading = design::placeholder_fill(ui, 0.24);
+	let fill = design::placeholder_fill(ui, 0.2);
+	let faint = design::placeholder_fill(ui, 0.12);
+	let width = (rect.width() - 56.0).max(0.0);
+	painter.rect_filled(
+		egui::Rect::from_min_size(rect.min + egui::vec2(8.0, 8.0), egui::vec2(88.0, 8.0)),
+		4.0,
+		heading,
+	);
+	for (index, share) in NAMES.iter().enumerate() {
+		let top = rect.top() + 26.0 + index as f32 * 42.0;
+		if top > rect.bottom() {
+			break;
+		}
+		painter.circle_filled(egui::pos2(rect.left() + 24.0, top + 21.0), 16.0, faint);
+		painter.rect_filled(
+			egui::Rect::from_min_size(
+				egui::pos2(rect.left() + 48.0, top + 16.0),
+				egui::vec2(width * share, 10.0),
+			),
+			5.0,
+			fill,
+		);
+	}
+}
