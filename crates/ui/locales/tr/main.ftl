@@ -245,7 +245,6 @@ archives-active-threads = AKTİF KONULAR
 # Context: show
 archives-show-active-threads-come-from-the-session-older-threads-load-25 = Etkin ileti dizileri oturumdan gelir; eski iş parçacıkları bir seferde 25 yükleniyor. Katılmadan mesajların açılması.
 # Context: show
-archives-show-archives-active-threads = aktif konuları arşivler
 # Context: show
 archives-show-archives-are-unavailable-while-disconnected-or-without-channel-access = Bağlantı kesildiğinde veya kanal erişimi olmadığında arşivler kullanılamaz.
 # Context: show

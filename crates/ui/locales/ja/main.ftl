@@ -245,7 +245,6 @@ archives-active-threads = アクティブなスレッド
 # Context: show
 archives-show-active-threads-come-from-the-session-older-threads-load-25 = アクティブなスレッドはセッションから取得されます。古いスレッドは一度に 25 個ロードされます。開くと、参加せずにメッセージが読み込まれます。
 # Context: show
-archives-show-archives-active-threads = アクティブなスレッドをアーカイブする
 # Context: show
 archives-show-archives-are-unavailable-while-disconnected-or-without-channel-access = 接続されていないとき、またはチャンネルにアクセスできないときは、アーカイブは利用できません。
 # Context: show

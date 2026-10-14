@@ -244,7 +244,6 @@ archives-active-threads = FILS ACTIFS
 # Context: show
 archives-show-active-threads-come-from-the-session-older-threads-load-25 = Les threads actifs proviennent de la session ; les threads plus anciens en chargent 25 à la fois. L'ouverture charge les messages sans les rejoindre.
 # Context: show
-archives-show-archives-active-threads = archive les discussions actives
 # Context: show
 archives-show-archives-are-unavailable-while-disconnected-or-without-channel-access = Les archives ne sont pas disponibles lorsqu'elles sont déconnectées ou sans accès aux chaînes.
 # Context: show

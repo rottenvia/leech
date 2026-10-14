@@ -245,7 +245,6 @@ archives-active-threads = АКТИВНЫЕ ТРЕДИ
 # Context: show
 archives-show-active-threads-come-from-the-session-older-threads-load-25 = Активные потоки исходят из сеанса; старые потоки загружают 25 одновременно. Открытие загружает сообщения без присоединения.
 # Context: show
-archives-show-archives-active-threads = архивирует активные темы
 # Context: show
 archives-show-archives-are-unavailable-while-disconnected-or-without-channel-access = Архивы недоступны при отключении или отсутствии доступа к каналу.
 # Context: show

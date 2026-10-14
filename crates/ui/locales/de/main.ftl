@@ -244,7 +244,6 @@ archives-active-threads = AKTIVE Threads
 # Context: show
 archives-show-active-threads-come-from-the-session-older-threads-load-25 = Aktive Threads stammen aus der Sitzung. Ältere Threads laden jeweils 25. Beim Öffnen werden Nachrichten geladen, ohne beizutreten.
 # Context: show
-archives-show-archives-active-threads = Archiviert aktive Threads
 # Context: show
 archives-show-archives-are-unavailable-while-disconnected-or-without-channel-access = Bei getrennter Verbindung oder ohne Kanalzugriff sind Archive nicht verfügbar.
 # Context: show
