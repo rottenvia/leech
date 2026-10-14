@@ -526,7 +526,7 @@ fn field(
 	let label = crate::i18n::translate_if_key(label);
 	let label_id = ui
 		.horizontal(|ui| {
-			let label = ui.label(design::eyebrow(ui, &label, colors.muted));
+			let label = ui.label(design::medium(ui, &label, 14.0).color(colors.text_strong));
 			if multiline {
 				ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
 					ui.label(
@@ -568,10 +568,9 @@ fn preview(
 	let (demo, guilds) = media;
 	let colors = design::palette(ui);
 	let mut action = None;
-	ui.label(design::eyebrow(
+	ui.label(design::heading(
 		ui,
 		crate::i18n::translate("profile-edit-preview-preview"),
-		colors.muted,
 	));
 	ui.add_space(4.0);
 	// Paint with the profile's own colors, as other people see the card, not the app theme.

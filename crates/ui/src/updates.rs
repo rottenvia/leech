@@ -423,7 +423,7 @@ impl MessagingUi {
 						"updates-update-settings-published-stable-releases-switching-channels-never-installs-an-older-ver"
 					}),
 					|ui| {
-						egui::ComboBox::from_id_salt("update-release-channel")
+						crate::design::combo("update-release-channel")
 							.selected_text(crate::i18n::translate_if_key(
 								&(if self.updates.nightly {
 									crate::i18n::translate("updates-update-settings-nightly")

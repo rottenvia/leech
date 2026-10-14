@@ -1861,8 +1861,8 @@ mod tests {
 				PointerButton::Primary,
 			);
 			let (_, text) = h.frame(&ctx, vec![]);
-			assert!(text.iter().any(|(s, _)| s == "CHANNEL NAME"));
-			assert!(!text.iter().any(|(s, _)| s == "CATEGORY NAME"));
+			assert!(text.iter().any(|(s, _)| s == "Channel name"));
+			assert!(!text.iter().any(|(s, _)| s == "Category name"));
 			let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(width, 760.0));
 			for choice in ["Text", "Voice", "Forum"] {
 				assert!(viewport.contains_rect(text.iter().find(|(s, _)| s == choice).unwrap().1));

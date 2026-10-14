@@ -77,13 +77,11 @@ pub(super) fn show_voice(
 	capturing: &mut Option<KeybindAction>,
 	global_status: &str,
 ) {
-	let colors = design::palette(ui);
 	voice_section(ui, bindings, capturing);
 	ui.add_space(10.0);
-	ui.label(design::eyebrow(
+	ui.label(design::heading(
 		ui,
 		crate::i18n::translate("keybinds-show-voice-global-availability"),
-		colors.muted,
 	));
 	design::switch(
 		ui,
