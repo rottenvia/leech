@@ -2983,6 +2983,90 @@ pub fn text_action(ui: &mut egui::Ui, label: &str) -> egui::Response {
 	response
 }
 
+/// Check box with its label: a rounded box that fills with the accent and a white check when
+/// on. egui's own box all but vanished on the house surfaces.
+pub fn checkbox(
+	ui: &mut egui::Ui,
+	checked: &mut bool,
+	text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+	const BOX: f32 = 20.0;
+	const GAP: f32 = 10.0;
+	let p = palette(ui);
+	let galley = text.into().into_galley(
+		ui,
+		Some(egui::TextWrapMode::Wrap),
+		(ui.available_width() - BOX - GAP).max(40.0),
+		egui::TextStyle::Body,
+	);
+	let first_row = galley.rows.first().map_or(BOX, |row| row.height());
+	let height = galley.size().y.max(BOX);
+	let (rect, mut response) = ui.allocate_exact_size(
+		egui::vec2(BOX + GAP + galley.size().x, height),
+		egui::Sense::click(),
+	);
+	if response.clicked() {
+		*checked = !*checked;
+		response.mark_changed();
+	}
+	let enabled = ui.is_enabled();
+	response.widget_info(|| {
+		egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, *checked, galley.text())
+	});
+	let hot = enabled && (response.hovered() || response.has_focus());
+	// The box sits on the first line of the label, however many lines it wraps to.
+	let center = rect.top() + (first_row.max(BOX)) * 0.5;
+	let square = egui::Rect::from_center_size(
+		egui::pos2(rect.left() + BOX * 0.5, center),
+		egui::Vec2::splat(BOX),
+	);
+	let dim = if enabled { 1.0 } else { 0.45 };
+	let painter = ui.painter();
+	if *checked {
+		let fill = if hot {
+			mix(p.accent, Color32::WHITE, 0.1)
+		} else {
+			p.accent
+		};
+		painter.rect_filled(square, 6, fill.gamma_multiply(dim));
+		crate::icons::paint(
+			painter,
+			crate::icons::Icon::Check,
+			square.shrink(4.0),
+			p.accent_text.gamma_multiply(dim),
+		);
+	} else {
+		if hot {
+			painter.rect_filled(square, 6, p.text_strong.gamma_multiply(0.06));
+		}
+		painter.rect_stroke(
+			square,
+			6,
+			Stroke::new(
+				1.5,
+				p.text_strong
+					.gamma_multiply(if hot { 0.55 } else { 0.32 } * dim),
+			),
+			egui::StrokeKind::Inside,
+		);
+	}
+	if response.has_focus() {
+		painter.rect_stroke(
+			square.expand(2.0),
+			8,
+			Stroke::new(2.0, p.accent),
+			egui::StrokeKind::Outside,
+		);
+	}
+	let text_top = center - first_row * 0.5;
+	painter.galley(
+		egui::pos2(square.right() + GAP, text_top),
+		galley,
+		p.text.gamma_multiply(dim),
+	);
+	response
+}
+
 /// One choice in an exclusive group: the whole row toggles, with a radio marker at the left
 /// and an optional explanation under the label.
 pub fn radio_row(

@@ -990,7 +990,7 @@ fn field(
 						ui.radio(chosen, &option.label).clicked()
 					} else {
 						let mut selected = chosen;
-						ui.checkbox(&mut selected, &option.label).changed()
+						design::checkbox(ui, &mut selected, &option.label).changed()
 					};
 					if clicked {
 						if chosen {
@@ -1024,7 +1024,8 @@ fn field(
 							})));
 			}
 			23 => {
-				ui.checkbox(
+				design::checkbox(
+					ui,
 					c.checked.get_or_insert(false),
 					c.label
 						.clone()

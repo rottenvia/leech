@@ -300,7 +300,7 @@ fn field_ui(ui: &mut egui::Ui, field: &Field, answer: &mut Answer) {
 					});
 				}
 			});
-			ui.checkbox(agreed, translate("onboarding-field-agree"));
+			crate::design::checkbox(ui, agreed, translate("onboarding-field-agree"));
 		}
 		(FieldKind::TextInput | FieldKind::Paragraph, Answer::Text(text)) => {
 			let editor = if field.kind == FieldKind::Paragraph {

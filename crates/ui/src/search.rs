@@ -959,7 +959,8 @@ impl SearchUi {
 					let settings_label = crate::i18n::translate("search-pane-settings");
 					let settings = chip(ui, Chip::icon(icons::Icon::Gear, &settings_label));
 					egui::Popup::menu(&settings).show(|ui| {
-						ui.checkbox(
+						crate::design::checkbox(
+							ui,
 							&mut self.hide_highlight,
 							crate::i18n::translate("search-pane-hide-matching-text-highlight"),
 						);

@@ -4956,7 +4956,8 @@ impl Desktop {
 			.inner_margin(egui::Margin::symmetric(12, 9))
 			.show(ui, |ui| {
 				ui.set_width(ui.available_width());
-				ui.checkbox(
+				ui::design::checkbox(
+					ui,
 					&mut self.authorized,
 					ui::design::medium(
 						ui,

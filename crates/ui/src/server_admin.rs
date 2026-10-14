@@ -1086,10 +1086,10 @@ impl Admin {
 					}) {
 						let mut assigned = member.roles.contains(&role.role.id);
 						if ui
-							.add_enabled(
-								!state.server_admin.pending,
-								egui::Checkbox::new(&mut assigned, &role.role.name),
-							)
+							.add_enabled_ui(!state.server_admin.pending, |ui| {
+								design::checkbox(ui, &mut assigned, &role.role.name)
+							})
+							.inner
 							.changed()
 						{
 							*action = Some(Action::SetRole {
