@@ -663,25 +663,27 @@ fn starter_row(
 			// A labelled rule separates the starter from the replies that followed it.
 			ui.horizontal(|ui| {
 				ui.spacing_mut().item_spacing.x = 8.0;
-				let (line, _) = ui.allocate_exact_size(
-					egui::vec2((ui.available_width() - 220.0).max(24.0), 1.0),
-					egui::Sense::hover(),
+				// Measured, so the rule never runs past the row: a guessed label width let
+				// the row overflow and widen every divider below it.
+				let label = ui.painter().layout_no_wrap(
+					crate::i18n::translate("timeline-starter-row-thread-started-from-this-message"),
+					egui::FontId::proportional(12.0),
+					colors.muted,
 				);
+				let tail = 24.0;
+				let lead =
+					(ui.available_width() - label.size().x - 14.0 - tail - 3.0 * 8.0).max(24.0);
+				let (line, _) = ui.allocate_exact_size(egui::vec2(lead, 1.0), egui::Sense::hover());
 				ui.painter().hline(
 					line.x_range(),
 					line.center().y,
 					egui::Stroke::new(1.0, colors.border),
 				);
 				crate::icons::inline(ui, crate::icons::Icon::Thread, 14.0, colors.muted);
-				ui.label(
-					RichText::new(crate::i18n::translate(
-						"timeline-starter-row-thread-started-from-this-message",
-					))
-					.size(12.0)
-					.color(colors.muted),
-				);
+				let (text, _) = ui.allocate_exact_size(label.size(), egui::Sense::hover());
+				ui.painter().galley(text.min, label, colors.muted);
 				let (line, _) = ui.allocate_exact_size(
-					egui::vec2(ui.available_width(), 1.0),
+					egui::vec2(ui.available_width().min(tail), 1.0),
 					egui::Sense::hover(),
 				);
 				ui.painter().hline(
