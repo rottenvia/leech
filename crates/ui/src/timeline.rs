@@ -1329,21 +1329,25 @@ enum DeletedLocalAction {
 
 fn deleted_message_actions(popup: egui::Popup<'_>, action: &mut Option<DeletedLocalAction>) {
 	popup.show(|ui| {
-		ui.set_min_width(160.0);
-		if ui
-			.button(crate::i18n::translate(
-				"timeline-deleted-message-actions-toggle-deleted-highlight",
-			))
-			.clicked()
+		ui.set_width(224.0);
+		if crate::design::menu_item(
+			ui,
+			Some(crate::icons::Icon::EyeSlash),
+			&crate::i18n::translate("timeline-deleted-message-actions-toggle-deleted-highlight"),
+			false,
+		)
+		.clicked()
 		{
 			*action = Some(DeletedLocalAction::ToggleHighlight);
 			ui.close();
 		}
-		if ui
-			.button(crate::i18n::translate(
-				"timeline-deleted-message-actions-remove-message",
-			))
-			.clicked()
+		if crate::design::menu_item(
+			ui,
+			Some(crate::icons::Icon::Trash),
+			&crate::i18n::translate("timeline-deleted-message-actions-remove-message"),
+			true,
+		)
+		.clicked()
 		{
 			*action = Some(DeletedLocalAction::Remove);
 			ui.close();
@@ -1381,13 +1385,117 @@ fn message_actions(
 	let (can_pin, pinned, pin_request) = pin;
 	let (can_thread, thread_request) = thread;
 	popup.show(|ui| {
-		ui.set_min_width(160.0);
+		use crate::design::{menu_item, menu_item_if};
+		use crate::icons::Icon;
+		ui.set_width(224.0);
+		ui.spacing_mut().item_spacing.y = 2.0;
+		let t = crate::i18n::translate;
+		if menu_item_if(
+			ui,
+			can_reply,
+			Some(Icon::Reply),
+			&t("timeline-message-actions-reply"),
+			false,
+		)
+		.clicked()
+		{
+			*reply = Some(message.id);
+			ui.close();
+		}
+		if menu_item_if(
+			ui,
+			forward.0,
+			Some(Icon::Forward),
+			&t("timeline-message-actions-forward"),
+			false,
+		)
+		.clicked()
+		{
+			*forward.1 = Some(message.id);
+			ui.close();
+		}
+		if can_thread
+			&& menu_item(
+				ui,
+				Some(Icon::Thread),
+				&t("timeline-message-actions-create-thread"),
+				false,
+			)
+			.clicked()
+		{
+			*thread_request = Some((message.channel, message.id));
+			ui.close();
+		}
+		if own
+			&& menu_item_if(
+				ui,
+				can_edit,
+				Some(Icon::Pencil),
+				&t("timeline-message-actions-edit-message"),
+				false,
+			)
+			.clicked()
+		{
+			*editing = Some((message.channel, message.id, message.content.clone()));
+			*edit_started = true;
+			ui.close();
+		}
+		ui.separator();
+		if crate::select::has_selection(ui.ctx())
+			&& menu_item(
+				ui,
+				Some(Icon::Copy),
+				&t("timeline-message-actions-copy"),
+				false,
+			)
+			.clicked()
+		{
+			crate::select::request_copy(ui.ctx());
+			ui.close();
+		}
+		if menu_item(ui, Some(Icon::Copy), &t("message-menu-copy"), false).clicked() {
+			ui.ctx()
+				.copy_text(crate::i18n::message_text(message).into_owned());
+			ui.close();
+		}
+		if menu_item_if(
+			ui,
+			can_pin,
+			Some(Icon::Pin),
+			&crate::i18n::translate_if_key(if pinned {
+				"timeline-message-actions-unpin-message"
+			} else {
+				"timeline-message-actions-pin-message"
+			}),
+			false,
+		)
+		.clicked()
+		{
+			*pin_request = Some((message.channel, message.id, !pinned));
+			ui.close();
+		}
+		if let Some((emoji, view)) = view_reactions
+			&& menu_item(
+				ui,
+				Some(Icon::Smile),
+				&t("timeline-message-actions-view-reactions"),
+				false,
+			)
+			.clicked()
+		{
+			*view = Some((message.id, emoji, true));
+			ui.close();
+		}
 		if !extension_actions.is_empty() {
+			let ink = crate::design::palette(ui).text;
 			ui.menu_button(
-				crate::i18n::translate("timeline-message-actions-extensions"),
+				(
+					crate::design::menu_glyph(Icon::PuzzlePiece, ink),
+					t("timeline-message-actions-extensions"),
+				),
 				|ui| {
 					for action in extension_actions {
-						if ui.button(&action.label).clicked() {
+						if menu_item(ui, None, &action.label, false).clicked() {
 							*extension_request =
 								Some((action.clone(), message.display_text().into_owned()));
 							ui.close();
@@ -1395,153 +1503,72 @@ fn message_actions(
 					}
 				},
 			);
-			ui.separator();
 		}
-		if crate::select::has_selection(ui.ctx())
-			&& ui
-				.button(crate::i18n::translate("timeline-message-actions-copy"))
-				.clicked()
-		{
-			crate::select::request_copy(ui.ctx());
-			ui.close();
-		}
-		if ui
-			.button(crate::i18n::translate("message-menu-copy"))
-			.clicked()
-		{
-			ui.ctx()
-				.copy_text(crate::i18n::message_text(message).into_owned());
-			ui.close();
-		}
-		if let Some(link) = link
-			&& ui
-				.button(crate::i18n::translate(
-					"timeline-message-actions-copy-message-link",
-				))
-				.clicked()
-		{
-			ui.ctx().copy_text(link.to_owned());
-			ui.close();
-		}
-		if ui
-			.button(crate::i18n::translate(
-				"timeline-message-actions-copy-message-id",
-			))
-			.clicked()
-		{
-			ui.ctx().copy_text(message.id.to_string());
-			ui.close();
-		}
-		if ui
-			.add_enabled(
-				can_reply,
-				egui::Button::new(crate::i18n::translate("timeline-message-actions-reply")),
-			)
-			.clicked()
-		{
-			*reply = Some(message.id);
-			ui.close();
-		}
-		if ui
-			.add_enabled(
-				forward.0,
-				egui::Button::new(crate::i18n::translate("timeline-message-actions-forward")),
-			)
-			.clicked()
-		{
-			*forward.1 = Some(message.id);
-			ui.close();
-		}
-		if can_thread
-			&& ui
-				.button(crate::i18n::translate(
-					"timeline-message-actions-create-thread",
-				))
-				.clicked()
-		{
-			*thread_request = Some((message.channel, message.id));
-			ui.close();
-		}
-		if let Some((emoji, view)) = view_reactions
-			&& ui
-				.button(crate::i18n::translate(
-					"timeline-message-actions-view-reactions",
-				))
-				.clicked()
-		{
-			*view = Some((message.id, emoji, true));
-			ui.close();
-		}
-		if ui
-			.add_enabled(
-				mark_read.is_some(),
-				egui::Button::new(crate::i18n::translate(
-					"timeline-message-actions-mark-read-through-here",
-				)),
-			)
-			.clicked()
-		{
-			if let Some(mark_read) = mark_read {
-				*mark_read = Some(message.id);
-			}
-			ui.close();
-		}
-		if ui
-			.add_enabled(
-				mark_unread.is_some(),
-				egui::Button::new(crate::i18n::translate(
-					"timeline-message-actions-mark-unread",
-				)),
-			)
-			.clicked()
+		if menu_item_if(
+			ui,
+			mark_unread.is_some(),
+			Some(Icon::Envelope),
+			&t("timeline-message-actions-mark-unread"),
+			false,
+		)
+		.clicked()
 		{
 			if let Some(mark_unread) = mark_unread {
 				*mark_unread = Some(message.id);
 			}
 			ui.close();
 		}
-		if ui
-			.add_enabled(
-				can_pin,
-				egui::Button::new(crate::i18n::translate_if_key(if pinned {
-					"timeline-message-actions-unpin-message"
-				} else {
-					"timeline-message-actions-pin-message"
-				})),
+		if menu_item_if(
+			ui,
+			mark_read.is_some(),
+			Some(Icon::Check),
+			&t("timeline-message-actions-mark-read-through-here"),
+			false,
+		)
+		.clicked()
+		{
+			if let Some(mark_read) = mark_read {
+				*mark_read = Some(message.id);
+			}
+			ui.close();
+		}
+		if let Some(link) = link
+			&& menu_item(
+				ui,
+				Some(Icon::Link),
+				&t("timeline-message-actions-copy-message-link"),
+				false,
 			)
 			.clicked()
 		{
-			*pin_request = Some((message.channel, message.id, !pinned));
+			ui.ctx().copy_text(link.to_owned());
 			ui.close();
 		}
 		if own || can_delete {
 			ui.separator();
+			if menu_item_if(
+				ui,
+				can_delete,
+				Some(Icon::Trash),
+				&t("timeline-message-actions-delete-message"),
+				true,
+			)
+			.clicked()
+			{
+				*deleting = Some((message.channel, message.id));
+				ui.close();
+			}
 		}
-		if own
-			&& ui
-				.add_enabled(
-					can_edit,
-					egui::Button::new(crate::i18n::translate(
-						"timeline-message-actions-edit-message",
-					)),
-				)
-				.clicked()
+		ui.separator();
+		if menu_item(
+			ui,
+			Some(Icon::IdCard),
+			&t("timeline-message-actions-copy-message-id"),
+			false,
+		)
+		.clicked()
 		{
-			*editing = Some((message.channel, message.id, message.content.clone()));
-			*edit_started = true;
-			ui.close();
-		}
-		if (own || can_delete)
-			&& ui
-				.add_enabled(
-					can_delete,
-					egui::Button::new(crate::i18n::translate(
-						"timeline-message-actions-delete-message",
-					)),
-				)
-				.clicked()
-		{
-			*deleting = Some((message.channel, message.id));
+			ui.ctx().copy_text(message.id.to_string());
 			ui.close();
 		}
 	});
@@ -7408,13 +7435,14 @@ mod tests {
 			);
 			// Both entry points share the same menu, including on selectable text,
 			// row whitespace, and Shift+right-click (which must not quick-delete).
+			// Discord's grouping: respond, then copy and keep, then destroy.
 			let menu_labels = [
-				"Copy message",
 				"Reply",
-				"Mark read through here",
-				"Mark Unread",
-				"Pin message",
 				"Edit message",
+				"Copy message",
+				"Pin message",
+				"Mark Unread",
+				"Mark read through here",
 				"Delete message\u{2026}",
 			];
 			for (button, point, modifiers) in [

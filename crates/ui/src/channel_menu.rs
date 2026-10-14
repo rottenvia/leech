@@ -115,13 +115,15 @@ impl ChannelMenu {
 		)
 		.show(|ui| {
 			ui.set_width(232.0);
-			ui.spacing_mut().button_padding = egui::vec2(12.0, 8.0);
+			ui.spacing_mut().button_padding = egui::vec2(10.0, 8.0);
+			ui.spacing_mut().item_spacing.y = 2.0;
 			let available = (state.demo || state.gateway_connected)
 				&& !state.channel_action_pending()
 				&& state.can_view(channel.id);
 			let mut intent = None;
 			if row(
 				ui,
+				Some(icons::Icon::Check),
 				"channel-menu-context-mark-as-read",
 				state.can_mark_channel_read(channel.id),
 				false,
@@ -134,6 +136,7 @@ impl ChannelMenu {
 			if channel.kind != 4
 				&& row(
 					ui,
+					Some(icons::Icon::Star),
 					if view.contains(Shortcut::Favorite, channel.id) {
 						"channel-menu-context-remove-from-favorites"
 					} else {
@@ -155,6 +158,7 @@ impl ChannelMenu {
 			if state.can_create_server_invite(guild, channel.id)
 				&& row(
 					ui,
+					Some(icons::Icon::AddPeople),
 					"channel-menu-context-invite-to-channel",
 					available && !state.server_invite_pending() && !state.server_action_pending(),
 					false,
@@ -165,7 +169,15 @@ impl ChannelMenu {
 				self.generation = state.generation;
 				ui.close();
 			}
-			if row(ui, "channel-menu-context-copy-link", true, false).clicked() {
+			if row(
+				ui,
+				Some(icons::Icon::Link),
+				"channel-menu-context-copy-link",
+				true,
+				false,
+			)
+			.clicked()
+			{
 				ui.ctx().copy_text(format!(
 					"https://discord.com/channels/{guild}/{}",
 					channel.id
@@ -175,12 +187,22 @@ impl ChannelMenu {
 			ui.separator();
 			ui.add_enabled_ui(available, |ui| {
 				if state.guild_channel_muted(channel.id) == Some(true)
-					&& row(ui, "channel-menu-context-unmute-channel", true, false).clicked()
+					&& row(
+						ui,
+						Some(icons::Icon::Bell),
+						"channel-menu-context-unmute-channel",
+						true,
+						false,
+					)
+					.clicked()
 				{
 					intent = Some(Intent::Write(Action::Mute(Mute::Unmute)));
 				}
 				ui.menu_button(
-					crate::i18n::translate("channel-menu-context-mute-channel"),
+					(
+						design::menu_glyph(icons::Icon::BellSlash, colors.text),
+						crate::i18n::translate("channel-menu-context-mute-channel"),
+					),
 					|ui| {
 						for (label, seconds) in [
 							("channel-menu-report-capacity-for-15-minutes", 900),
@@ -189,12 +211,13 @@ impl ChannelMenu {
 							("channel-menu-report-capacity-for-8-hours", 28800),
 							("channel-menu-report-capacity-for-24-hours", 86400),
 						] {
-							if row(ui, label, true, false).clicked() {
+							if row(ui, None, label, true, false).clicked() {
 								intent = Some(Intent::Write(Action::Mute(Mute::For(seconds))));
 							}
 						}
 						if row(
 							ui,
+							None,
 							"channel-menu-context-until-i-turn-it-back-on",
 							true,
 							false,
@@ -206,7 +229,10 @@ impl ChannelMenu {
 					},
 				);
 				ui.menu_button(
-					crate::i18n::translate("channel-menu-context-notification-settings"),
+					(
+						design::menu_glyph(icons::Icon::Bell, colors.text),
+						crate::i18n::translate("channel-menu-context-notification-settings"),
+					),
 					|ui| {
 						let level = state.channel_notification_level(channel.id);
 						for (value, label) in [
@@ -232,6 +258,7 @@ impl ChannelMenu {
 				ui.separator();
 				if row(
 					ui,
+					Some(icons::Icon::Pencil),
 					if channel.kind == 4 {
 						"channel-menu-context-edit-category"
 					} else {
@@ -265,13 +292,26 @@ impl ChannelMenu {
 						Kind::Delete,
 					),
 				] {
-					if row(ui, label, available, kind == Kind::Delete).clicked() {
+					let icon = match kind {
+						Kind::Duplicate => icons::Icon::Copy,
+						Kind::Delete => icons::Icon::Trash,
+						_ => icons::Icon::Plus,
+					};
+					if row(ui, Some(icon), label, available, kind == Kind::Delete).clicked() {
 						intent = Some(Intent::Dialog(kind));
 					}
 				}
 			}
 			ui.separator();
-			if row(ui, "channel-menu-context-copy-channel-id", true, false).clicked() {
+			if row(
+				ui,
+				Some(icons::Icon::IdCard),
+				"channel-menu-context-copy-channel-id",
+				true,
+				false,
+			)
+			.clicked()
+			{
 				ui.ctx().copy_text(channel.id.to_string());
 				ui.close();
 			}
@@ -324,7 +364,12 @@ impl ChannelMenu {
 					("channel-menu-context-create-channel", Kind::Create),
 					("channel-menu-context-create-category", Kind::CreateCategory),
 				] {
-					if row(ui, label, available, false).clicked() {
+					let icon = if kind == Kind::CreateCategory {
+						icons::Icon::Folder
+					} else {
+						icons::Icon::Plus
+					};
+					if row(ui, Some(icon), label, available, false).clicked() {
 						self.requested = Some((anchor.id, Intent::Dialog(kind)));
 						self.generation = state.generation;
 						ui.close();
@@ -336,6 +381,7 @@ impl ChannelMenu {
 				.filter(|channel| state.can_create_server_invite(guild, *channel))
 				&& row(
 					ui,
+					Some(icons::Icon::AddPeople),
 					"channel-menu-sidebar-context-invite-to-server",
 					available && !state.server_invite_pending() && !state.server_action_pending(),
 					false,
@@ -1168,7 +1214,7 @@ impl Dialog {
 }
 
 fn toggle_row(ui: &mut egui::Ui, label: &str, value: &mut bool) -> egui::Response {
-	let mut response = row(ui, label, true, false);
+	let mut response = row(ui, None, label, true, false);
 	if response.clicked() {
 		*value = !*value;
 		response.mark_changed();
@@ -1197,21 +1243,14 @@ fn toggle_row(ui: &mut egui::Ui, label: &str, value: &mut bool) -> egui::Respons
 	response
 }
 
-pub(super) fn row(ui: &mut egui::Ui, label: &str, enabled: bool, danger: bool) -> egui::Response {
-	let colors = design::palette(ui);
-	let label = crate::i18n::translate_if_key(label);
-	ui.add_enabled(
-		enabled,
-		egui::Button::new(())
-			.left_text(design::medium(ui, label, 14.0).color(if danger {
-				colors.danger
-			} else {
-				colors.text
-			}))
-			.min_size(egui::vec2(ui.available_width(), 34.0))
-			.frame_when_inactive(false)
-			.corner_radius(4),
-	)
+pub(super) fn row(
+	ui: &mut egui::Ui,
+	icon: Option<icons::Icon>,
+	label: &str,
+	enabled: bool,
+	danger: bool,
+) -> egui::Response {
+	design::menu_item_if(ui, enabled, icon, label, danger)
 }
 
 /// Offline debug command: exercise the real selector, submit button and permission gate.
