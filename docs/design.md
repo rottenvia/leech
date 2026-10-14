@@ -72,12 +72,11 @@ for an action that destroys something; submenu rows take a matching `design::men
 message menu follows Discord's grouping: respond (reply, forward, thread, edit), copy and keep
 (copy, pin, reactions, unread, link), delete on its own, the ID last.
 
-Icon buttons come from `crates/ui/src/icons.rs`: bare (plate on hover), framed (resting
-hairline, the composer's attach) and accent (filled while enabled, the composer's send). Their
+Icon buttons come from `crates/ui/src/icons.rs`: bare (plate on hover) and accent (filled
+while enabled, the composer's send). Their
 hover and pressed plates are veils of the text colour with an 8px radius. Toggles keep a faint
 plate while on. A toggle whose state must read at a glance (noise suppression in the voice
-panel) shows its state in the glyph: the accent glyph while on, a slashed muted glyph while
-off. It opens a popover with the switch, the filter (RNNoise or WebRTC and its strength), the
+panel) shows its state in the glyph: a plain glyph while on, the same glyph slashed while off. It opens a popover with the switch, the filter (RNNoise or WebRTC and its strength), the
 live microphone level and a link into the voice settings; disconnect beside it is quiet at
 rest and turns red under the pointer. Account labels (APP, BOT) are tinted accent chips, not solid blocks. The title
 bar's status chips (OFFLINE PREVIEW, the DEV and NIGHTLY build chips) share that treatment at
@@ -134,15 +133,22 @@ The bundled faces remain upstream's hinted TrueType builds. See `assets/README.m
   (240px default, resizable): 48px header with the server name, category eyebrows with chevrons,
   32px rows with `#`/speaker/forum/thread glyphs, `selected`/`hover` fills, unread edge pill,
   mention badge; DM rows are 44px with 32px avatars. Forum rows open their post archive.
+  As in Discord, the DM column puts "Find conversation" in its header strip and a Friends row
+  above the conversations.
   Account card at the bottom (`raised`, avatar with presence dot, name, status, settings gear).
 - Conversation header (48px): channel glyph or DM avatar, semibold name, then icon buttons
-  (reload, threads/archive, pins, member list toggle), a 144px search field and DM call/voice
-  controls. A thin notice strip appears only for loading/stale/archive/history states.
-- Timeline: 16px gutters, 40px avatars, content at 72px, medium-weight author names, 12px muted
-  timestamps, `hover` row highlight, date dividers with a centred label, red "New messages"
-  divider, floating hover toolbar (react, reply, edit, more) overlapping the row above.
-- Composer: rounded `raised` bar with attach (+), placeholder `Message #channel`, emoji picker
-  and send icons; a character counter appears within 200 characters of the limit.
+  (threads/archive, pins, member list toggle), a 144px search field and, in a DM outside its
+  call, Discord's voice and video call buttons. Reload appears only when history failed or went
+  stale or the connection is lost. A one-to-one DM has no member list, as in Discord. A thin
+  notice strip appears only for loading/stale/archive/history states.
+- Timeline: 16px gutters, 40px avatars, content at 72px, medium-weight author names followed
+  by the author's server tag, 12px muted timestamps, `hover` row highlight, date dividers with a
+  centred label, red "New messages" divider, floating hover toolbar (react, reply, edit, more)
+  overlapping the row above. System rows (calls, joins, pins) are one line each and stack one
+  line apart. GIFs wear a GIF badge; their favourite star shows under the pointer.
+- Composer: rounded `raised` bar with a bare attach (+), placeholder `Message #channel`, then
+  GIF, sticker and emoji pickers and send; a character counter appears within 200 characters
+  of the limit.
 - Member list (240px): ONLINE/OFFLINE eyebrows with counts; group DMs show a localized
   Members — N heading including the current account, updated with participant changes. 42px rows with
   presence dots, custom status and hover fill; opens a Members window on narrow layouts.
@@ -186,19 +192,24 @@ Pause and the macOS Fn key, when the OS delivers them to the focused window. The
 persist through the existing device settings. Global availability remains limited by the
 native shortcut adapter; unsupported global bindings continue to work while Leech is focused.
 
-Voice follows Discord's call screens in placement: a stage that stays dark in every appearance,
-in the house plum cast rather than black and neutral grey, with 80px participant avatars (DM
-calls, above the conversation; a voice-only DM call opens only as tall as its avatars and the
-bar) or hairlined 16:9 tiles with name badges (guild channels), a
-bottom control bar of dark pills (mute with settings chevron, camera, screen share, more)
-and a red hang-up button, a green "In a call" badge in the header, mute/deafen toggles in the
-account card, and a "Voice Connected" panel above it while connected. The header and the bar
+Voice follows Discord's call screens: a stage that stays dark in every appearance, in the house
+plum cast rather than black and neutral grey, with 80px participant avatars (DM calls, above
+the conversation; everyone else first and you last, names on hover, a red badge for a mute; a
+voice-only DM call opens only as tall as its avatars and the bar) or hairlined 16:9 tiles with
+name badges (guild channels), a bottom control bar of dark pills (mute with settings chevron,
+camera, screen share, more) and a red hang-up button, mute/deafen toggles in the account card,
+whose status line reads "In a call" with a green handset, and a "Voice Connected" panel above
+it while connected. Routine screen-share status ("stopped") is not shown on the stage. A DM call
+that rings or runs without this device shows the same stage with whoever is in it and green
+buttons to join with video or voice (and a red decline while it rings here); a call ringing in
+another conversation keeps a slim banner. The header and the bar
 stay visible beside the avatars or tiles and fade out only over an enlarged video, which keeps
 a slim 8px margin from the stage edges instead of touching the sidebar. In the channel list a
 voice channel's participants stand in the channel-icon column (24px avatars under the speaker
 glyph), and the stream preview card floats 8px clear of the sidebar edge. Stage tiles grow to
 fill the stage up to 960px wide each, so a large window shows a full grid rather than one short row. The panel follows
-Discord's: noise suppression and a red disconnect beside the title, then two equal cells for
+Discord's: a signal glyph, noise suppression (a grey five-bar waveform, slashed while off) and
+disconnect beside the title, then two equal cells for
 camera (split with its settings chevron) and screen share, filled with the accent while on.
 Each mute/deafen toggle shares one plate with its settings chevron and turns red while latched;
 the call bar tints its microphone half the same way. Activities and soundboard are absent:
