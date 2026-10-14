@@ -4096,13 +4096,9 @@ video-show-player-video-volume = 视频音量
 
 ## crates/ui/src/voice.rs
 # Context: call_bar
-voice-call-bar-call-in-progress = 通话进行中
-# Context: call_bar
 voice-call-bar-incoming-call = 来电中…
 # Context: call_bar
 voice-call-bar-join-call = 加入通话
-# Context: call_bar
-voice-call-bar-reconnect-to-refresh-call = 重新连接以更新通话
 # Context: call_controls
 voice-call-controls-disconnect = 断开连接
 # Context: call_controls

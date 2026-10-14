@@ -4068,13 +4068,9 @@ video-show-player-video-volume = Громкость видео
 
 ## crates/ui/src/voice.rs
 # Context: call_bar
-voice-call-bar-call-in-progress = Звонок в процессе
-# Context: call_bar
 voice-call-bar-incoming-call = Входящий звонок…
 # Context: call_bar
 voice-call-bar-join-call = Присоединиться к звонку
-# Context: call_bar
-voice-call-bar-reconnect-to-refresh-call = Повторно подключитесь, чтобы обновить вызов
 # Context: call_controls
 voice-call-controls-disconnect = Отключить
 # Context: call_controls

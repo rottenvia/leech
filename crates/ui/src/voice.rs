@@ -1615,13 +1615,7 @@ impl MessagingUi {
 				.voice
 				.ringing(entry.channel)
 				.contains(&entry.participant.user);
-		let offset = if compact {
-			0.0
-		} else if frameless {
-			14.0
-		} else {
-			10.0
-		};
+		let offset = if compact || frameless { 0.0 } else { 10.0 };
 		let avatar_rect = egui::Rect::from_center_size(
 			rect.center() - egui::vec2(0.0, offset),
 			egui::Vec2::splat(avatar_size),
@@ -1642,7 +1636,7 @@ impl MessagingUi {
 		} else {
 			design::avatar(&mut avatar_ui, name, avatar_size)
 		};
-		// Mute state reads as Discord's red ring plus the matching slashed glyph.
+		// Mute state reads as Discord's red badge with the matching slashed glyph.
 		let shown = shown_participant(state, entry);
 		let silenced = if inactive {
 			None
@@ -1659,11 +1653,6 @@ impl MessagingUi {
 		if let Some(icon) = silenced
 			&& video.is_none()
 		{
-			ui.painter().circle_stroke(
-				avatar.rect.center(),
-				avatar.rect.width() * 0.5 + 2.0,
-				egui::Stroke::new(2.0, colors.danger),
-			);
 			// The badge scales down with small avatars so it never hides the face.
 			let radius = (avatar_size * 0.2).clamp(7.0, 12.0);
 			let badge = avatar.rect.right_bottom() - egui::Vec2::splat(avatar_size * 0.14);
@@ -1736,25 +1725,12 @@ impl MessagingUi {
 		if compact {
 			return;
 		}
-		// Name label with the mute glyph: a bottom-left badge on plates, centred under the
-		// avatar once the plates are gone.
+		// Plates carry a bottom-left name badge; frameless DM avatars name the person on hover,
+		// as in Discord, so nothing sits between the avatars and the bar.
 		if frameless {
-			// One truncated line: tight avatar spacing must not wrap long names into the bar.
-			let mut job = egui::text::LayoutJob::simple_singleline(
-				name.to_owned(),
-				egui::FontId::new(13.0, design::medium_family(ui.ctx())),
-				STAGE_TEXT,
-			);
-			job.wrap = egui::text::TextWrapping::truncate_at_width((size.x - 8.0).max(20.0));
-			let galley = ui.painter().layout_job(job);
-			ui.painter().galley(
-				egui::pos2(
-					rect.center().x - galley.size().x * 0.5,
-					avatar_rect.bottom() + 24.0 - galley.size().y * 0.5,
-				),
-				galley,
-				STAGE_TEXT,
-			);
+			if !inactive {
+				avatar.on_hover_text(name);
+			}
 		} else {
 			name_badge(
 				ui,
@@ -2140,14 +2116,38 @@ impl MessagingUi {
 		response
 	}
 
-	pub(super) fn voice_settings(&mut self, ui: &mut egui::Ui, demo: bool, active: bool) {
-		let trigger = crate::icons::button(
-			ui,
-			crate::icons::Icon::Headphones,
-			32.0,
-			&crate::i18n::translate("voice-voice-settings-output-settings"),
-		);
-		self.voice_settings_popup(&trigger, demo, active, false);
+	/// Discord's video call button beside the voice call in a DM header; the camera starts
+	/// once the call connects.
+	pub(super) fn video_call_button(
+		&mut self,
+		ui: &mut egui::Ui,
+		state: &mut State,
+		channel: Id,
+		commands: &mut Vec<Command>,
+	) {
+		let unavailable = self
+			.call_unavailable(state, channel)
+			.or_else(|| (!self.voice_camera_available).then_some("No camera is available."));
+		let existing = state.voice.incoming == Some(channel) || state.voice.has_dm_call(channel);
+		let response = ui
+			.add_enabled_ui(unavailable.is_none(), |ui| {
+				crate::icons::button(
+					ui,
+					crate::icons::Icon::Video,
+					32.0,
+					if existing {
+						"Join with video"
+					} else {
+						"Start video call"
+					},
+				)
+			})
+			.inner
+			.on_disabled_hover_text(unavailable.unwrap_or(""));
+		if response.clicked() {
+			self.voice_camera_on_join = Some(channel);
+			self.request_call(state, channel, !existing, commands);
+		}
 	}
 
 	/// Input or output half of Discord's voice popout, matching the chevron that opened it.
@@ -3555,7 +3555,8 @@ impl MessagingUi {
 		1.0 - self.voice_chrome_hidden
 	}
 
-	/// The DM call this conversation shows as a stage, if any.
+	/// The DM call this conversation shows as a stage, if any: the joined call, or one that
+	/// rings or runs without this device.
 	pub(super) fn dm_call_stage(&self, state: &State) -> Option<Id> {
 		state
 			.voice
@@ -3563,6 +3564,163 @@ impl MessagingUi {
 			.as_ref()
 			.filter(|call| call.guild.is_none() && Some(call.channel) == state.selected)
 			.map(|call| call.channel)
+			.or_else(|| join_stage(state))
+	}
+
+	/// The conversation header drawn on the stage, which stays black in every theme.
+	fn stage_header(
+		&mut self,
+		ui: &mut egui::Ui,
+		state: &mut State,
+		rect: egui::Rect,
+		header: Option<(bool, bool, bool)>,
+		opacity: f32,
+		commands: &mut Vec<Command>,
+	) {
+		let Some((selected_voice, show_members, wide_members)) = header else {
+			return;
+		};
+		let mut header_ui = ui.new_child(
+			egui::UiBuilder::new()
+				.max_rect(egui::Rect::from_min_max(
+					egui::pos2(rect.left() + 16.0, rect.top()),
+					egui::pos2(rect.right() - 16.0, rect.top() + 48.0),
+				))
+				.layout(egui::Layout::left_to_right(egui::Align::Center)),
+		);
+		header_ui.visuals_mut().dark_mode = true;
+		header_ui.set_opacity(opacity);
+		self.channel_header_row(
+			&mut header_ui,
+			state,
+			selected_voice,
+			show_members,
+			wide_members,
+			commands,
+		);
+	}
+
+	/// Discord's join screen: the black stage with whoever is in the call and green buttons
+	/// to join with video or voice, plus decline while the call rings here.
+	fn call_join_stage(
+		&mut self,
+		ui: &mut egui::Ui,
+		state: &mut State,
+		channel: Id,
+		header: Option<(bool, bool, bool)>,
+		commands: &mut Vec<Command>,
+	) {
+		let colors = design::palette(ui);
+		let incoming = state.voice.incoming == Some(channel);
+		let unavailable = self.call_unavailable(state, channel);
+		let entries = join_participants(state, channel);
+		let header_height = if header.is_some() { 48.0 } else { 0.0 };
+		egui::Panel::top("dm-call-join")
+			.exact_size(
+				header_height
+					+ STAGE_MARGIN + FRAMELESS_HEIGHT
+					+ TILE_GAP + CONTROL_HEIGHT
+					+ STAGE_MARGIN,
+			)
+			.show_separator_line(false)
+			.frame(egui::Frame::new().fill(STAGE_FILL))
+			.show(ui, |ui| {
+				let rect = ui.max_rect();
+				ui.expand_to_include_rect(rect);
+				self.stage_header(ui, state, rect, header, 1.0, commands);
+				let bar_top = rect.bottom() - STAGE_MARGIN - CONTROL_HEIGHT;
+				let body = egui::Rect::from_min_max(
+					egui::pos2(
+						rect.left() + STAGE_MARGIN,
+						rect.top() + header_height + STAGE_MARGIN,
+					),
+					egui::pos2(rect.right() - STAGE_MARGIN, bar_top - TILE_GAP),
+				);
+				let mut body_ui = ui.new_child(
+					egui::UiBuilder::new()
+						.max_rect(body)
+						.layout(egui::Layout::top_down(egui::Align::Min)),
+				);
+				body_ui.set_clip_rect(body.intersect(ui.clip_rect()));
+				self.participant_tiles(&mut body_ui, state, channel, &entries, true);
+				let count = if incoming { 3.0 } else { 2.0 };
+				let width = JOIN_WIDTH * count + BAR_GAP * (count - 1.0);
+				let mut bar_ui = ui.new_child(
+					egui::UiBuilder::new()
+						.max_rect(egui::Rect::from_min_size(
+							egui::pos2(rect.center().x - width * 0.5, bar_top),
+							egui::vec2(width, CONTROL_HEIGHT),
+						))
+						.layout(egui::Layout::left_to_right(egui::Align::Center)),
+				);
+				bar_ui.spacing_mut().item_spacing.x = BAR_GAP;
+				let video = call_action(
+					&mut bar_ui,
+					crate::icons::Icon::Video,
+					colors.positive,
+					unavailable.is_none() && self.voice_camera_available,
+					"Join with video",
+				)
+				.on_disabled_hover_text(unavailable.unwrap_or("No camera is available."));
+				let voice = call_action(
+					&mut bar_ui,
+					crate::icons::Icon::Phone,
+					colors.positive,
+					unavailable.is_none(),
+					if incoming {
+						"Answer"
+					} else {
+						"voice-call-bar-join-call"
+					},
+				)
+				.on_disabled_hover_text(unavailable.unwrap_or(""));
+				if incoming
+					&& call_action(
+						&mut bar_ui,
+						crate::icons::Icon::HangUp,
+						colors.danger,
+						!state.demo,
+						"Decline",
+					)
+					.clicked() && let Some(command) = state.decline_call()
+				{
+					commands.push(command);
+				}
+				if video.clicked() {
+					self.voice_camera_on_join = Some(channel);
+				}
+				if video.clicked() || voice.clicked() {
+					self.request_call(state, channel, false, commands);
+				}
+			});
+	}
+
+	/// "Join with video" turns the camera on once that call connects, and forgets the wish
+	/// when the call fails or another one takes its place.
+	fn apply_camera_on_join(&mut self, state: &mut State, commands: &mut Vec<Command>) {
+		let Some(target) = self.voice_camera_on_join else {
+			return;
+		};
+		let switching = self
+			.voice_switch
+			.as_ref()
+			.is_some_and(|switch| switch.channel == target);
+		match state
+			.voice
+			.active
+			.as_ref()
+			.filter(|call| call.channel == target)
+		{
+			Some(call) if matches!(call.phase, Phase::Connected | Phase::Waiting) => {
+				self.voice_camera_on_join = None;
+				if let Some(command) = state.set_call_camera(true) {
+					commands.push(command);
+				}
+			}
+			Some(call) if call.phase != Phase::Failed => {}
+			None if switching => {}
+			_ => self.voice_camera_on_join = None,
+		}
 	}
 
 	/// DM call stage above the conversation, plus the incoming-call banner. `header` carries
@@ -3576,6 +3734,7 @@ impl MessagingUi {
 	) {
 		let colors = design::palette(ui);
 		let selected = state.selected;
+		self.apply_camera_on_join(state, commands);
 		if let Some(channel) = state
 			.voice
 			.active
@@ -3683,27 +3842,7 @@ impl MessagingUi {
 						chrome_shade(ui, rect, 72.0, true, reveal);
 						chrome_shade(ui, rect, 96.0, false, reveal);
 					}
-					if let Some((selected_voice, show_members, wide_members)) = header {
-						let mut header_ui = ui.new_child(
-							egui::UiBuilder::new()
-								.max_rect(egui::Rect::from_min_max(
-									egui::pos2(rect.left() + 16.0, rect.top()),
-									egui::pos2(rect.right() - 16.0, top),
-								))
-								.layout(egui::Layout::left_to_right(egui::Align::Center)),
-						);
-						// The stage stays black in every theme, so its header reads as dark.
-						header_ui.visuals_mut().dark_mode = true;
-						header_ui.set_opacity(chrome);
-						self.channel_header_row(
-							&mut header_ui,
-							state,
-							selected_voice,
-							show_members,
-							wide_members,
-							commands,
-						);
-					}
+					self.stage_header(ui, state, rect, header, chrome, commands);
 					let bar = egui::Rect::from_min_max(
 						egui::pos2(rect.left(), rect.bottom() - CONTROL_HEIGHT - STAGE_MARGIN),
 						egui::pos2(rect.right(), rect.bottom() - STAGE_MARGIN),
@@ -3718,17 +3857,16 @@ impl MessagingUi {
 				});
 			self.apply_watch_request(state);
 		}
-		let existing = selected.filter(|channel| {
-			state.voice.has_dm_call(*channel)
-				&& state.can_view(*channel)
-				&& state
-					.voice
-					.active
-					.as_ref()
-					.is_none_or(|call| call.channel != *channel)
-		});
-		if let Some(channel) = state.voice.incoming.or(existing) {
-			let incoming = state.voice.incoming == Some(channel);
+		let join = join_stage(state);
+		if let Some(channel) = join {
+			self.call_join_stage(ui, state, channel, header, commands);
+		}
+		// A call ringing in another conversation keeps the slim banner.
+		if let Some(channel) = state
+			.voice
+			.incoming
+			.filter(|channel| join != Some(*channel))
+		{
 			let conversation = state.channel(channel).cloned();
 			let name = state
 				.channels
@@ -3761,43 +3899,25 @@ impl MessagingUi {
 						}
 						ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
 							ui.spacing_mut().item_spacing.x = 8.0;
-							if incoming {
-								let decline = round_action(
-									ui,
-									crate::icons::Icon::HangUp,
-									colors.danger,
-									!state.demo,
-									"Decline",
-								);
-								if decline.clicked()
-									&& let Some(command) = state.decline_call()
-								{
-									commands.push(command);
-								}
+							let decline = call_action(
+								ui,
+								crate::icons::Icon::HangUp,
+								colors.danger,
+								!state.demo,
+								"Decline",
+							);
+							if decline.clicked()
+								&& let Some(command) = state.decline_call()
+							{
+								commands.push(command);
 							}
-							let answer = if incoming {
-								round_action(
-									ui,
-									crate::icons::Icon::Phone,
-									colors.positive,
-									unavailable.is_none(),
-									"Answer",
-								)
-							} else {
-								ui.add_enabled(
-									unavailable.is_none(),
-									egui::Button::new(
-										design::medium(
-											ui,
-											crate::i18n::translate("voice-call-bar-join-call"),
-											13.0,
-										)
-										.color(egui::Color32::WHITE),
-									)
-									.fill(colors.positive)
-									.min_size(egui::vec2(84.0, 36.0)),
-								)
-							}
+							let answer = call_action(
+								ui,
+								crate::icons::Icon::Phone,
+								colors.positive,
+								unavailable.is_none(),
+								"Answer",
+							)
 							.on_disabled_hover_text(unavailable.unwrap_or(""));
 							if answer.clicked() {
 								self.request_call(state, channel, false, commands);
@@ -3816,14 +3936,8 @@ impl MessagingUi {
 										);
 										ui.label(
 											RichText::new(crate::i18n::translate_if_key(
-												if incoming {
-													unavailable
-														.unwrap_or("voice-call-bar-incoming-call")
-												} else if !state.gateway_connected {
-													"voice-call-bar-reconnect-to-refresh-call"
-												} else {
-													"voice-call-bar-call-in-progress"
-												},
+												unavailable
+													.unwrap_or("voice-call-bar-incoming-call"),
 											))
 											.size(13.0)
 											.color(colors.muted),
@@ -3910,7 +4024,7 @@ impl MessagingUi {
 					ui.painter().rect_filled(tile, 10, color.gamma_multiply(0.16));
 					crate::icons::paint(
 						ui.painter(),
-						crate::icons::Icon::InCall,
+						crate::icons::Icon::Signal,
 						tile.shrink(10.0),
 						color,
 					);
@@ -3985,14 +4099,13 @@ impl MessagingUi {
 									crate::icons::plate(ui, &response, open),
 								);
 								let hot = response.hovered() || response.has_focus() || open;
-								let (icon, ink) = if suppressing {
-									(crate::icons::Icon::Noise, colors.accent)
+								// Discord's waveform stays grey; the slash marks it off.
+								let icon = if suppressing {
+									crate::icons::Icon::Noise
 								} else {
-									(
-										crate::icons::Icon::NoiseOff,
-										if hot { colors.text_strong } else { colors.muted },
-									)
+									crate::icons::Icon::NoiseOff
 								};
+								let ink = if hot { colors.text_strong } else { colors.muted };
 								crate::icons::paint(ui.painter(), icon, rect.shrink(6.0), ink);
 								response.widget_info(|| {
 									egui::WidgetInfo::selected(
@@ -4305,9 +4418,11 @@ const STAGE_EDGE: egui::Stroke = egui::Stroke {
 };
 const STAGE_MARGIN: f32 = 16.0;
 const TILE_GAP: f32 = 8.0;
-/// Frameless DM tile height and the horizontal room beside each avatar for its name.
-const FRAMELESS_HEIGHT: f32 = 132.0;
-const FRAMELESS_MARGIN: f32 = 56.0;
+/// Frameless DM tile height (an 80-point avatar) and the extra gap between avatars.
+const FRAMELESS_HEIGHT: f32 = 88.0;
+const FRAMELESS_MARGIN: f32 = 8.0;
+/// Width of the green join and red decline buttons on the join stage.
+const JOIN_WIDTH: f32 = 64.0;
 /// Below these, the enlarged view hides its participant strip instead of overlapping it.
 const MIN_STRIP: f32 = 64.0;
 const MIN_FOCUS: f32 = 80.0;
@@ -4350,10 +4465,11 @@ impl Tile<'_> {
 
 /// Avatar diameter for a stage tile, never larger than the tile itself.
 fn tile_avatar(size: egui::Vec2, frameless: bool) -> f32 {
-	let avatar = if size.y < 132.0 {
+	// Frameless DM avatars fill their tile like Discord's; no name sits under them.
+	let avatar = if frameless {
+		(size.y - 8.0).clamp(24.0, 96.0)
+	} else if size.y < 132.0 {
 		(size.y * 0.5).clamp(28.0, 48.0)
-	} else if frameless {
-		(size.y * 0.58).clamp(56.0, 112.0)
 	} else {
 		(size.y * 0.42).clamp(48.0, 128.0)
 	};
@@ -4657,8 +4773,8 @@ fn fullscreen_control(ui: &mut egui::Ui, color: egui::Color32) -> egui::Response
 	response.on_hover_text("View this screen share in fullscreen")
 }
 
-/// Circular filled action (answer/decline) used by the incoming-call banner.
-fn round_action(
+/// Filled call action (join, answer, decline): Discord's rounded green and red buttons.
+fn call_action(
 	ui: &mut egui::Ui,
 	icon: crate::icons::Icon,
 	fill: egui::Color32,
@@ -4667,7 +4783,7 @@ fn round_action(
 ) -> egui::Response {
 	let label = crate::i18n::translate_if_key(label);
 	let (rect, response) = ui.allocate_exact_size(
-		egui::Vec2::splat(40.0),
+		egui::vec2(JOIN_WIDTH, CONTROL_HEIGHT),
 		if enabled {
 			egui::Sense::click()
 		} else {
@@ -4681,15 +4797,64 @@ fn round_action(
 	} else {
 		fill
 	};
-	ui.painter().circle_filled(rect.center(), 20.0, fill);
+	ui.painter().rect_filled(rect, 12, fill);
 	crate::icons::paint(
 		ui.painter(),
 		icon,
-		egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(20.0)),
+		egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(22.0)),
 		egui::Color32::WHITE,
 	);
 	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &label));
 	response.on_hover_text(label)
+}
+
+/// The selected conversation's call this device can answer or join, shown as a join stage.
+fn join_stage(state: &State) -> Option<Id> {
+	state.selected.filter(|channel| {
+		state.can_view(*channel)
+			&& (state.voice.incoming == Some(*channel) || state.voice.has_dm_call(*channel))
+			&& state
+				.voice
+				.active
+				.as_ref()
+				.is_none_or(|call| call.channel != *channel)
+	})
+}
+
+/// Who a join stage shows: the call's known members, else the people it would ring.
+fn join_participants(state: &State, channel: Id) -> Vec<RosterEntry> {
+	let known = state.voice.dm_participants(channel);
+	let participants: Vec<Participant> = if known.is_empty() {
+		state
+			.channel(channel)
+			.map_or_else(Vec::new, |conversation| {
+				conversation
+					.recipients
+					.iter()
+					.take(client_core::voice::MAX_PARTICIPANTS)
+					.map(|user| Participant {
+						user: user.id,
+						muted: false,
+						deafened: false,
+						server_muted: false,
+						server_deafened: false,
+						video: false,
+						streaming: false,
+					})
+					.collect()
+			})
+	} else {
+		known.to_vec()
+	};
+	participants
+		.into_iter()
+		.map(|participant| RosterEntry {
+			guild: Id(0),
+			channel,
+			participant,
+			member: None,
+		})
+		.collect()
 }
 
 /// Resolve the display name and user for a roster entry from the entry, member list or self.
@@ -4753,29 +4918,28 @@ fn stage_participants(state: &State, channel: Id) -> Vec<RosterEntry> {
 	if let Some(call) = call.filter(|call| call.phase != Phase::Failed)
 		&& let Some(user) = &state.user
 	{
+		// Discord seats everyone else first and the local participant last.
 		if let Some(index) = entries
 			.iter()
 			.position(|entry| entry.participant.user == user.id)
 		{
-			entries.swap(0, index);
+			let own = entries.remove(index);
+			entries.push(own);
 		} else {
-			entries.insert(
-				0,
-				RosterEntry {
-					guild: call.guild.unwrap_or(Id(0)),
-					channel,
-					participant: Participant {
-						user: user.id,
-						muted: call.muted,
-						deafened: call.deafened,
-						server_muted: call.server_muted,
-						server_deafened: call.server_deafened,
-						video: call.camera,
-						streaming: false,
-					},
-					member: None,
+			entries.push(RosterEntry {
+				guild: call.guild.unwrap_or(Id(0)),
+				channel,
+				participant: Participant {
+					user: user.id,
+					muted: call.muted,
+					deafened: call.deafened,
+					server_muted: call.server_muted,
+					server_deafened: call.server_deafened,
+					video: call.camera,
+					streaming: false,
 				},
-			);
+				member: None,
+			});
 		}
 	}
 	entries
@@ -5796,7 +5960,8 @@ mod tests {
 		});
 		let entries = stage_participants(&state, channel);
 		assert_eq!(entries.len(), 2);
-		assert_eq!(entries[0].participant.user, Id(1));
+		// Discord seats the local participant last.
+		assert_eq!(entries[1].participant.user, Id(1));
 		let peer = entries
 			.iter()
 			.find(|entry| entry.participant.user == Id(2))
@@ -5919,7 +6084,7 @@ mod tests {
 	}
 
 	#[test]
-	fn existing_dm_call_banner_joins_without_ringing_and_disables_unavailable_actions() {
+	fn existing_dm_call_stage_joins_without_ringing_and_disables_unavailable_actions() {
 		fn frame(
 			ctx: &egui::Context,
 			messaging: &mut MessagingUi,
@@ -5954,6 +6119,19 @@ mod tests {
 			for shape in output.shapes {
 				labels(&shape.shape, &mut text);
 			}
+			// The join buttons are glyphs; their accessible names locate them.
+			if let Some(update) = &output.platform_output.accesskit_update {
+				text.extend(update.nodes.iter().filter_map(|(_, node)| {
+					let bounds = node.bounds()?;
+					Some((
+						node.label()?.to_owned(),
+						egui::Rect::from_min_max(
+							egui::pos2(bounds.x0 as f32, bounds.y0 as f32),
+							egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
+						),
+					))
+				}));
+			}
 			(text, commands)
 		}
 		for width in [320.0, 900.0] {
@@ -5976,6 +6154,7 @@ mod tests {
 						..Default::default()
 					};
 					let ctx = egui::Context::default();
+					ctx.enable_accesskit();
 					ctx.set_visuals(if dark {
 						egui::Visuals::dark()
 					} else {
@@ -5996,12 +6175,7 @@ mod tests {
 						join.left() >= 0.0 && join.right() <= width,
 						"Join must fit narrow layouts"
 					);
-					assert!(text.iter().any(|(label, _)| label
-						== if mode == 2 {
-							"Reconnect to refresh call"
-						} else {
-							"Call in progress"
-						}));
+					assert!(text.iter().any(|(label, _)| label == "Join with video"));
 					let mut sent = vec![];
 					for pressed in [true, false] {
 						let (_, commands) = frame(
@@ -6041,7 +6215,7 @@ mod tests {
 					assert!(
 						!text
 							.iter()
-							.any(|(label, _)| label == "Join call" || label == "Call in progress")
+							.any(|(label, _)| label == "Join call" || label == "Join with video")
 					);
 				}
 			}

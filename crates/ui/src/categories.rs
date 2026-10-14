@@ -1697,8 +1697,10 @@ mod tests {
 				.find(|(s, _)| s == "Find conversation")
 				.unwrap()
 				.1;
-			// Friends is the icon-only button pinned to the right of the search row.
-			let friends = egui::pos2(width - 8.0 - 15.0, find.center().y);
+			// Friends is Discord's row under the search in the header strip.
+			let friends_row = before.iter().find(|(s, _)| s == "Friends").unwrap().1;
+			assert!(friends_row.top() > find.bottom());
+			let friends = friends_row.center();
 			for pressed in [true, false] {
 				render(
 					&mut view,
@@ -1739,6 +1741,10 @@ mod tests {
 					.unwrap()
 					.1,
 				find
+			);
+			assert_eq!(
+				after.iter().find(|(s, _)| s == "Friends").unwrap().1,
+				friends_row
 			);
 			assert!(!after.iter().any(|(s, _)| s == "DIRECT MESSAGES"));
 			let visible_dms = after

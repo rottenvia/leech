@@ -4064,13 +4064,9 @@ video-show-player-video-volume = Videolautstärke
 
 ## crates/ui/src/voice.rs
 # Context: call_bar
-voice-call-bar-call-in-progress = Anruf läuft
-# Context: call_bar
 voice-call-bar-incoming-call = Eingehender Anruf…
 # Context: call_bar
 voice-call-bar-join-call = Nehmen Sie am Anruf teil
-# Context: call_bar
-voice-call-bar-reconnect-to-refresh-call = Stellen Sie die Verbindung wieder her, um den Anruf zu aktualisieren
 # Context: call_controls
 voice-call-controls-disconnect = Trennen
 # Context: call_controls

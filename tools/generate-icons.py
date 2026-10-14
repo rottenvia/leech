@@ -126,8 +126,8 @@ ICONS = [
     ("device-mobile", "bold/device-mobile-bold.svg", "77a4a5ebcba16e37637e700381bc3858b92c9350730ecf1e207f5f40d524de03"),
     ("hard-drives", "bold/hard-drives-bold.svg", "2ba693bda78a09d3cab785bfd08e819a2907915542b5753854cab88cc728d18b"),
     ("corners-out", "bold/corners-out-bold.svg", "df74ba3c2a496a344f98e80c0782f43aa3760ed4b8b6103a4c621bfc59575e16"),
-    ("noise", "repo:assets/icons/noise.svg", "739df297725815e76f63df9e773eff82b5b0b1ff0c1d7709e74c64c94ae50ccf"),
-    ("noise-slash", "repo:assets/icons/noise.svg", "739df297725815e76f63df9e773eff82b5b0b1ff0c1d7709e74c64c94ae50ccf"),
+    ("noise", "repo:assets/icons/noise.svg", "aa54e62f4d6604b96986893467cc91521e0be7d4b6839c4bced25f471ca1e7a2"),
+    ("noise-slash", "repo:assets/icons/noise.svg", "aa54e62f4d6604b96986893467cc91521e0be7d4b6839c4bced25f471ca1e7a2"),
     ("window", "repo:assets/icons/window.svg", "65e22a650723dba7bf87c29b6b4864314a67c284a9d5fe00225d89d71b77eec4"),
     ("user", "bold/user-bold.svg", "a4739174a602675d627b029aa524dd9345c56838ed1da34b5e1c3d02611792d5"),
     ("identification-card", "bold/identification-card-bold.svg", "48da4bc28ef11aa0b5ce3c0e95770d0ba84591e7b839be177061336b6bf4eec8"),
@@ -145,6 +145,8 @@ ICONS = [
     ("prohibit", "bold/prohibit-bold.svg", "fba9bed853d84c9fc94860cb3b1504a2077ffa2da2cb99cc9e7e943636097285"),
     ("user-minus", "bold/user-minus-bold.svg", "71d0b0eaa82fe0c2cea086ae420e22d263e5102ff364ea2111d438e47ba0ee55"),
     ("at", "bold/at-bold.svg", "1c1ede3364fe072f606d30f3ffd098b6e40c56e36ac4161961d283b68eb1c8c2"),
+    ("signal", "bold/rss-simple-bold.svg", "fb0f10cc46a47cab047c50eba516caa9d75939d9eafc9427a0e3338f7184ef24"),
+    ("sticker", "bold/sticker-bold.svg", "0c13e1ff9f0c9e1b48a62f3e43eba348bdfdeffd0265c869fad6548cac07db96"),
 ]
 LICENSE_SHA256 = "ddbe6082ec3cf979db47e5af549d2849c5d6182b3e005ef91ce1dbb9eb122f11"
 
