@@ -52,16 +52,34 @@ cards and 14px windows.
 
 ## Buttons and edges
 
-Framed controls (buttons, fields, combo boxes, check boxes) lift off `raised` by a share of the
-text colour and wear a one-pixel hairline, a translucent veil of the text colour, so they read
-on every surface. Cards, the composer and the account card take the same hairline.
+Controls are filled, not outlined. Buttons (`design::button`) are 36px tall with an 8px
+radius: Primary is the accent, Danger is red, Outline is a neutral veil of the text colour,
+and Neutral is bare until hovered. Text fields, drop-downs and other inset controls share
+`design::field_fill`, a step darker than the panels, with a faint edge and an accent ring while
+focused. Every drop-down comes from `design::combo`, whose chevron turns over while the list is
+open. Check boxes (`design::checkbox`) are rounded 20px boxes filled with the accent and a
+white check when on; a chosen radio is a filled accent disc. Switch tracks are filled without
+an outline.
+
+Settings groups (`design::group`) are a sentence-case 16px heading over a borderless tile
+(`design::card`, a veil of the text colour), with faint rules between rows. Form labels are
+sentence case too; uppercase eyebrows are kept for list sections such as server categories and
+member groups. A settings row measures its control and stacks the control under the text when
+both do not fit, so a wide control never draws over its description.
+
+Every menu row is `design::menu_item`: an 18px glyph, the label, a quiet hover plate and red
+for an action that destroys something; submenu rows take a matching `design::menu_glyph`. The
+message menu follows Discord's grouping: respond (reply, forward, thread, edit), copy and keep
+(copy, pin, reactions, unread, link), delete on its own, the ID last.
 
 Icon buttons come from `crates/ui/src/icons.rs`: bare (plate on hover), framed (resting
 hairline, the composer's attach) and accent (filled while enabled, the composer's send). Their
 hover and pressed plates are veils of the text colour with an 8px radius. Toggles keep a faint
 plate while on. A toggle whose state must read at a glance (noise suppression in the voice
-panel) is lit instead: an accent-tinted plate and accent glyph while on, a bare slashed glyph
-while off, so hovering never makes the two states look alike. Account labels (APP, BOT) are tinted accent chips, not solid blocks. The title
+panel) shows its state in the glyph: the accent glyph while on, a slashed muted glyph while
+off. It opens a popover with the switch, the filter (RNNoise or WebRTC and its strength), the
+live microphone level and a link into the voice settings; disconnect beside it is quiet at
+rest and turns red under the pointer. Account labels (APP, BOT) are tinted accent chips, not solid blocks. The title
 bar's status chips (OFFLINE PREVIEW, the DEV and NIGHTLY build chips) share that treatment at
 one 20px height: a faint fill of their tint inside a hairline of it, with no gradient or glow.
 Row actions in lists (friends, roles) are the same rounded squares as every other button, not
@@ -77,7 +95,7 @@ share-source list hide the bar altogether; a cut-off last row says the sheet scr
 Inter (Regular, Medium, SemiBold; SIL OFL 1.1) leads proportional text; egui's default faces and
 the bundled Noto CJK/Arabic fallbacks follow in every family. egui has no synthetic bold, so
 `design::semibold`/`design::medium` select the heavier families for author names, headings,
-channel names and uppercase 12px eyebrows. Body is 15px, small 12px. Until `fonts::install`
+channel names and the uppercase 12px eyebrows of list sections. Body is 15px, small 12px. Until `fonts::install`
 marks a context, the weight families resolve to the default face so headless tests never
 reference an unknown family.
 
@@ -128,6 +146,13 @@ The bundled faces remain upstream's hinted TrueType builds. See `assets/README.m
 - Member list (240px): ONLINE/OFFLINE eyebrows with counts; group DMs show a localized
   Members — N heading including the current account, updated with participant changes. 42px rows with
   presence dots, custom status and hover fill; opens a Members window on narrow layouts.
+- Settings (a modal like Discord's): the sidebar opens with your avatar, name and an "Edit
+  profile" link, then a search field and the pages with their icons under sentence-case
+  section titles; the sections of an open page hang off a guide line. The page title and a
+  plain close button sit in a slim bar above a centred column.
+- Loading: the timeline fills upwards from the composer with placeholder message groups of
+  varied length (an occasional attachment), and the member list shows a heading and avatar
+  rows in the real rows' geometry. Both breathe slowly and repaint only while shown.
 
 Confirmed empty guild text, announcement and thread histories show a welcome above the
 composer: a circular channel-kind icon, a wrapped semibold channel heading and a short
@@ -150,9 +175,10 @@ navigation; the timeline centers and briefly highlights the exact target.
 `--features demo -- --demo --demo-message-links` exercises these states with an offline
 fixture; `--demo-light` selects the light appearance.
 
-Icons are [Phosphor Icons](https://phosphoricons.com) 2.1.1 (MIT) in the fill/bold weights,
-rasterized once into `assets/icons/atlas.png` (37 white glyphs in 64px cells) and tinted at
-draw time by `crates/ui/src/icons.rs`; there is no icon font. Provenance and the regeneration
+Icons are [Phosphor Icons](https://phosphoricons.com) 2.1.1 (MIT): interface glyphs in the bold
+weight, brand logos, badges and file types in the fill weight, plus a few glyphs drawn in this
+repository. They are rasterized once into `assets/icons/atlas.png` (white glyphs in 64px
+cells) and tinted at draw time by `crates/ui/src/icons.rs`; there is no icon font. Provenance and the regeneration
 command are in `assets/icons/README.md`. The profile popout keeps its 300px Discord-style card.
 
 Shortcut capture also accepts egui's browser, media and system keys, including Caps Lock,
@@ -162,7 +188,8 @@ native shortcut adapter; unsupported global bindings continue to work while Leec
 
 Voice follows Discord's call screens in placement: a stage that stays dark in every appearance,
 in the house plum cast rather than black and neutral grey, with 80px participant avatars (DM
-calls, above the conversation) or hairlined 16:9 tiles with name badges (guild channels), a
+calls, above the conversation; a voice-only DM call opens only as tall as its avatars and the
+bar) or hairlined 16:9 tiles with name badges (guild channels), a
 bottom control bar of dark pills (mute with settings chevron, camera, screen share, more)
 and a red hang-up button, a green "In a call" badge in the header, mute/deafen toggles in the
 account card, and a "Voice Connected" panel above it while connected. The header and the bar

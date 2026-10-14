@@ -693,11 +693,16 @@ fn preview(
 								ui.add_space(8.0);
 								ui.separator();
 								ui.add_space(8.0);
-								ui.label(design::eyebrow(
-									ui,
-									crate::i18n::translate("profile-edit-preview-about-me"),
-									theme.text,
-								));
+								ui.label(
+									design::semibold(
+										ui,
+										design::sentence_case(&crate::i18n::translate(
+											"profile-edit-preview-about-me",
+										)),
+										12.0,
+									)
+									.color(theme.text),
+								);
 								let mut mentions = crate::profiles::ProfileSession::default();
 								crate::markdown::Formatted::parse(&draft.bio).show_with_images(
 									ui,

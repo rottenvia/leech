@@ -1301,11 +1301,17 @@ fn section(ui: &mut egui::Ui, theme: &Theme, count: &mut usize, text: &str, full
 		);
 		ui.add_space(4.0);
 	} else {
-		ui.label(RichText::new(text).size(12.0).strong().color(theme.muted));
+		// Discord's popout heads its sections in bold sentence case, not capitals.
+		ui.label(
+			RichText::new(sentence(&text))
+				.size(12.0)
+				.strong()
+				.color(theme.text),
+		);
 		ui.add_space(2.0);
 	}
 }
-/// The compact card's all-caps headings read as shouting at full-profile scale.
+/// All-caps translations ("ABOUT ME") as sentence case ("About me").
 fn sentence(text: &str) -> String {
 	let turkish = crate::i18n::current().resolved() == crate::i18n::Language::Turkish;
 	let mut chars = text.chars();
@@ -4652,7 +4658,7 @@ mod tests {
 		}
 		assert!(
 			painted.contains("Synthetic person")
-				&& painted.contains("ABOUT ME")
+				&& painted.contains("About me")
 				&& painted.contains("they / them")
 				&& painted.contains("SRN")
 		);
@@ -4775,7 +4781,7 @@ mod tests {
 			}
 			output.drop_without_applying_deltas();
 		}
-		assert!(painted.contains("ROLES"), "{painted}");
+		assert!(painted.contains("Roles"), "{painted}");
 		assert!(painted.contains("Maintainer"), "{painted}");
 		assert!(painted.contains("Contributor"), "{painted}");
 		assert!(!painted.contains("Role 999"), "{painted}");
