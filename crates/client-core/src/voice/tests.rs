@@ -470,6 +470,11 @@ fn chaos_run(seed: u64, chaos: bool) {
 fn run_session(seed: u64, chaos: bool, latency: (u64, u64)) {
 	let slow = latency.1 > 1000;
 	let config = Config {
+		// Every other session never sees its own Gateway session in voice states. That
+		// fallback is best effort: with multi-second latency, another device's late states
+		// can still be taken for ours, so the slow run keeps the matching world.
+		// ponytail: order-based ownership; live tests show whether Discord ever needs it.
+		sessions_match: slow || seed.is_multiple_of(2),
 		latency,
 		media_failures: if chaos { 5 } else { 0 },
 		ring_failures: 10,

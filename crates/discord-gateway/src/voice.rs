@@ -278,10 +278,9 @@ impl Calls {
 				Some(voice) => session == Some(voice.as_str()),
 				None => direct,
 			};
+		// The controller decides whether an own state is this device's; it needs the session.
 		let secret = match &voice_session {
-			Some(value) if ours && state.channel_id.is_some() => {
-				Some(Secret::new(value.to_string())?)
-			}
+			Some(value) if own => Some(Secret::new(value.to_string())?),
 			_ => None,
 		};
 		let participant = participant(&state);
@@ -644,14 +643,15 @@ mod tests {
 			state("phone", Some("2")),
 			Some("gateway"),
 		);
-		assert!(matches!(
-			events[0],
-			voice::Event::State {
-				ours: false,
-				session: None,
-				..
-			}
-		));
+		let voice::Event::State {
+			ours: false,
+			session: Some(secret),
+			..
+		} = &events[0]
+		else {
+			panic!("another device's voice state")
+		};
+		assert_eq!(secret.expose(), "phone");
 		let events = collect(
 			&mut calls,
 			"VOICE_STATE_UPDATE",
@@ -659,10 +659,10 @@ mod tests {
 			Some("gateway"),
 		);
 		assert!(matches!(
-			events[0],
+			&events[0],
 			voice::Event::State {
 				ours: true,
-				session: None,
+				session: Some(_),
 				channel: None,
 				..
 			}
