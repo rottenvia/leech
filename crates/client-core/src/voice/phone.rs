@@ -338,6 +338,7 @@ impl ClientState {
 			self.voice.notice = Some(message);
 		}
 		self.voice.phone.ring = None;
+		self.voice.region_choice = None;
 		self.voice.phone.retry = Retry::default();
 		self.voice.phone.wire.rejoin = false;
 		self.end_share(None);
@@ -711,8 +712,15 @@ impl ClientState {
 	fn desired(&self) -> Target {
 		let told = self.voice.phone.wire.told;
 		match &self.voice.active {
+			// The rejoin waits out its backoff first. A voice server that closed because
+			// another device of this account took the call is followed by that device's state;
+			// leaving and joining again at once would take the call back from it.
 			Some(_) if self.voice.phone.wire.rejoin && told.channel.is_some() => {
-				Target::leave(told.guild)
+				if self.voice.phone.retry.at.is_some() {
+					told
+				} else {
+					Target::leave(told.guild)
+				}
 			}
 			Some(call) => Target {
 				guild: call.guild,

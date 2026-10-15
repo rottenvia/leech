@@ -84,6 +84,10 @@ pub struct TimelineView {
 	pub(super) leave_read: Option<(Id, Id)>,
 	/// The reader dismissed the unread banner while this was the channel's latest message.
 	unread_dismissed: Option<Option<Id>>,
+	/// The loading placeholder showed last pass for this conversation.
+	loading_shown: Option<Id>,
+	/// When its messages arrived, for their fade in.
+	loaded_at: Option<f64>,
 	/// The unread banner asked to acknowledge this channel up to its latest message.
 	pub(super) mark_channel_read: Option<Id>,
 	pub(super) reaction_picker: Option<(Id, egui::Rect, egui::Id)>,
@@ -275,47 +279,57 @@ fn loading_messages(ui: &mut egui::Ui) {
 	if !ui.is_rect_visible(rect) {
 		return;
 	}
-	let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
-	let name = crate::design::placeholder_fill(ui, 0.32);
-	let fill = crate::design::placeholder_fill(ui, 0.2);
-	let faint = crate::design::placeholder_fill(ui, 0.12);
+	let shown = crate::design::shown_for(ui, response.id);
+	let shimmer = crate::design::shimmer(ui, rect, true);
 	// Message rows put the avatar at 16 and the text at 72; long lines stop where a reader's
 	// eye would, as real paragraphs rarely span a very wide window.
 	let left = rect.left() + 72.0;
 	let column = (rect.right() - 16.0 - left).clamp(0.0, 760.0);
 	// The timeline is anchored to the composer, so the placeholder fills upwards from there
-	// and arriving messages land where the groups already were.
+	// and arriving messages land where the groups already were. The groups rise in one after
+	// another from the composer while a light sweeps up through them.
 	let mut bottom = rect.bottom() - 12.0;
-	for (name_width, lines, attachment) in GROUPS.iter().cycle().take(64) {
+	for (index, (name_width, lines, attachment)) in GROUPS.iter().cycle().take(64).enumerate() {
 		let block = 24.0 + lines.len() as f32 * 22.0 + if *attachment { 152.0 } else { 0.0 };
 		let top = bottom - block;
 		if bottom < rect.top() {
 			break;
 		}
-		painter.circle_filled(egui::pos2(rect.left() + 36.0, top + 20.0), 20.0, faint);
-		let bar = |x: f32, y: f32, width: f32, height: f32, color| {
-			painter.rect_filled(
-				egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(width, height)),
-				height * 0.5,
-				color,
+		let rise = crate::design::cascade(shown, index);
+		if rise > 0.0 {
+			let mut painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
+			painter.set_opacity(rise);
+			let lift = 10.0 * (1.0 - rise);
+			let top = top + lift;
+			painter.circle_filled(
+				egui::pos2(rect.left() + 36.0, top + 20.0),
+				20.0,
+				shimmer(top + 20.0, 0.12),
 			);
-		};
-		bar(left, top + 4.0, name_width.min(column), 12.0, name);
-		bar(left + name_width + 10.0, top + 6.0, 44.0, 8.0, faint);
-		let mut y = top + 30.0;
-		for share in *lines {
-			bar(left, y, (column * share).max(24.0).min(column), 10.0, fill);
-			y += 22.0;
-		}
-		if *attachment {
-			painter.rect_filled(
-				egui::Rect::from_min_size(
-					egui::pos2(left, y - 4.0),
-					egui::vec2(column.min(280.0), 140.0),
-				),
-				8.0,
-				faint,
-			);
+			let bar = |x: f32, y: f32, width: f32, height: f32, strength: f32| {
+				painter.rect_filled(
+					egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(width, height)),
+					height * 0.5,
+					shimmer(y, strength),
+				);
+			};
+			bar(left, top + 4.0, name_width.min(column), 12.0, 0.32);
+			bar(left + name_width + 10.0, top + 6.0, 44.0, 8.0, 0.12);
+			let mut y = top + 30.0;
+			for share in *lines {
+				bar(left, y, (column * share).max(24.0).min(column), 10.0, 0.2);
+				y += 22.0;
+			}
+			if *attachment {
+				painter.rect_filled(
+					egui::Rect::from_min_size(
+						egui::pos2(left, y - 4.0),
+						egui::vec2(column.min(280.0), 140.0),
+					),
+					8.0,
+					shimmer(y + 66.0, 0.12),
+				);
+			}
 		}
 		bottom = top - 20.0;
 	}
@@ -2410,6 +2424,7 @@ impl TimelineView {
 		if history_available && state.freshness == model::Freshness::Loading && empty {
 			let area = ui.available_rect_before_wrap().intersect(ui.clip_rect());
 			loading_messages(ui);
+			self.loading_shown = state.selected;
 			session.bind(ui, ui.scope_id().with(("timeline", state.selected)), area);
 			let latest = state
 				.selected
@@ -2445,6 +2460,22 @@ impl TimelineView {
 					"timeline-show-with-scroll-no-messages-yet-start-the-conversation-below"
 				}
 			}));
+		}
+		// Messages that replace the loading placeholder fade in over it instead of popping.
+		let now = ui.input(|input| input.time);
+		if let Some(channel) = self.loading_shown.take()
+			&& state.selected == Some(channel)
+		{
+			self.loaded_at = Some(now);
+		}
+		if let Some(at) = self.loaded_at {
+			let t = ((now - at) / 0.22) as f32;
+			if t < 1.0 {
+				ui.set_opacity(0.25 + 0.75 * egui::emath::easing::cubic_out(t));
+				ui.ctx().request_repaint();
+			} else {
+				self.loaded_at = None;
+			}
 		}
 		let area = ui.available_rect_before_wrap().intersect(ui.clip_rect());
 		let autoscroll_delta =

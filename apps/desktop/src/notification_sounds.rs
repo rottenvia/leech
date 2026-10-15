@@ -135,8 +135,10 @@ fn joining(rate: u32) -> Vec<[f32; 2]> {
 
 fn samples(sound: Sound, rate: u32, current: &impl Fn() -> bool) -> Result<Vec<[f32; 2]>, ()> {
 	let bytes: &[u8] = match sound {
-		Sound::Joining if (8000..=192000).contains(&rate) => return Ok(joining(rate)),
-		Sound::Joining => return Err(()),
+		Sound::Joining | Sound::Sharing if (8000..=192000).contains(&rate) => {
+			return Ok(joining(rate));
+		}
+		Sound::Joining | Sound::Sharing => return Err(()),
 		Sound::Message => include_bytes!("../../../assets/sounds/discord/message.mp3"),
 		Sound::CurrentChannel => {
 			include_bytes!("../../../assets/sounds/discord/current-channel.mp3")

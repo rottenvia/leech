@@ -543,6 +543,54 @@ impl DiscordApi {
 		.await
 		.map(|_| ())
 	}
+	// https://docs.discord.com/developers/resources/voice#list-voice-regions
+	pub async fn voice_regions(&self) -> Result<Vec<client_core::voice::Region>, Failure> {
+		#[derive(serde::Deserialize)]
+		struct RegionDto {
+			id: String,
+			name: String,
+			#[serde(default)]
+			optimal: bool,
+			#[serde(default)]
+			deprecated: bool,
+		}
+		let bytes = self
+			.request_limited(Method::GET, "/voice/regions", None, 64 * 1024)
+			.await?;
+		let regions = decode::<Vec<RegionDto>>(&bytes).map_err(|_| Failure::Protocol)?;
+		Ok(regions
+			.into_iter()
+			.filter(|region| {
+				!region.deprecated
+					&& (1..=64).contains(&region.id.len())
+					&& (1..=64).contains(&region.name.len())
+					&& region
+						.id
+						.bytes()
+						.all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+			})
+			.take(client_core::voice::MAX_REGIONS)
+			.map(|region| client_core::voice::Region {
+				id: region.id,
+				name: region.name,
+				optimal: region.optimal,
+			})
+			.collect())
+	}
+	/// Unofficial normal-user DM call endpoint; `None` returns the call to automatic.
+	pub async fn set_call_region(
+		&self,
+		channel: model::Id,
+		region: Option<&str>,
+	) -> Result<(), Failure> {
+		self.request(
+			Method::PATCH,
+			&format!("/channels/{channel}/call"),
+			Some(serde_json::json!({ "region": region })),
+		)
+		.await
+		.map(|_| ())
+	}
 	// https://docs.discord.com/developers/resources/invite#get-invite
 	async fn invite(&self, code: &str) -> Result<model::InvitePreview, Failure> {
 		if !client_core::invites::valid_code(code) {

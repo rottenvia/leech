@@ -7,6 +7,7 @@ use client_core::{
 };
 use discord_voice::{Identity, Status, screen::Worker};
 use eframe::egui;
+use model::notification_preferences::Sound;
 use std::sync::{Arc, mpsc};
 use tokio::{runtime::Runtime, sync::watch, task::JoinHandle};
 
@@ -46,6 +47,8 @@ pub(super) struct Screen {
 	source_scan: Option<SourceScan>,
 	/// Source discovery status, shown while the picker is open and no share runs.
 	status: &'static str,
+	/// The share was live last frame, so Discord's stream sound plays once as it goes live.
+	was_live: bool,
 }
 impl Screen {
 	pub fn stop(&mut self) {
@@ -67,6 +70,10 @@ impl Screen {
 			Some(ui::screen::Request::Start(settings)) => {
 				if !state.share_screen(settings) {
 					self.status = "Screen sharing requires the current connected call";
+				} else if ui.notification_options.allows(Sound::Sharing) {
+					// A soft tick acknowledges Go Live; Discord's stream sound follows once
+					// the stream is up.
+					ui.notification_preview = Some(Sound::Sharing);
 				}
 			}
 			Some(ui::screen::Request::Stop) => {
@@ -77,9 +84,16 @@ impl Screen {
 		}
 	}
 
-	fn show_state(&self, state: &State, ui: &mut ui::MessagingUi) {
+	fn show_state(&mut self, state: &State, ui: &mut ui::MessagingUi) {
 		let share = state.voice.share_state();
-		ui.screen.busy = share != ShareState::Off;
+		// Stopping already reads as off: the button and LIVE clear on the click.
+		ui.screen.busy = matches!(share, ShareState::Starting | ShareState::Live);
+		ui.screen.live = share == ShareState::Live;
+		if ui.screen.live && !self.was_live && ui.notification_options.allows(Sound::ScreenShareOn)
+		{
+			ui.notification_preview = Some(Sound::ScreenShareOn);
+		}
+		self.was_live = ui.screen.live;
 		ui.screen.status = match share {
 			ShareState::Off if !state.voice.share_status().is_empty() => state.voice.share_status(),
 			ShareState::Off => self.status,
@@ -173,11 +187,6 @@ impl Screen {
 				} else {
 					ui.screen.preview =
 						Some(ctx.load_texture("local-screen", image, egui::TextureOptions::LINEAR));
-					let cue = model::notification_preferences::Sound::ScreenShareOn;
-					if ui.notification_options.allows(cue) {
-						ui.notification_preview = Some(cue);
-						ctx.request_repaint();
-					}
 				}
 			}
 			ui.screen.capture_status = live.worker.capture_status();

@@ -716,16 +716,50 @@ pub fn finish_panel(ui: &egui::Ui, rect: egui::Rect, backdrop: Color32) {
 	painter.rect_stroke(rect, PANEL_RADIUS, hairline(ui), egui::StrokeKind::Inside);
 }
 
-/// Fill for a loading placeholder. It breathes slowly instead of spinning, and only asks for
-/// frames while a placeholder is drawn. `strength` sets the resting opacity of the muted colour.
-pub fn placeholder_fill(ui: &egui::Ui, strength: f32) -> Color32 {
+/// Light sweeping through a loading placeholder in `rect`: a soft band about 90 points tall,
+/// faintly tinted with the accent, crossing it at an even pace every 1.8 seconds, upward from
+/// the composer (`upward`) or down a list. Returns the fill for a placeholder part at height
+/// `y` and `strength`. It repaints every frame while drawn, like egui's own animations.
+pub fn shimmer(ui: &egui::Ui, rect: egui::Rect, upward: bool) -> impl Fn(f32, f32) -> Color32 {
+	const CYCLE: f64 = 1.8;
+	const SWEEP: f64 = 1.5;
+	const BAND: f32 = 90.0;
+	let p = palette(ui);
 	let time = ui.input(|input| input.time);
-	let pulse = 0.5 - 0.5 * (time * std::f64::consts::TAU / 1.8).cos() as f32;
-	ui.ctx()
-		.request_repaint_after(std::time::Duration::from_millis(33));
-	palette(ui)
-		.muted
-		.gamma_multiply(strength * (0.7 + 0.45 * pulse))
+	ui.ctx().request_repaint();
+	let t = ((time % CYCLE) / SWEEP).min(1.0) as f32;
+	let travel = rect.height() + 3.0 * BAND;
+	let band = if upward {
+		rect.bottom() + 1.5 * BAND - travel * t
+	} else {
+		rect.top() - 1.5 * BAND + travel * t
+	};
+	let light = mix(p.text_strong, p.accent, 0.25);
+	move |y, strength| {
+		let lit = (-((y - band) / BAND).powi(2)).exp();
+		mix(p.muted, light, 0.55 * lit).gamma_multiply(strength * (1.0 + 0.7 * lit))
+	}
+}
+
+/// How far (0 to 1) placeholder part `index` has risen into view, `elapsed` seconds after the
+/// placeholder first showed: parts cascade in one after another.
+pub fn cascade(elapsed: f32, index: usize) -> f32 {
+	egui::emath::easing::cubic_out(((elapsed - index as f32 * 0.045) / 0.3).clamp(0.0, 1.0))
+}
+
+/// Seconds since the placeholder `id` began showing, restarting whenever it was not drawn in
+/// the previous pass.
+pub fn shown_for(ui: &egui::Ui, id: egui::Id) -> f32 {
+	let now = ui.input(|input| input.time);
+	let pass = ui.ctx().cumulative_pass_nr();
+	ui.data_mut(|data| {
+		let (since, last) = data.get_temp_mut_or_insert_with(id, || (now, pass));
+		if *last + 1 < pass {
+			*since = now;
+		}
+		*last = pass;
+		(now - *since) as f32
+	})
 }
 
 /// Fill the notches outside a rounded corner at `corner`, for surfaces that cannot paint a
@@ -2980,6 +3014,73 @@ pub fn menu_item_if(
 ) -> egui::Response {
 	ui.add_enabled_ui(enabled, |ui| menu_item(ui, icon, label, danger))
 		.inner
+}
+
+/// Menu row with a check box at its right edge, like Discord's call options: the whole row
+/// toggles `checked`.
+pub fn menu_check(ui: &mut egui::Ui, label: &str, checked: &mut bool) -> egui::Response {
+	const BOX: f32 = 18.0;
+	let label = crate::i18n::translate_if_key(label);
+	let p = palette(ui);
+	let enabled = ui.is_enabled();
+	let galley = ui.painter().layout_no_wrap(
+		label.to_owned(),
+		FontId::new(14.0, medium_family(ui.ctx())),
+		p.text,
+	);
+	let width = ui
+		.available_width()
+		.max(galley.size().x + BOX + 10.0 + 24.0 + 10.0);
+	let (rect, mut response) =
+		ui.allocate_exact_size(egui::vec2(width, 32.0), egui::Sense::click());
+	if response.clicked() {
+		*checked = !*checked;
+		response.mark_changed();
+	}
+	response.widget_info(|| {
+		egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, *checked, &label)
+	});
+	let hover = if enabled {
+		hover_motion(ui, &response)
+	} else {
+		0.0
+	};
+	let painter = ui.painter();
+	if hover > 0.0 {
+		painter.rect_filled(rect, 6, p.text_strong.gamma_multiply(0.08 * hover));
+	}
+	let dim = if enabled { 1.0 } else { 0.45 };
+	painter.galley_with_override_text_color(
+		egui::pos2(rect.left() + 10.0, rect.center().y - galley.size().y * 0.5),
+		galley,
+		p.text
+			.lerp_to_gamma(p.text_strong, hover)
+			.gamma_multiply(dim),
+	);
+	let square = egui::Rect::from_center_size(
+		egui::pos2(rect.right() - 10.0 - BOX * 0.5, rect.center().y),
+		egui::Vec2::splat(BOX),
+	);
+	if *checked {
+		painter.rect_filled(square, 5, p.accent.gamma_multiply(dim));
+		crate::icons::paint(
+			painter,
+			crate::icons::Icon::Check,
+			square.shrink(3.5),
+			p.accent_text.gamma_multiply(dim),
+		);
+	} else {
+		painter.rect_stroke(
+			square,
+			5,
+			Stroke::new(
+				1.5,
+				p.text_strong.gamma_multiply((0.32 + 0.23 * hover) * dim),
+			),
+			egui::StrokeKind::Inside,
+		);
+	}
+	response
 }
 
 /// Quiet inline action for secondary verbs such as "Reset" or "Try again": muted text that
