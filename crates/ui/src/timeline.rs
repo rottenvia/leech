@@ -2449,8 +2449,18 @@ impl TimelineView {
 		let area = ui.available_rect_before_wrap().intersect(ui.clip_rect());
 		let autoscroll_delta =
 			session.bind(ui, ui.scope_id().with(("timeline", state.selected)), area);
-		if autoscroll_delta > 0.0 {
+		// Upward wheel or touchpad input over the messages leaves the live edge in the same
+		// frame. Otherwise a slow scroll that stays within the bottom tolerance is pinned back.
+		let upward = ui.input(|input| {
+			input.smooth_scroll_delta().y > 0.0
+				&& input
+					.pointer
+					.hover_pos()
+					.is_some_and(|pos| area.contains(pos))
+		});
+		if autoscroll_delta > 0.0 || upward {
 			self.following = false;
+			self.jump = false;
 		}
 		let total: f32 = self.rows.iter().map(|(_, height)| height).sum();
 		// The typing indicator floats in the reserved strip above the composer; the gap keeps

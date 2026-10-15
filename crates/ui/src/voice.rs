@@ -431,11 +431,19 @@ impl MessagingUi {
 			.inner;
 		let row = rect.shrink2(egui::vec2(0.0, 1.0));
 		let hovered = viewable && (response.hovered() || response.has_focus());
+		let hover = if viewable {
+			design::hover_motion(ui, &response)
+		} else {
+			0.0
+		};
 		if selected {
 			ui.painter().rect_filled(row, 8, colors.selected);
-		} else if hovered {
-			ui.painter()
-				.rect_filled(row, 8, crate::design::row_highlight(ui, colors.hover, 1.0));
+		} else if hover > 0.0 {
+			ui.painter().rect_filled(
+				row,
+				8,
+				crate::design::row_highlight(ui, colors.hover, hover),
+			);
 		}
 		let text_color = channel_marks::tint(
 			&colors,
@@ -558,11 +566,12 @@ impl MessagingUi {
 				}
 				row.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
 				let hovered = row.contains_pointer() || row.has_focus();
-				if hovered {
+				let hover = design::hover_motion(ui, &row);
+				if hover > 0.0 {
 					ui.painter().rect_filled(
 						rect.shrink2(egui::vec2(0.0, 1.0)),
 						8,
-						crate::design::row_highlight(ui, colors.hover, 1.0),
+						crate::design::row_highlight(ui, colors.hover, hover),
 					);
 				}
 				let name_color = if hovered {
@@ -1599,6 +1608,19 @@ impl MessagingUi {
 				.ringing(entry.channel)
 				.contains(&entry.participant.user);
 		let offset = if compact || frameless { 0.0 } else { 10.0 };
+		// The own seat waits with a loading ring while the call connects, then pops in with
+		// one outward ripple as the join sound plays.
+		let joining = own && call.is_some_and(|call| !call.phase.connected());
+		let joined = if own {
+			ui.ctx().animate_bool_with_time(
+				egui::Id::unique(("join-pop", entry.channel)),
+				!joining,
+				JOIN_POP_SECS,
+			)
+		} else {
+			1.0
+		};
+		let pop = 1.0 + 0.07 * (joined * std::f32::consts::PI).sin();
 		let avatar_rect = egui::Rect::from_center_size(
 			rect.center() - egui::vec2(0.0, offset),
 			egui::Vec2::splat(avatar_size),
@@ -1609,10 +1631,24 @@ impl MessagingUi {
 		} else if ringing {
 			// Only a ringing recipient keeps a faded seat before joining.
 			avatar_ui.set_opacity(0.45);
+		} else if own {
+			avatar_ui.set_opacity(0.5 + 0.5 * joined);
 		}
 		if ringing && video.is_none() {
 			ringing_pulse(ui, avatar_rect);
 		}
+		if video.is_none() && own {
+			if joining {
+				loading_ring(ui, avatar_rect, colors.positive);
+			} else if joined < 1.0 {
+				ui.painter().circle_stroke(
+					avatar_rect.center(),
+					avatar_size * 0.5 + 4.0 + 18.0 * joined,
+					egui::Stroke::new(3.0, colors.positive.gamma_multiply(1.0 - joined)),
+				);
+			}
+		}
+		let avatar_size = avatar_size * pop;
 		let avatar = if let Some(user) = user {
 			self.avatars
 				.show(&mut avatar_ui, user, avatar_size, state.demo)
@@ -3024,12 +3060,18 @@ impl MessagingUi {
 					colors.danger
 				} else if ptm {
 					colors.muted
-				} else if response.hovered() || response.has_focus() {
-					colors.text_strong
 				} else {
-					colors.muted
+					colors
+						.muted
+						.lerp_to_gamma(colors.text_strong, design::hover_motion(ui, &response))
 				};
-				crate::icons::paint(ui.painter(), icon, rect.shrink(size * 0.2), color);
+				let press = design::press_motion(ui, &response);
+				crate::icons::paint(
+					ui.painter(),
+					icon,
+					design::pressed_rect(rect.shrink(size * 0.2), press),
+					color,
+				);
 				response.widget_info(|| {
 					egui::WidgetInfo::selected(egui::Role::Button, enabled, active, &label)
 				});
@@ -3255,13 +3297,19 @@ impl MessagingUi {
 			let (rect, response) =
 				row.allocate_exact_size(egui::vec2(HANG_UP, CONTROL_HEIGHT), egui::Sense::click());
 			let enabled = watched.is_some() || !state.offline_preview();
-			let fill = if !enabled {
-				colors.danger.gamma_multiply(0.45)
-			} else if response.hovered() || response.has_focus() {
-				colors.danger.gamma_multiply(0.85)
+			let press = if enabled {
+				design::press_motion(&row, &response)
 			} else {
-				colors.danger
+				0.0
 			};
+			let fill = if enabled {
+				colors.danger.gamma_multiply(
+					1.0 - 0.15 * design::hover_motion(&row, &response) - 0.1 * press,
+				)
+			} else {
+				colors.danger.gamma_multiply(0.45)
+			};
+			let rect = design::pressed_rect(rect, press);
 			row.painter().rect_filled(rect, 12, fill);
 			crate::icons::paint(
 				row.painter(),
@@ -3415,11 +3463,10 @@ impl MessagingUi {
 		);
 		if self.screen.busy {
 			let accent = design::palette(ui).accent;
-			let fill = if response.hovered() || response.has_focus() {
-				accent.gamma_multiply(1.15)
-			} else {
-				accent
-			};
+			let fill = accent.lerp_to_gamma(
+				accent.gamma_multiply(1.15),
+				design::hover_motion(ui, &response),
+			);
 			ui.painter().set(
 				plate,
 				egui::Shape::rect_filled(response.rect.shrink(4.0), 8, fill),
@@ -3854,11 +3901,13 @@ impl MessagingUi {
 		} else {
 			"Connecting…"
 		};
-		let color = if connected || state.offline_preview() {
-			colors.positive
-		} else {
-			colors.warning
-		};
+		// The connection colour eases from amber to green as the call connects.
+		let settled = ui.ctx().animate_bool_with_time(
+			egui::Id::unique(("voice-card-connected", channel_id)),
+			connected || state.offline_preview(),
+			0.3,
+		);
+		let color = colors.warning.lerp_to_gamma(colors.positive, settled);
 		egui::Frame::new()
 			.inner_margin(egui::Margin {
 				left: 8,
@@ -3884,7 +3933,17 @@ impl MessagingUi {
 					// Square status tile like Discord's, tinted with the connection colour.
 					let (tile, _) =
 						ui.allocate_exact_size(egui::Vec2::splat(40.0), egui::Sense::hover());
-					ui.painter().rect_filled(tile, 10, color.gamma_multiply(0.16));
+					// While connecting the tile breathes, so the wait reads as progress.
+					let breath = if settled < 1.0 {
+						ui.ctx()
+							.request_repaint_after(std::time::Duration::from_millis(33));
+						let time = ui.input(|input| input.time);
+						(1.0 - settled) * (0.5 + 0.5 * (time * 4.0).sin() as f32)
+					} else {
+						0.0
+					};
+					ui.painter()
+						.rect_filled(tile, 10, color.gamma_multiply(0.16 + 0.14 * breath));
 					crate::icons::paint(
 						ui.painter(),
 						crate::icons::Icon::Signal,
@@ -3901,28 +3960,29 @@ impl MessagingUi {
 									.allocate_exact_size(egui::Vec2::splat(32.0), egui::Sense::click());
 								// Quiet like the rest of Discord's panel header; it turns red only
 								// under the pointer, where a click would end the call.
-								let hot = ui.is_enabled() && (response.hovered() || response.has_focus());
-								ui.painter().rect_filled(
-									rect,
-									crate::icons::PLATE_RADIUS,
-									if hot {
-										colors.danger.gamma_multiply(
-											if response.is_pointer_button_down_on() { 0.3 } else { 0.18 },
-										)
-									} else {
-										egui::Color32::TRANSPARENT
-									},
-								);
+								let (hover, press) = if ui.is_enabled() {
+									(
+										design::hover_motion(ui, &response),
+										design::press_motion(ui, &response),
+									)
+								} else {
+									(0.0, 0.0)
+								};
+								if hover > 0.0 {
+									ui.painter().rect_filled(
+										rect,
+										crate::icons::PLATE_RADIUS,
+										colors.danger.gamma_multiply(0.18 * hover + 0.12 * press),
+									);
+								}
 								crate::icons::paint(
 									ui.painter(),
 									crate::icons::Icon::HangUp,
-									rect.shrink(6.0),
-									if !ui.is_enabled() {
-										colors.muted.gamma_multiply(0.5)
-									} else if hot {
-										colors.danger
+									design::pressed_rect(rect.shrink(6.0), press),
+									if ui.is_enabled() {
+										colors.muted.lerp_to_gamma(colors.danger, hover)
 									} else {
-										colors.muted
+										colors.muted.gamma_multiply(0.5)
 									},
 								);
 								response.widget_info(|| {
@@ -4156,20 +4216,15 @@ fn card_action_fill(
 	active: bool,
 ) -> egui::Color32 {
 	let colors = design::palette(ui);
-	let hot = enabled && (response.hovered() || response.has_focus());
 	let (tone, rest) = if active && enabled {
 		(colors.accent, 0.24)
 	} else {
 		(colors.text_strong, 0.07)
 	};
-	tone.gamma_multiply(if !enabled {
-		0.04
-	} else if response.is_pointer_button_down_on() {
-		rest + 0.12
-	} else if hot {
-		rest + 0.07
+	tone.gamma_multiply(if enabled {
+		rest + 0.07 * design::hover_motion(ui, response) + 0.05 * design::press_motion(ui, response)
 	} else {
-		rest
+		0.04
 	})
 }
 
@@ -4230,21 +4285,16 @@ fn split_chevron(
 	let colors = design::palette(ui);
 	let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
 	let hot = response.hovered() || response.has_focus();
-	let veil = crate::icons::plate(ui, &response, false);
-	ui.painter().rect_filled(
-		rect,
-		egui::CornerRadius {
-			nw: 0,
-			sw: 0,
-			ne: crate::icons::PLATE_RADIUS,
-			se: crate::icons::PLATE_RADIUS,
-		},
-		if veil == egui::Color32::TRANSPARENT {
-			rest
-		} else {
-			veil
-		},
-	);
+	let corners = egui::CornerRadius {
+		nw: 0,
+		sw: 0,
+		ne: crate::icons::PLATE_RADIUS,
+		se: crate::icons::PLATE_RADIUS,
+	};
+	// The hover veil fades in over the resting fill rather than replacing it.
+	ui.painter().rect_filled(rect, corners, rest);
+	ui.painter()
+		.rect_filled(rect, corners, crate::icons::plate(ui, &response, false));
 	crate::icons::paint(
 		ui.painter(),
 		crate::icons::Icon::ChevronDown,
@@ -4485,6 +4535,29 @@ fn chrome_shade(ui: &egui::Ui, stage: egui::Rect, height: f32, top: bool, reveal
 	ui.painter().add(mesh);
 }
 
+/// Length of the own seat's pop and ripple once a call connects.
+const JOIN_POP_SECS: f32 = 0.45;
+
+/// The own seat while its call connects: a breathing arc circling the avatar.
+fn loading_ring(ui: &egui::Ui, avatar: egui::Rect, color: egui::Color32) {
+	const SEGMENTS: usize = 32;
+	let time = ui.input(|input| input.time);
+	let start = (time * 4.5 % std::f64::consts::TAU) as f32;
+	let sweep = 2.2 + 1.2 * ((time * 2.4).sin() as f32);
+	let radius = avatar.width() * 0.5 + 5.0;
+	let points = (0..=SEGMENTS)
+		.map(|step| {
+			let angle = start + sweep * step as f32 / SEGMENTS as f32;
+			avatar.center() + radius * egui::vec2(angle.cos(), angle.sin())
+		})
+		.collect();
+	ui.painter()
+		.add(egui::Shape::line(points, egui::Stroke::new(3.0, color)));
+	// Connecting lasts a second or two; 60 fps keeps the arc smooth for that long.
+	ui.ctx()
+		.request_repaint_after(std::time::Duration::from_millis(16));
+}
+
 /// Discord's ringing seat: a grey ring breathing outward from the avatar.
 fn ringing_pulse(ui: &egui::Ui, avatar: egui::Rect) {
 	const PERIOD: f64 = 1.6;
@@ -4566,15 +4639,26 @@ fn control(
 			egui::Sense::hover()
 		},
 	);
-	if enabled && (response.hovered() || response.has_focus()) {
-		ui.painter()
-			.rect_filled(rect.shrink(4.0), 8, egui::Color32::from_white_alpha(28));
+	let (hover, press) = if enabled {
+		(
+			design::hover_motion(ui, &response),
+			design::press_motion(ui, &response),
+		)
+	} else {
+		(0.0, 0.0)
+	};
+	if hover > 0.0 {
+		ui.painter().rect_filled(
+			design::pressed_rect(rect.shrink(4.0), press),
+			8,
+			egui::Color32::from_white_alpha((28.0 * hover + 14.0 * press) as u8),
+		);
 	}
 	let size = if width < 40.0 { 14.0 } else { 22.0 };
 	crate::icons::paint(
 		ui.painter(),
 		icon,
-		egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(size)),
+		egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(size * (1.0 - 0.1 * press))),
 		if enabled {
 			color
 		} else {
@@ -4588,9 +4672,13 @@ fn control(
 fn fullscreen_control(ui: &mut egui::Ui, color: egui::Color32) -> egui::Response {
 	let (rect, response) =
 		ui.allocate_exact_size(egui::vec2(48.0, CONTROL_HEIGHT), egui::Sense::click());
-	if response.hovered() || response.has_focus() {
-		ui.painter()
-			.rect_filled(rect.shrink(4.0), 8, egui::Color32::from_white_alpha(28));
+	let hover = design::hover_motion(ui, &response);
+	if hover > 0.0 {
+		ui.painter().rect_filled(
+			rect.shrink(4.0),
+			8,
+			egui::Color32::from_white_alpha((28.0 * hover) as u8),
+		);
 	}
 	crate::icons::paint(
 		ui.painter(),
@@ -4619,13 +4707,17 @@ fn call_action(
 			egui::Sense::hover()
 		},
 	);
-	let fill = if !enabled {
-		fill.gamma_multiply(0.45)
-	} else if response.hovered() || response.has_focus() {
-		fill.gamma_multiply(0.85)
+	let press = if enabled {
+		design::press_motion(ui, &response)
 	} else {
-		fill
+		0.0
 	};
+	let fill = if enabled {
+		fill.gamma_multiply(1.0 - 0.15 * design::hover_motion(ui, &response) - 0.1 * press)
+	} else {
+		fill.gamma_multiply(0.45)
+	};
+	let rect = design::pressed_rect(rect, press);
 	ui.painter().rect_filled(rect, 12, fill);
 	crate::icons::paint(
 		ui.painter(),

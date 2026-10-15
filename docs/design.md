@@ -85,6 +85,17 @@ Row actions in lists (friends, roles) are the same rounded squares as every othe
 circles. A disabled filled button keeps a dimmed fill and takes the strong text colour, so its
 label stays legible.
 
+Motion is short and shared. `design::hover_motion` fades hover plates and ink in and out,
+and `design::press_motion` with `design::pressed_rect` dips a control by a few percent while
+it is held. Buttons, icon buttons, menu rows, segmented tabs, text actions, title bar
+captions, call controls and list rows all use them. Both run on egui's `animation_time`
+(1/12 s, like the server rail), so a zero turns all motion off. Joining a call has its own
+sequence: a soft synthesized tick on the click (under the "Call Joined" sound setting), the
+own avatar faded with a circling arc while connecting, then a small pop, one green ripple
+and Discord's join sound once connected. While connecting, the voice panel's status tile
+breathes and eases from amber to green. Message rows keep instant hover so reading stays
+fast.
+
 Scroll bars stay out of the picture: nothing at rest, a faint 3px thread while the pointer is
 over the area, a soft handle only when the bar itself is pointed at. Dialog sheets and the
 share-source list hide the bar altogether; a cut-off last row says the sheet scrolls.

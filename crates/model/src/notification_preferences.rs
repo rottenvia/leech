@@ -53,6 +53,8 @@ pub enum Sound {
 	ScreenShareOn,
 	UserJoin,
 	UserLeave,
+	/// Leech's own short tick when this device starts joining a call; follows "Call Joined".
+	Joining,
 }
 impl Device {
 	pub fn allows(self, sound: Sound) -> bool {
@@ -69,7 +71,7 @@ impl Device {
 				Sound::Undeafen => self.undeafen,
 				Sound::CameraOn => self.camera_on,
 				Sound::ScreenShareOn => self.screen_share_on,
-				Sound::UserJoin => self.user_join,
+				Sound::UserJoin | Sound::Joining => self.user_join,
 				Sound::UserLeave => self.user_leave,
 			}
 	}
