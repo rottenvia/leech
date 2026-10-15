@@ -90,9 +90,13 @@ and `design::press_motion` with `design::pressed_rect` dips a control by a few p
 it is held. Buttons, icon buttons, menu rows, segmented tabs, text actions, title bar
 captions, call controls and list rows all use them. Both run on egui's `animation_time`
 (1/12 s, like the server rail), so a zero turns all motion off. Joining a call has its own
-sequence: a soft synthesized tick on the click (under the "Call Joined" sound setting), the
-own avatar faded with a circling arc while connecting, then a small pop, one green ripple
-and Discord's join sound once connected. While connecting, the voice panel's status tile
+sequence: a soft synthesized tick on the click (under the "Call Joined" sound setting); while
+connecting, the own avatar rests slightly dimmed and breathing while an accent comet with a
+glowing head circles just inside its edge; once connected the comet closes into a ring that
+turns green and fades as the avatar brightens with a small lift, with Discord's join sound.
+All of it stays inside the avatar, so the tight voice-only stage never crops it; the ringing
+pulse is bounded by its tile for the same reason. The voice-only stage is never shorter than
+its avatars and bar. While connecting, the voice panel's status tile
 breathes and eases from amber to green. Message rows keep instant hover so reading stays
 fast.
 

@@ -1608,47 +1608,46 @@ impl MessagingUi {
 				.ringing(entry.channel)
 				.contains(&entry.participant.user);
 		let offset = if compact || frameless { 0.0 } else { 10.0 };
-		// The own seat waits with a loading ring while the call connects, then pops in with
-		// one outward ripple as the join sound plays.
-		let joining = own && call.is_some_and(|call| !call.phase.connected());
-		let joined = if own {
+		// Joining: the own avatar rests dimmed and breathing while a comet circles just
+		// inside its edge. Once connected the comet closes into a ring that turns from the
+		// accent to green and fades as the avatar brightens with a small lift, in time with
+		// the join sound. Everything stays within the avatar, so a tight stage never crops it.
+		let joining = own && video.is_none() && call.is_some_and(|call| !call.phase.connected());
+		let settled = if own {
 			ui.ctx().animate_bool_with_time(
-				egui::Id::unique(("join-pop", entry.channel)),
+				egui::Id::unique(("join-settle", entry.channel)),
 				!joining,
-				JOIN_POP_SECS,
+				JOIN_SETTLE_SECS,
 			)
 		} else {
 			1.0
 		};
-		let pop = 1.0 + 0.07 * (joined * std::f32::consts::PI).sin();
+		let scale = if joining {
+			let time = ui.input(|input| input.time);
+			0.975 + 0.025 * (time * 3.6).cos() as f32
+		} else {
+			1.0 + 0.04 * (settled * std::f32::consts::PI).sin()
+		};
 		let avatar_rect = egui::Rect::from_center_size(
 			rect.center() - egui::vec2(0.0, offset),
 			egui::Vec2::splat(avatar_size),
 		);
-		let mut avatar_ui = ui.new_child(egui::UiBuilder::new().max_rect(avatar_rect));
+		let mut avatar_ui = ui.new_child(egui::UiBuilder::new().max_rect(
+			egui::Rect::from_center_size(avatar_rect.center(), avatar_rect.size() * scale),
+		));
 		if video.is_some() {
 			avatar_ui.set_opacity(0.0);
 		} else if ringing {
 			// Only a ringing recipient keeps a faded seat before joining.
 			avatar_ui.set_opacity(0.45);
 		} else if own {
-			avatar_ui.set_opacity(0.5 + 0.5 * joined);
+			let lit = egui::emath::easing::cubic_out(settled);
+			avatar_ui.set_opacity(0.72 + 0.28 * lit);
 		}
 		if ringing && video.is_none() {
-			ringing_pulse(ui, avatar_rect);
+			ringing_pulse(ui, avatar_rect, rect);
 		}
-		if video.is_none() && own {
-			if joining {
-				loading_ring(ui, avatar_rect, colors.positive);
-			} else if joined < 1.0 {
-				ui.painter().circle_stroke(
-					avatar_rect.center(),
-					avatar_size * 0.5 + 4.0 + 18.0 * joined,
-					egui::Stroke::new(3.0, colors.positive.gamma_multiply(1.0 - joined)),
-				);
-			}
-		}
-		let avatar_size = avatar_size * pop;
+		let avatar_size = avatar_size * scale;
 		let avatar = if let Some(user) = user {
 			self.avatars
 				.show(&mut avatar_ui, user, avatar_size, state.demo)
@@ -1684,6 +1683,13 @@ impl MessagingUi {
 				egui::Rect::from_center_size(badge, egui::Vec2::splat(radius)),
 				egui::Color32::WHITE,
 			);
+		}
+		if own && video.is_none() {
+			if joining {
+				connecting_comet(ui, avatar.rect, colors.accent);
+			} else if settled < 1.0 {
+				join_ring(ui, avatar.rect, colors.accent, colors.positive, settled);
+			}
 		}
 		if silenced.is_none() && speaking {
 			if video.is_none() && frameless {
@@ -3686,10 +3692,14 @@ impl MessagingUi {
 			} else {
 				"dm-call-voice"
 			};
+			// The voice-only strip is never shorter than its avatars and bar. egui remembers a
+			// panel's size, so a frame with little room (opening the call while the join stage
+			// still took space) used to leave the avatars squeezed for the rest of the session.
+			let minimum = if stage { 180.0 } else { height.min(maximum) };
 			egui::Panel::top(id)
 				.resizable(true)
 				.default_size(height)
-				.size_range(180.0..=maximum)
+				.size_range(minimum..=maximum)
 				.show_separator_line(false)
 				.frame(egui::Frame::new().fill(STAGE_FILL))
 				.show(ui, |ui| {
@@ -4535,36 +4545,92 @@ fn chrome_shade(ui: &egui::Ui, stage: egui::Rect, height: f32, top: bool, reveal
 	ui.painter().add(mesh);
 }
 
-/// Length of the own seat's pop and ripple once a call connects.
-const JOIN_POP_SECS: f32 = 0.45;
+/// Length of the own avatar's settle once its call connects.
+const JOIN_SETTLE_SECS: f32 = 0.7;
+/// Width of the join rings, the same as the speaking ring's.
+const JOIN_RING: f32 = 3.0;
 
-/// The own seat while its call connects: a breathing arc circling the avatar.
-fn loading_ring(ui: &egui::Ui, avatar: egui::Rect, color: egui::Color32) {
-	const SEGMENTS: usize = 32;
+/// The own avatar while its call connects: a comet with a fading tail circling just inside
+/// the edge over a faint track, in the accent.
+fn connecting_comet(ui: &egui::Ui, avatar: egui::Rect, color: egui::Color32) {
+	const SEGMENTS: usize = 48;
+	const TAIL: f32 = 4.6;
 	let time = ui.input(|input| input.time);
-	let start = (time * 4.5 % std::f64::consts::TAU) as f32;
-	let sweep = 2.2 + 1.2 * ((time * 2.4).sin() as f32);
-	let radius = avatar.width() * 0.5 + 5.0;
+	let head = (time * 4.2 % std::f64::consts::TAU) as f32;
+	let center = avatar.center();
+	let radius = avatar.width() * 0.5 - JOIN_RING * 0.5;
+	let point = |angle: f32| center + radius * egui::vec2(angle.cos(), angle.sin());
+	let painter = ui.painter();
+	painter.circle_stroke(
+		center,
+		radius,
+		egui::Stroke::new(JOIN_RING, color.gamma_multiply(0.14)),
+	);
+	// One gradient stroke: the tail warms toward a lighter tip and fades out behind it.
+	let tip = design::mix(color, egui::Color32::WHITE, 0.45);
+	let tail = head - TAIL;
 	let points = (0..=SEGMENTS)
-		.map(|step| {
-			let angle = start + sweep * step as f32 / SEGMENTS as f32;
-			avatar.center() + radius * egui::vec2(angle.cos(), angle.sin())
-		})
+		.map(|step| point(tail + TAIL * step as f32 / SEGMENTS as f32))
 		.collect();
-	ui.painter()
-		.add(egui::Shape::line(points, egui::Stroke::new(3.0, color)));
-	// Connecting lasts a second or two; 60 fps keeps the arc smooth for that long.
+	painter.add(egui::Shape::line(
+		points,
+		egui::epaint::PathStroke::new_uv(JOIN_RING, move |_, pos| {
+			let angle = (pos.y - center.y).atan2(pos.x - center.x);
+			// Just before the tail's start wraps to a full turn; that end stays dark.
+			let swept = (angle - tail).rem_euclid(std::f32::consts::TAU);
+			let along = if swept > TAIL + 0.3 {
+				0.0
+			} else {
+				(swept / TAIL).min(1.0)
+			};
+			color
+				.lerp_to_gamma(tip, along * along)
+				.gamma_multiply(along.powf(1.6))
+		}),
+	));
+	// A soft glow and a bright core at the head.
+	let head = point(head);
+	painter.circle_filled(head, JOIN_RING * 2.0, color.gamma_multiply(0.18));
+	painter.circle_filled(head, JOIN_RING * 1.3, color.gamma_multiply(0.45));
+	painter.circle_filled(head, JOIN_RING * 0.8, tip);
+	// Connecting lasts a second or two; 60 fps keeps the comet smooth for that long.
 	ui.ctx()
 		.request_repaint_after(std::time::Duration::from_millis(16));
 }
 
-/// Discord's ringing seat: a grey ring breathing outward from the avatar.
-fn ringing_pulse(ui: &egui::Ui, avatar: egui::Rect) {
-	const PERIOD: f64 = 1.6;
-	let phase = (ui.input(|input| input.time) % PERIOD / PERIOD) as f32;
+/// The comet's ring once connected (`settled` 0 to 1): it closes, turns from the accent to
+/// green, then fades away.
+fn join_ring(
+	ui: &egui::Ui,
+	avatar: egui::Rect,
+	accent: egui::Color32,
+	positive: egui::Color32,
+	settled: f32,
+) {
+	let turn = (settled / 0.35).min(1.0);
+	let fade = 1.0 - ((settled - 0.35) / 0.65).clamp(0.0, 1.0);
 	ui.painter().circle_stroke(
 		avatar.center(),
-		avatar.width() * 0.5 + 4.0 + phase * 14.0,
+		avatar.width() * 0.5 - JOIN_RING * 0.5,
+		egui::Stroke::new(
+			JOIN_RING,
+			accent
+				.lerp_to_gamma(positive, egui::emath::easing::cubic_out(turn))
+				.gamma_multiply(egui::emath::easing::cubic_in_out(fade)),
+		),
+	);
+}
+
+/// Discord's ringing seat: a grey ring breathing outward from the avatar, from just inside
+/// its edge to the edge of its tile, so a tight stage never crops it.
+fn ringing_pulse(ui: &egui::Ui, avatar: egui::Rect, tile: egui::Rect) {
+	const PERIOD: f64 = 1.6;
+	let phase = (ui.input(|input| input.time) % PERIOD / PERIOD) as f32;
+	let room = ((tile.height() - avatar.height()).min(tile.width() - avatar.width()) * 0.5 - 1.5)
+		.clamp(0.0, 18.0);
+	ui.painter().circle_stroke(
+		avatar.center(),
+		avatar.width() * 0.5 - 4.0 + phase * (4.0 + room),
 		egui::Stroke::new(3.0, STAGE_MUTED.gamma_multiply(0.9 * (1.0 - phase))),
 	);
 	// The pulse only needs a smooth 30 fps while someone is being rung.
