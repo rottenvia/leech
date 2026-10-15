@@ -1,5 +1,21 @@
 # Discord compatibility — checked 2026-09-10
 
+## Call options and region — October 16, 2026
+
+The call bar's options menu follows Discord's: Grid View, Show My Own Camera and Show
+Non-Video Participants are local view choices; Voice & Video Settings opens the local settings
+page. Region, shown for private calls only, lists regions from the documented
+[List Voice Regions](https://docs.discord.com/developers/resources/voice#list-voice-regions)
+endpoint (once per session, deprecated ones dropped, at most 64) and moves the call with the
+unofficial normal-user `PATCH /channels/{id}/call` and a `region` body; Automatic sends `null`.
+Leech shows the choice made on this device; a change by another participant is not read back.
+When another device of the account takes the call, the voice server closes this device's
+socket, usually before the Gateway reports the other device's voice state. The controller now
+waits out its reconnect backoff before leaving and joining again, so that report ends the call
+here instead of a rejoin taking the call back. Synthetic simulator checks cover the region
+commands and the takeover race; the region endpoint and the close order are unverified against
+live Discord.
+
 ## Profile cosmetics — October 11, 2026
 
 Leech shows equipped avatar decorations, nameplates, profile effects and profile frames.

@@ -92,11 +92,22 @@ captions, call controls and list rows all use them. Both run on egui's `animatio
 (1/12 s, like the server rail), so a zero turns all motion off. Switching conversations fades
 the new one in over 0.18 s from part-way, so the switch never flashes the bare background.
 
-Calls follow their sounds. A seat waits at 92% size and faded while its own call connects (a
-comet circles just inside the avatar edge) or while it is only being rung. It arrives in time
-with Discord's two-note join chime: the ring closes on the first note (the own comet closes on
-itself; someone picking up gets a ring drawn around them), the avatar springs to full size with
-a two-percent overshoot on the second note, and a soft halo spreads around it. The outgoing ring
+Loading reads as alive without spinning. Message and member placeholders cascade in one group
+after another (45 ms apart) while a soft light, faintly tinted with the accent, sweeps through
+them at an even pace: up from the composer in a conversation, down the member list. Messages
+that replace the placeholder fade in over it. Restoring a saved login shows a compact screen:
+the app mark with a passing sheen, a determinate bar with a glowing head, and the stage with
+the time left under it. The estimate follows the last few restores on this device, reaches
+about 90% when that time has passed, stays under the current stage, and never fills before
+the account is ready.
+
+Calls follow their sounds. A seat waits at 92% size and faded while its own call first
+connects (a comet circles just inside the avatar edge) or while it is only being rung. It
+arrives in time with Discord's two-note join chime: the own comet closes into a ring on the
+first note, the avatar springs to full size with a two-percent overshoot on the second, and a
+soft halo spreads around it. Someone picking up springs and glows the same way, with no ring;
+once the call is up nothing circles again, not while media re-secures for a newcomer nor during
+a reconnect. Leaving plays no sound of Leech's own. The outgoing ring
 starts once the call connects, after the chime has rung out, and keeps a fixed three-second
 cadence; the ringing seat pulses on each burst of the ring sound. A seat whose person leaves
 fades out where it sat while the others glide to their places. The direct-message stage unfolds
@@ -105,7 +116,12 @@ frame as it fades. A call known to have nobody else in it shows no join stage, s
 an unanswered call never shows the person rung as if they had joined. Rings and halos use the
 call colour (Appearance, Accent): the theme accent lifted until it stands out on the dark stage,
 or the owner's pick. Halos spread up to 14 points but never past the stage, so they are never
-cut. Call animations repaint every frame while they run, like egui's own animations; a timer
+cut. Go Live uses the same motion on its button: while the share starts, the plate waits small
+and faint with a loading ring; once Discord carries the share, the ring closes, the plate fills
+and springs to full size with Discord's stream sound, and only then does LIVE pop in under the
+avatar. Stopping clears the button and LIVE on the click. The call options menu matches
+Discord's: Grid View, Show My Own Camera, Show Non-Video Participants, Voice & Video Settings
+and, for private calls, Region. Call animations repaint every frame while they run, like egui's own animations; a timer
 would round to every other vsync and look laggy. The voice-only stage is never shorter than its
 avatars and bar. While connecting, the voice panel's status tile breathes and eases from amber
 to green. Message rows keep instant hover so reading stays fast.

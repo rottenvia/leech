@@ -25,6 +25,8 @@ pub const MAX_PARTICIPANTS: usize = 64;
 pub const MAX_DM_CALLS: usize = 64;
 pub const MAX_DM_CALL_BYTES: usize = MAX_DM_CALLS * size_of::<Id>();
 pub const MAX_ROSTER: usize = 4096;
+/// Voice regions kept from Discord's list; it names a few dozen.
+pub const MAX_REGIONS: usize = 64;
 pub const MAX_ROSTER_BYTES: usize = 1024 * 1024;
 
 pub struct Secret(Zeroizing<String>);
@@ -119,6 +121,15 @@ impl RosterEntry {
 	}
 }
 
+/// One voice region Discord offers for calls.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Region {
+	pub id: String,
+	pub name: String,
+	/// Closest to this client, by Discord's measure.
+	pub optimal: bool,
+}
+
 pub struct StreamPreview {
 	pub guild: Id,
 	pub channel: Id,
@@ -193,6 +204,10 @@ pub enum Command {
 		recipient: Option<Id>,
 		stop: bool,
 	},
+	/// Documented REST list of voice regions.
+	Regions,
+	/// Unofficial REST change of a private call's voice region; `None` is automatic.
+	SetRegion { channel: Id, region: Option<String> },
 }
 
 /// One Go Live stream update from the Gateway, by stream key.
@@ -283,6 +298,13 @@ pub enum Event {
 		channel: Id,
 		message: &'static str,
 	},
+	/// Discord's voice regions, or why they could not be listed.
+	Regions(Result<Vec<Region>, &'static str>),
+	/// Changing a private call's region failed; the call continues where it was.
+	RegionFailed {
+		channel: Id,
+		message: &'static str,
+	},
 	/// A command could not be sent; the controller sends it again when it can.
 	Unsent(Command),
 }
@@ -317,6 +339,13 @@ impl Event {
 				token.as_ref().map_or(0, Secret::bytes)
 					+ endpoint.as_ref().map_or(0, String::capacity)
 			}
+			Self::Regions(Ok(regions)) => {
+				regions.capacity() * size_of::<Region>()
+					+ regions
+						.iter()
+						.map(|region| region.id.capacity() + region.name.capacity())
+						.sum::<usize>()
+			}
 			Self::Stream { key, event } => {
 				key.capacity()
 					+ match event {
@@ -343,6 +372,11 @@ pub struct State {
 	/// Service-confirmed ringing, at most 64 calls with 64 recipient IDs each.
 	pub(crate) dm_ringing: Vec<(Id, Vec<Id>)>,
 	pub ring_error: Option<(Id, &'static str)>,
+	/// Discord's voice regions once listed; asked for when a call's options first open.
+	pub regions: Option<Vec<Region>>,
+	regions_asked: bool,
+	/// The region this device picked for its private call; `None` inside is automatic.
+	pub region_choice: Option<(Id, Option<String>)>,
 	pub roster: Vec<RosterEntry>,
 	pub preview: Option<StreamPreview>,
 	/// The offline demo drives calls against the simulated Discord instead of refusing them.
@@ -513,6 +547,11 @@ impl ClientState {
 				message: "Ringing was not sent; the work queue is full",
 			}),
 			Command::Sync { .. } | Command::ChannelInfo { .. } => {}
+			Command::Regions => self.voice.regions_asked = false,
+			Command::SetRegion { channel, .. } => self.apply_voice(Event::RegionFailed {
+				channel,
+				message: "The region was not changed; the work queue is full",
+			}),
 			// A lost stream operation times out and is retried by the controller.
 			Command::StreamCreate { .. }
 			| Command::StreamDelete { .. }
@@ -691,6 +730,48 @@ impl ClientState {
 		});
 		true
 	}
+	/// Asks Discord for its voice regions once per session; the call options list them.
+	pub fn request_voice_regions(&mut self) {
+		if !self.voice.regions_asked && self.voice.regions.is_none() {
+			self.voice.regions_asked = true;
+			self.voice.phone.send(Command::Regions);
+		}
+	}
+	/// Moves this device's private call to `region`, or back to automatic.
+	pub fn set_call_region(&mut self, region: Option<String>) -> bool {
+		let Some(channel) = self
+			.voice
+			.active
+			.as_ref()
+			.filter(|call| call.guild.is_none() && call.phase.connected())
+			.map(|call| call.channel)
+		else {
+			return false;
+		};
+		if region.as_ref().is_some_and(|region| {
+			!self
+				.voice
+				.regions
+				.iter()
+				.flatten()
+				.any(|known| &known.id == region)
+		}) {
+			return false;
+		}
+		self.voice.region_choice = Some((channel, region.clone()));
+		self.voice
+			.phone
+			.send(Command::SetRegion { channel, region });
+		true
+	}
+	/// The region this device picked for the private call in `channel`, if any.
+	pub fn call_region(&self, channel: Id) -> Option<&str> {
+		self.voice
+			.region_choice
+			.as_ref()
+			.filter(|(id, _)| *id == channel)
+			.and_then(|(_, region)| region.as_deref())
+	}
 	pub fn set_call_mute(&mut self, muted: bool, deafened: bool) -> bool {
 		let Some(channel) = self.voice.active.as_ref().map(|call| call.channel) else {
 			return false;
@@ -842,6 +923,29 @@ impl ClientState {
 					self.voice.notice = Some(message);
 					self.voice.ring_error = Some((channel, message));
 				}
+			}
+			Event::Regions(result) => match result {
+				Ok(mut regions) => {
+					regions.truncate(MAX_REGIONS);
+					self.voice.regions = Some(regions);
+				}
+				Err(message) => {
+					// Opening the options again asks again.
+					self.voice.regions_asked = false;
+					self.voice.notice = Some(message);
+				}
+			},
+			Event::RegionFailed { channel, message } => {
+				if self
+					.voice
+					.region_choice
+					.as_ref()
+					.is_some_and(|(id, _)| *id == channel)
+				{
+					self.voice.region_choice = None;
+				}
+				self.status = message;
+				self.voice.notice = Some(message);
 			}
 			Event::Media { id, report } => self.media_report(id, report, now),
 			Event::Unsent(command) => {

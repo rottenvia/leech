@@ -232,7 +232,7 @@ impl Calls {
 			}
 			Command::StreamDelete { key } => json!({"op":19,"d":{"stream_key":key}}),
 			Command::StreamWatch { key } => json!({"op":20,"d":{"stream_key":key}}),
-			Command::Ring { .. } => return Ok(None),
+			Command::Ring { .. } | Command::Regions | Command::SetRegion { .. } => return Ok(None),
 		};
 		Ok(Some(Frame::Text(value.to_string().into())))
 	}

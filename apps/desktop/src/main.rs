@@ -1040,6 +1040,10 @@ struct Desktop {
 	/// Until when the sign-in failure copy button reads "Copied".
 	sign_in_copied: Option<f64>,
 	forgetting: bool,
+	/// When the restore screen first showed, and how far its bar has filled, so it eases
+	/// toward its estimate instead of jumping.
+	restore_started: Option<std::time::Instant>,
+	restore_shown: f32,
 	confirming_close: bool,
 	confirming_logout: bool,
 	/// What the pending session teardown is for: logging out, switching or adding an account.
@@ -2350,6 +2354,8 @@ impl Desktop {
 				"Saved login unavailable; could not start credential lookup"
 			},
 			forgetting: false,
+			restore_started: None,
+			restore_shown: 0.0,
 			confirming_close: false,
 			confirming_logout: false,
 			end_intent: SessionEnd::Logout,
@@ -4470,66 +4476,135 @@ impl Desktop {
 					});
 				let time = ui.input(|i| i.time) as f32;
 				ui.ctx().request_repaint();
+				// Progress follows the last restores' length: about 90% when that much time
+				// has passed, never past the current stage, and never full until the account
+				// is ready. The bar eases toward it, so a stage change glides.
+				let started = *self
+					.restore_started
+					.get_or_insert_with(std::time::Instant::now);
+				let elapsed = started.elapsed().as_secs_f32();
+				let expected = if self.messaging.restore_ms == 0 {
+					2.4
+				} else {
+					self.messaging.restore_ms as f32 / 1000.0
+				};
+				let checking = self
+					.store
+					.as_ref()
+					.is_some_and(|store| store.remaining(std::time::Instant::now()).is_some());
+				let estimate = 1.0 - (-2.3 * elapsed / expected).exp();
+				let target = if checking {
+					estimate.min(0.25)
+				} else {
+					estimate.clamp(0.25, 0.94)
+				};
+				let dt = ui.input(|i| i.stable_dt).min(0.1);
+				self.restore_shown += (target - self.restore_shown) * (1.0 - (-dt * 8.0).exp());
+				let shown = self.restore_shown;
+				let left = (expected - elapsed).max(0.0);
+				let eta = if left >= 1.0 {
+					format!("about {} s left", left.ceil() as u32)
+				} else {
+					"almost there".to_owned()
+				};
 				ui.vertical_centered(|ui| {
-					ui.add_space((ui.available_height() * 0.5 - 150.0).max(12.0));
-					// App mark with a slow breathing halo; the only motion besides the bar.
+					ui.add_space((ui.available_height() * 0.5 - 110.0).max(12.0));
+					// The app mark breathes, and a sheen crosses it now and then.
 					let (rect, _) =
-						ui.allocate_exact_size(egui::vec2(72.0, 72.0), egui::Sense::hover());
-					let mark = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(56.0));
+						ui.allocate_exact_size(egui::vec2(64.0, 64.0), egui::Sense::hover());
+					let mark = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(48.0));
 					let pulse = 0.5 + 0.5 * (time * 1.6).sin();
 					ui.painter().rect_filled(
-						mark.expand(4.0 + 4.0 * pulse),
-						18,
+						mark.expand(3.0 + 4.0 * pulse),
+						16,
 						p.accent.gamma_multiply(0.10 + 0.10 * pulse),
 					);
-					ui.painter().rect_filled(mark, 14, p.accent);
+					ui.painter().rect_filled(mark, 12, p.accent);
+					let sheen = (time % 2.4) / 0.9;
+					if sheen < 1.0 {
+						let x = mark.left() - 24.0 + (mark.width() + 48.0) * sheen;
+						let mut mesh = egui::Mesh::default();
+						let clear = egui::Color32::TRANSPARENT;
+						let lit = egui::Color32::WHITE.gamma_multiply(0.22);
+						for (dx, color) in [(-14.0, clear), (0.0, lit), (14.0, clear)] {
+							mesh.colored_vertex(egui::pos2(x + dx + 10.0, mark.top()), color);
+							mesh.colored_vertex(egui::pos2(x + dx - 10.0, mark.bottom()), color);
+						}
+						for base in [0, 2] {
+							mesh.add_triangle(base, base + 1, base + 2);
+							mesh.add_triangle(base + 1, base + 2, base + 3);
+						}
+						ui.painter()
+							.with_clip_rect(mark.shrink(1.0))
+							.add(egui::Shape::mesh(mesh));
+					}
 					ui::icons::paint(
 						ui.painter(),
 						ui::icons::Icon::Leech,
-						mark.shrink(13.0),
+						mark.shrink(11.0),
 						p.accent_text,
 					);
-					ui.add_space(18.0);
+					ui.add_space(14.0);
 					ui.label(
 						ui::design::semibold(
 							ui,
 							ui::i18n::translate("main-restoring-screen-welcome-back"),
-							24.0,
+							19.0,
 						)
 						.color(p.text_strong),
 					);
-					ui.add_space(6.0);
+					ui.add_space(16.0);
+					// The bar, then the stage and the time left under it.
+					let width = ui.available_width().min(240.0);
+					let (track, response) =
+						ui.allocate_exact_size(egui::vec2(width, 4.0), egui::Sense::hover());
+					response.widget_info(|| {
+						egui::WidgetInfo::labeled(
+							egui::Role::ProgressIndicator,
+							true,
+							format!("{stage}, {eta}"),
+						)
+					});
+					ui.painter().rect_filled(track, 2, p.raised);
+					let fill = egui::Rect::from_min_max(
+						track.min,
+						egui::pos2(track.left() + track.width() * shown, track.bottom()),
+					);
+					if fill.width() > 0.5 {
+						// A glow under the bar's head and a light running along its fill.
+						let head = egui::pos2(fill.right(), fill.center().y);
+						ui.painter()
+							.circle_filled(head, 6.0, p.accent.gamma_multiply(0.18));
+						ui.painter().rect_filled(fill, 2, p.accent);
+						let run = (time % 1.6) / 1.6;
+						let x = fill.left() + (fill.width() + 60.0) * run - 30.0;
+						let mut mesh = egui::Mesh::default();
+						let clear = egui::Color32::TRANSPARENT;
+						let lit = egui::Color32::WHITE.gamma_multiply(0.35);
+						for (dx, color) in [(-30.0, clear), (0.0, lit), (30.0, clear)] {
+							mesh.colored_vertex(egui::pos2(x + dx, fill.top()), color);
+							mesh.colored_vertex(egui::pos2(x + dx, fill.bottom()), color);
+						}
+						for base in [0, 2] {
+							mesh.add_triangle(base, base + 1, base + 2);
+							mesh.add_triangle(base + 1, base + 2, base + 3);
+						}
+						ui.painter()
+							.with_clip_rect(fill)
+							.add(egui::Shape::mesh(mesh));
+					}
+					ui.add_space(10.0);
 					ui.label(
-						egui::RichText::new(format!("{stage}…"))
-							.size(15.0)
+						egui::RichText::new(format!("{stage}… · {eta}"))
+							.size(12.5)
 							.color(p.muted),
 					);
-					ui.add_space(22.0);
-					// Indeterminate track: progress is unknown, so a sweeping segment.
-					let width = ui.available_width().min(260.0);
-					let (track, _) =
-						ui.allocate_exact_size(egui::vec2(width, 4.0), egui::Sense::hover());
-					ui.painter().rect_filled(track, 2, p.raised);
-					let span = track.width() * 0.35;
-					let travel = (track.width() + span) * ((time * 0.5).fract());
-					let left = (track.left() + travel - span).max(track.left());
-					let right = (track.left() + travel).min(track.right());
-					if right > left {
-						ui.painter().rect_filled(
-							egui::Rect::from_min_max(
-								egui::pos2(left, track.top()),
-								egui::pos2(right, track.bottom()),
-							),
-							2,
-							p.accent,
-						);
-					}
-					ui.add_space(26.0);
+					ui.add_space(18.0);
 					ui.allocate_ui_with_layout(
 						egui::vec2(220.0, 0.0),
 						egui::Layout::top_down(egui::Align::Center),
 						|ui| {
-							if ui::design::secondary_button(
+							if ui::design::text_action(
 								ui,
 								&ui::i18n::translate(
 									"main-restoring-screen-use-a-different-account",
@@ -4537,6 +4612,8 @@ impl Desktop {
 							)
 							.clicked()
 							{
+								self.restore_started = None;
+								self.restore_shown = 0.0;
 								if let Some(store) = &mut self.store {
 									store.cancel_load();
 								}
@@ -6845,6 +6922,16 @@ impl eframe::App for Desktop {
 				login.resize(&self.window);
 			}
 		} else if self.state.user.is_some() {
+			if let Some(started) = self.restore_started.take() {
+				// The next restore's estimate leans on the last few.
+				let took = started.elapsed().as_millis().clamp(400, 30_000) as u32;
+				let last = self.messaging.restore_ms;
+				self.messaging.restore_ms = if last == 0 {
+					took
+				} else {
+					(last * 2 + took) / 3
+				};
+			}
 			self.messaging.storage_status = self.cache_status;
 			self.messaging.notification_status = self.notifications.status().label();
 			if self.app_settings.state.failed {
@@ -7309,6 +7396,9 @@ impl eframe::App for Desktop {
 		} else if let Some(stage) = self.restoring() {
 			self.restoring_screen(ui, &stage);
 		} else {
+			// A restore that failed into the sign-in screen is not timed for the next estimate.
+			self.restore_started = None;
+			self.restore_shown = 0.0;
 			self.sign_in_screen(ui);
 		}
 		// Outside the signed-in branch so leaving an account still restores the window mode.

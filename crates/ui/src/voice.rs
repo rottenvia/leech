@@ -634,7 +634,7 @@ impl MessagingUi {
 							"voice-voice-participant-muted-for-you-on-this-device",
 						);
 					}
-					if entry.participant.streaming {
+					if self.live_shown(ui.ctx(), state, entry) > 0.0 {
 						live_badge(ui);
 					}
 					ui.allocate_ui_with_layout(
@@ -1004,6 +1004,14 @@ impl MessagingUi {
 				.map(Tile::Stream),
 		);
 		tiles.extend(entries.iter().map(Tile::Participant));
+		// Show Non-Video Participants off: while anyone shows video or a share, people who
+		// show neither leave the stage.
+		let shows = |tile: &Tile<'_>| {
+			!matches!(tile, Tile::Participant(_)) || self.tile_has_video(state, channel, tile)
+		};
+		if self.call_hide_non_video && tiles.iter().any(shows) {
+			tiles.retain(shows);
+		}
 		tiles
 	}
 
@@ -1042,7 +1050,9 @@ impl MessagingUi {
 				.iter()
 				.any(|tile| tile.focus() == *focus && self.tile_has_video(state, channel, tile))
 		});
-		let focus = focus.filter(|_| !ui.input(|input| input.key_pressed(egui::Key::Escape)));
+		// Grid View keeps every tile the same size, even while watching a share.
+		let focus = focus
+			.filter(|_| !self.call_grid && !ui.input(|input| input.key_pressed(egui::Key::Escape)));
 		self.voice_focus = focus;
 		// A live share turns the avatar-only DM stage into boxed tiles, as in Discord.
 		let video = tiles.iter().any(|tile| {
@@ -1137,6 +1147,8 @@ impl MessagingUi {
 			}
 		}
 		if let Some(focus) = toggle {
+			// Enlarging a tile leaves Grid View, as in Discord.
+			self.call_grid = false;
 			self.voice_focus = (self.voice_focus != Some(focus)).then_some(focus);
 		}
 	}
@@ -1166,7 +1178,8 @@ impl MessagingUi {
 					.as_ref()
 					.is_some_and(|user| user.id == entry.participant.user);
 				if own {
-					self.voice_camera_preview.is_some()
+					!self.call_hide_own_camera
+						&& self.voice_camera_preview.is_some()
 						&& state
 							.voice
 							.active
@@ -1587,7 +1600,10 @@ impl MessagingUi {
 		let inactive = inactive_recipient(state, entry.channel, entry.participant.user);
 		// The local preview is mirrored like a webcam; remote cameras fill the tile edge to edge.
 		let video = if own && call.is_some_and(|call| call.camera) {
+			// Hidden from this device only when its options say so; others still see it.
 			self.voice_camera_preview
+				.as_ref()
+				.filter(|_| !self.call_hide_own_camera)
 				.as_ref()
 				.map(|texture| (texture.id(), texture.size_vec2(), true))
 		} else if entry.participant.video {
@@ -1611,11 +1627,15 @@ impl MessagingUi {
 				.ringing(entry.channel)
 				.contains(&entry.participant.user);
 		let offset = if compact || frameless { 0.0 } else { 10.0 };
-		// A seat waits, smaller and faded, while its own call connects (a comet circles inside
-		// the avatar edge) or while it is only being rung (it beats with each ring). It arrives
-		// in time with the join chime: the ring closes on the first note, the avatar springs to
-		// full size on the second and a soft halo spreads around it.
-		let joining = own && video.is_none() && call.is_some_and(|call| !call.phase.connected());
+		// A seat waits, smaller and faded, while its own call first connects (a comet circles
+		// inside the avatar edge) or while it is only being rung (it beats with each ring). It
+		// arrives in time with the join chime: the own comet closes on the first note, the
+		// avatar springs to full size on the second and a soft halo spreads around it. Once
+		// connected the own seat stays put: re-securing media when someone joins, or a
+		// reconnect, never circles again.
+		let joining = own
+			&& video.is_none()
+			&& call.is_some_and(|call| !call.phase.connected() && call.connected_at.is_none());
 		let waiting = joining || inactive;
 		let avatar_rect = egui::Rect::from_center_size(
 			rect.center() - egui::vec2(0.0, offset),
@@ -1696,7 +1716,7 @@ impl MessagingUi {
 		}
 		if video.is_none() {
 			if joining {
-				connecting_comet(ui, avatar.rect, glow, 0.0);
+				connecting_comet(ui, avatar.rect, glow, 0.0, JOIN_RING);
 			} else if let Some(elapsed) = motion.arrived {
 				arrival_rings(ui, &halo, avatar.rect, glow, elapsed, own);
 			}
@@ -1739,22 +1759,37 @@ impl MessagingUi {
 			self.profile.person_click(ui, &avatar, None, user);
 		}
 		// Discord's LIVE pill marks a streamer on every tile size; strip tiles get a small one
-		// so it never covers the avatar.
-		if entry.participant.streaming {
+		// so it never covers the avatar, and a bare DM avatar wears it on its lower edge, cut
+		// out of the stage like the mute badge, so it never covers the face. It pops in as it
+		// appears.
+		let reveal = self.live_shown(ui.ctx(), state, entry);
+		if reveal > 0.0 {
 			let (pill, font) = if compact {
 				(egui::vec2(30.0, 15.0), 9.0)
+			} else if frameless {
+				(egui::vec2(34.0, 16.0), 10.0)
 			} else {
 				(egui::vec2(40.0, 20.0), 11.0)
 			};
 			let margin = if compact { 5.0 } else { 8.0 };
-			let live = egui::Rect::from_min_size(rect.left_top() + egui::Vec2::splat(margin), pill);
-			ui.painter().rect_filled(live, 4, colors.danger);
+			let center = if frameless && video.is_none() {
+				egui::pos2(avatar.rect.center().x, avatar.rect.bottom() - 2.0)
+			} else {
+				rect.left_top() + egui::Vec2::splat(margin) + pill * 0.5
+			};
+			let live = egui::Rect::from_center_size(center, pill * (0.8 + 0.2 * reveal));
+			if frameless && video.is_none() {
+				ui.painter()
+					.rect_filled(live.expand(2.0), 6, STAGE_FILL.gamma_multiply(reveal));
+			}
+			ui.painter()
+				.rect_filled(live, 4, colors.danger.gamma_multiply(reveal));
 			ui.painter().text(
 				live.center(),
 				egui::Align2::CENTER_CENTER,
 				"LIVE",
-				egui::FontId::new(font, design::medium_family(ui.ctx())),
-				egui::Color32::WHITE,
+				egui::FontId::new(font * (0.8 + 0.2 * reveal), design::medium_family(ui.ctx())),
+				egui::Color32::WHITE.gamma_multiply(reveal),
 			);
 		}
 		if compact {
@@ -3170,9 +3205,9 @@ impl MessagingUi {
 		let left = (bar.center().x - width * 0.5)
 			.min(bar.right() - STAGE_MARGIN - side - BAR_GAP - width)
 			.max(bar.left() + STAGE_MARGIN);
+		let private = call.guild.is_none();
 		let mut camera_clicked = false;
 		let mut mute_clicked = false;
-		let mut deafen_clicked = false;
 		let mut leave = false;
 		let mut stop_watching = false;
 		let mut row = ui.new_child(
@@ -3290,22 +3325,12 @@ impl MessagingUi {
 					"More options",
 					"More call options",
 				);
+				if more.clicked() && private {
+					state.request_voice_regions();
+				}
 				egui::Popup::menu(&more)
 					.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-					.show(|ui| {
-						let label = crate::i18n::translate_if_key(if deafened {
-							"Undeafen"
-						} else {
-							"Deafen"
-						});
-						if ui
-							.add_enabled(voice_toggles, egui::Button::new(label))
-							.clicked()
-						{
-							deafen_clicked = true;
-							ui.close();
-						}
-					});
+					.show(|ui| self.call_options(ui, state, private));
 			});
 		}
 		// While a watched share is enlarged, the red action stops watching, as in Discord.
@@ -3426,18 +3451,137 @@ impl MessagingUi {
 		if camera_clicked && state.set_call_camera(!camera) {
 			self.voice_camera_status = "";
 		}
-		// Each toggle reads the newest choice, so two in one frame never undo each other.
-		for (clicked, deafen) in [(mute_clicked, false), (deafen_clicked, true)] {
-			if clicked {
-				let (muted, deafened) = self.toggle_voice(deafen);
-				state.set_call_mute(muted, deafened);
-			}
+		if mute_clicked {
+			let (muted, deafened) = self.toggle_voice(false);
+			state.set_call_mute(muted, deafened);
 		}
 		if leave {
 			state.leave_call();
 		}
 	}
 
+	/// Discord's call options: view choices, voice and video settings, and the region a
+	/// private call runs in.
+	fn call_options(&mut self, ui: &mut egui::Ui, state: &mut State, private: bool) {
+		// Discord's width; rows fill it, so the menu never grows to the free space.
+		ui.set_width(250.0);
+		design::menu_check(ui, "Grid View", &mut self.call_grid);
+		let mut own_camera = !self.call_hide_own_camera;
+		if design::menu_check(ui, "Show My Own Camera", &mut own_camera).changed() {
+			self.call_hide_own_camera = !own_camera;
+		}
+		let mut non_video = !self.call_hide_non_video;
+		if design::menu_check(ui, "Show Non-Video Participants", &mut non_video).changed() {
+			self.call_hide_non_video = !non_video;
+		}
+		ui.separator();
+		if design::menu_item(
+			ui,
+			Some(crate::icons::Icon::Gear),
+			"Voice & Video Settings",
+			false,
+		)
+		.clicked()
+		{
+			self.open_voice_settings();
+			ui.close();
+		}
+		let Some(channel) = state
+			.voice
+			.active
+			.as_ref()
+			.filter(|_| private)
+			.map(|call| call.channel)
+		else {
+			return;
+		};
+		let current = state.call_region(channel).map(str::to_owned);
+		let automatic = crate::i18n::translate_if_key("Automatic");
+		let name = current.as_deref().map_or_else(
+			|| automatic.clone(),
+			|id| {
+				state
+					.voice
+					.regions
+					.iter()
+					.flatten()
+					.find(|region| region.id == id)
+					.map_or_else(|| id.to_owned(), |region| region.name.clone())
+			},
+		);
+		let colors = design::palette(ui);
+		let title = crate::i18n::translate_if_key("Region");
+		let medium = design::medium_family(ui.ctx());
+		// Discord's two-line row: the option, and under it where the call runs.
+		let label = format!("{title}, {name}");
+		let row = egui::Atom::paint(egui::vec2(194.0, 36.0), move |ui, args| {
+			let painter = ui.painter();
+			painter.text(
+				egui::pos2(args.rect.left() + 8.0, args.rect.center().y - 8.0),
+				egui::Align2::LEFT_CENTER,
+				&title,
+				egui::FontId::new(14.0, medium.clone()),
+				colors.text,
+			);
+			painter.text(
+				egui::pos2(args.rect.left() + 8.0, args.rect.center().y + 9.0),
+				egui::Align2::LEFT_CENTER,
+				&name,
+				egui::FontId::proportional(12.0),
+				colors.muted,
+			);
+		});
+		ui.add_enabled_ui(state.call_connected(), |ui| {
+			let menu = ui.menu_button(row, |ui| {
+				ui.set_min_width(180.0);
+				let mut pick = None;
+				if ui.selectable_label(current.is_none(), automatic).clicked() {
+					pick = Some(None);
+				}
+				match &state.voice.regions {
+					None => {
+						ui.label(
+							RichText::new(crate::i18n::translate_if_key("Loading regions…"))
+								.size(12.0)
+								.color(colors.muted),
+						);
+					}
+					Some(regions) => {
+						for region in regions {
+							let label = if region.optimal {
+								format!(
+									"{} · {}",
+									region.name,
+									crate::i18n::translate_if_key("Best")
+								)
+							} else {
+								region.name.clone()
+							};
+							if ui
+								.selectable_label(current.as_deref() == Some(&region.id), label)
+								.clicked()
+							{
+								pick = Some(Some(region.id.clone()));
+							}
+						}
+					}
+				}
+				if let Some(region) = pick {
+					if region != current {
+						state.set_call_region(region);
+					}
+					ui.close();
+				}
+			});
+			let enabled = ui.is_enabled();
+			menu.response
+				.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &label));
+		});
+	}
+
+	/// Go Live, following the call's own motion: the plate waits small and faint with a
+	/// loading ring while the share starts, then, once Discord carries it, the ring closes,
+	/// the plate fills and springs to full size, and LIVE appears after it.
 	fn screen_share_control(&mut self, ui: &mut egui::Ui, state: &State) {
 		let enabled = self.screen.busy
 			|| state.offline_preview()
@@ -3451,19 +3595,19 @@ impl MessagingUi {
 		} else {
 			"Share your screen"
 		};
-		let color = if self.screen.busy {
-			design::palette(ui).accent_text
-		} else {
-			STAGE_TEXT
-		};
-		// While sharing, the button sits on a filled accent plate like Discord's live state.
+		let colors = design::palette(ui);
+		let (starting, live) = self.screen.since(ui.ctx());
+		let close = CUE_LATENCY + CHIME_NOTE;
+		let fill = live.map_or(0.0, |live| {
+			egui::emath::easing::cubic_out(((live - close * 0.5) / 0.18).clamp(0.0, 1.0))
+		});
 		let plate = ui.painter().add(egui::Shape::Noop);
 		let response = control(
 			ui,
 			crate::icons::Icon::ScreenShare,
 			48.0,
 			enabled,
-			color,
+			STAGE_TEXT.lerp_to_gamma(colors.accent_text, fill),
 			label,
 			if enabled {
 				self.screen
@@ -3477,19 +3621,77 @@ impl MessagingUi {
 				"Screen sharing requires a connected call and video permission on a supported desktop."
 			},
 		);
-		if self.screen.busy {
-			let accent = design::palette(ui).accent;
-			let fill = accent.lerp_to_gamma(
-				accent.gamma_multiply(1.15),
-				design::hover_motion(ui, &response),
-			);
+		if starting.is_some() || live.is_some() {
+			let rect = response.rect.shrink(4.0);
+			let hover = design::hover_motion(ui, &response);
+			let faint = colors.accent.gamma_multiply(0.16 + 0.06 * hover);
+			let solid = colors
+				.accent
+				.lerp_to_gamma(colors.accent.gamma_multiply(1.15), hover);
+			let scale = live.map_or(WAITING_SCALE, arrival_scale);
 			ui.painter().set(
 				plate,
-				egui::Shape::rect_filled(response.rect.shrink(4.0), 8, fill),
+				egui::Shape::rect_filled(
+					egui::Rect::from_center_size(rect.center(), rect.size() * scale),
+					8,
+					faint.lerp_to_gamma(solid, fill),
+				),
 			);
+			let ring =
+				egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(rect.height() - 6.0));
+			let glow = self.call_glow(ui);
+			match live {
+				None => connecting_comet(ui, ring, glow, 0.0, SHARE_RING),
+				Some(live) if live < close => connecting_comet(
+					ui,
+					ring,
+					glow,
+					egui::emath::easing::cubic_in_out(live / close),
+					SHARE_RING,
+				),
+				Some(live) => {
+					let fade = 1.0 - ((live - close) / 0.3).min(1.0);
+					if fade > 0.0 {
+						ui.painter().circle_stroke(
+							ring.center(),
+							ring.width() * 0.5 - SHARE_RING * 0.5,
+							egui::Stroke::new(
+								SHARE_RING,
+								design::mix(glow, egui::Color32::WHITE, 0.6 * fade)
+									.gamma_multiply(fade * fade),
+							),
+						);
+					}
+					if live < ARRIVE_SECS {
+						ui.ctx().request_repaint();
+					}
+				}
+			}
 		}
 		if response.clicked() {
 			self.screen.launch(state);
+		}
+	}
+
+	/// How much of the LIVE badge shows for `entry` (0 to 1). This device's own share shows it
+	/// only once Discord carries the share and clears it on the stop click; everyone else's
+	/// follows their voice state.
+	fn live_shown(&self, ctx: &egui::Context, state: &State, entry: &RosterEntry) -> f32 {
+		let own_call = state
+			.user
+			.as_ref()
+			.is_some_and(|user| user.id == entry.participant.user)
+			&& state
+				.voice
+				.active
+				.as_ref()
+				.is_some_and(|call| call.channel == entry.channel);
+		if own_call {
+			self.screen.live_reveal(ctx)
+		} else if entry.participant.streaming {
+			1.0
+		} else {
+			0.0
 		}
 	}
 
@@ -3552,8 +3754,8 @@ impl MessagingUi {
 		open
 	}
 
-	/// The stage's last frame folding back into the header once its call ended, while the
-	/// leave chime plays: the seats and bar fade as the stage shrinks.
+	/// The stage's last frame folding back into the header once its call ended: the seats and
+	/// bar fade as the stage shrinks.
 	fn closing_stage(
 		&mut self,
 		ui: &mut egui::Ui,
@@ -4894,6 +5096,8 @@ fn chrome_shade(ui: &egui::Ui, stage: egui::Rect, height: f32, top: bool, reveal
 
 /// Width of the join rings, the same as the speaking ring's.
 const JOIN_RING: f32 = 3.0;
+/// Width of the Go Live button's loading ring.
+const SHARE_RING: f32 = 2.0;
 /// Seconds from asking for a cue until it is heard (a fresh output stream plus the device
 /// buffer). Visual beats aim at the audible notes.
 const CUE_LATENCY: f32 = 0.03;
@@ -5074,21 +5278,28 @@ fn halo(
 	painter.add(mesh);
 }
 
-/// The own avatar while its call connects: a comet with a fading tail circling just inside
-/// the edge over a faint track. `close` (0 to 1) grows the tail into an even, full ring.
-fn connecting_comet(ui: &egui::Ui, avatar: egui::Rect, color: egui::Color32, close: f32) {
+/// Something connecting (the own avatar while its call connects, Go Live while the share
+/// starts): a comet with a fading tail circling just inside `avatar`'s edge over a faint
+/// track, `ring` points wide. `close` (0 to 1) grows the tail into an even, full ring.
+fn connecting_comet(
+	ui: &egui::Ui,
+	avatar: egui::Rect,
+	color: egui::Color32,
+	close: f32,
+	ring: f32,
+) {
 	const SEGMENTS: usize = 64;
 	const TAIL: f32 = 4.6;
 	let time = ui.input(|input| input.time);
 	let head = (time * 4.2 % std::f64::consts::TAU) as f32;
 	let center = avatar.center();
-	let radius = avatar.width() * 0.5 - JOIN_RING * 0.5;
+	let radius = avatar.width() * 0.5 - ring * 0.5;
 	let point = |angle: f32| center + radius * egui::vec2(angle.cos(), angle.sin());
 	let painter = ui.painter();
 	painter.circle_stroke(
 		center,
 		radius,
-		egui::Stroke::new(JOIN_RING, color.gamma_multiply(0.14 * (1.0 - close))),
+		egui::Stroke::new(ring, color.gamma_multiply(0.14 * (1.0 - close))),
 	);
 	// One gradient stroke: the tail warms toward a lighter tip and fades out behind it.
 	let tip = design::mix(color, egui::Color32::WHITE, 0.45);
@@ -5099,7 +5310,7 @@ fn connecting_comet(ui: &egui::Ui, avatar: egui::Rect, color: egui::Color32, clo
 		.collect();
 	painter.add(egui::Shape::line(
 		points,
-		egui::epaint::PathStroke::new_uv(JOIN_RING, move |_, pos| {
+		egui::epaint::PathStroke::new_uv(ring, move |_, pos| {
 			let angle = (pos.y - center.y).atan2(pos.x - center.x);
 			// Just before the tail's start wraps to a full turn; that end stays dark.
 			let swept = (angle - tail).rem_euclid(std::f32::consts::TAU);
@@ -5116,16 +5327,17 @@ fn connecting_comet(ui: &egui::Ui, avatar: egui::Rect, color: egui::Color32, clo
 	// A soft glow and a bright core at the head.
 	let head = point(head);
 	let lit = 1.0 - close;
-	painter.circle_filled(head, JOIN_RING * 2.0, color.gamma_multiply(0.18 * lit));
-	painter.circle_filled(head, JOIN_RING * 1.3, color.gamma_multiply(0.45 * lit));
-	painter.circle_filled(head, JOIN_RING * 0.8, tip.gamma_multiply(lit));
+	painter.circle_filled(head, ring * 2.0, color.gamma_multiply(0.18 * lit));
+	painter.circle_filled(head, ring * 1.3, color.gamma_multiply(0.45 * lit));
+	painter.circle_filled(head, ring * 0.8, tip.gamma_multiply(lit));
 	// Every frame, like egui's own animations: a timer would round to every other vsync.
 	ui.ctx().request_repaint();
 }
 
-/// A seat arriving (`elapsed` seconds ago): its ring closes on the chime's first note (the
-/// own seat's comet closes on itself, someone picking up gets a ring drawn around them), then
-/// flashes and fades while a halo spreads around the avatar.
+/// A seat arriving (`elapsed` seconds ago). The own seat's comet closes into a ring on the
+/// chime's first note, then the ring flashes and fades while a halo spreads around the
+/// avatar. Someone picking up gets no ring, only the halo on the second note: nothing circles
+/// once the call is up.
 fn arrival_rings(
 	ui: &egui::Ui,
 	halo: &egui::Painter,
@@ -5136,37 +5348,31 @@ fn arrival_rings(
 ) {
 	let closing = CUE_LATENCY + CHIME_NOTE;
 	if elapsed < closing {
-		let close = egui::emath::easing::cubic_in_out(elapsed / closing);
 		if comet {
-			connecting_comet(ui, avatar, color, close);
-		} else {
-			let center = avatar.center();
-			let radius = avatar.width() * 0.5 - JOIN_RING * 0.5;
-			let points = (0..=64)
-				.map(|step| {
-					let angle = -std::f32::consts::FRAC_PI_2
-						+ std::f32::consts::TAU * close * step as f32 / 64.0;
-					center + radius * egui::vec2(angle.cos(), angle.sin())
-				})
-				.collect();
-			ui.painter().add(egui::Shape::line(
-				points,
-				egui::Stroke::new(JOIN_RING, color),
-			));
+			let close = egui::emath::easing::cubic_in_out(elapsed / closing);
+			connecting_comet(ui, avatar, color, close, JOIN_RING);
 		}
 		return;
 	}
 	let since = elapsed - closing;
-	let fade = 1.0 - (since / 0.5).min(1.0);
-	ui.painter().circle_stroke(
-		avatar.center(),
-		avatar.width() * 0.5 - JOIN_RING * 0.5,
-		egui::Stroke::new(
-			JOIN_RING,
-			design::mix(color, egui::Color32::WHITE, 0.6 * fade).gamma_multiply(fade * fade),
-		),
-	);
-	self::halo(halo, avatar, color, (since / 0.65).min(1.0), 0.55);
+	if comet {
+		let fade = 1.0 - (since / 0.5).min(1.0);
+		ui.painter().circle_stroke(
+			avatar.center(),
+			avatar.width() * 0.5 - JOIN_RING * 0.5,
+			egui::Stroke::new(
+				JOIN_RING,
+				design::mix(color, egui::Color32::WHITE, 0.6 * fade).gamma_multiply(fade * fade),
+			),
+		);
+	}
+	let spread = (since / 0.65).min(1.0);
+	if comet {
+		self::halo(halo, avatar, color, spread, 0.55);
+	} else {
+		// Already soft at its first frame: a narrow band at the edge would read as a ring.
+		self::halo(halo, avatar, color, 0.35 + 0.65 * spread, 0.7);
+	}
 }
 
 fn speaking_avatar(ui: &egui::Ui, avatar: &egui::Response, name: &str) {
@@ -7336,5 +7542,80 @@ mod tests {
 		);
 		messaging.voice_available = true;
 		assert!(messaging.call_unavailable(&state, Id(1)).is_none());
+	}
+
+	#[test]
+	fn go_live_shows_live_only_once_live_and_clears_on_the_stop_click() {
+		let state = test_support::call_demo_state();
+		let ctx = egui::Context::default();
+		let mut screen = crate::screen::ScreenUi::default();
+		let frame = |screen: &mut crate::screen::ScreenUi, time: f64| {
+			let mut reveal = -1.0;
+			let mut output = ctx.run_ui(
+				egui::RawInput {
+					time: Some(time),
+					..Default::default()
+				},
+				|ui| {
+					reveal = screen.live_reveal(ui.ctx());
+					screen.show(ui.ctx(), &state);
+				},
+			);
+			output.textures_delta.clear();
+			reveal
+		};
+		screen.busy = true;
+		assert_eq!(
+			frame(&mut screen, 0.0),
+			0.0,
+			"a starting share shows no LIVE"
+		);
+		screen.live = true;
+		assert_eq!(frame(&mut screen, 1.0), 0.0);
+		assert_eq!(
+			frame(&mut screen, 1.3),
+			0.0,
+			"LIVE waits for the stream sound and the closing ring"
+		);
+		assert!(frame(&mut screen, 1.5) > 0.5);
+		assert_eq!(frame(&mut screen, 2.0), 1.0);
+		screen.launch(&state);
+		assert!(matches!(screen.request, Some(crate::screen::Request::Stop)));
+		assert!(!screen.busy);
+		assert_eq!(
+			frame(&mut screen, 2.01),
+			0.0,
+			"stopping clears LIVE on the click"
+		);
+	}
+
+	#[test]
+	fn call_view_options_hide_non_video_people_and_the_own_camera() {
+		let mut state = test_support::call_demo_state();
+		let call = state.voice.active.as_mut().unwrap();
+		call.camera = true;
+		let channel = call.channel;
+		let ctx = egui::Context::default();
+		let mut messaging = MessagingUi {
+			voice_camera_preview: Some(ctx.load_texture(
+				"synthetic-camera",
+				egui::ColorImage::filled([4, 3], egui::Color32::RED),
+				Default::default(),
+			)),
+			..Default::default()
+		};
+		let entries = stage_participants(&state, channel);
+		let everyone = messaging.stage_tiles(&state, channel, &entries).len();
+		assert!(everyone >= 2);
+		messaging.call_hide_non_video = true;
+		let shown = messaging.stage_tiles(&state, channel, &entries);
+		assert_eq!(shown.len(), 1, "only the camera tile stays");
+		assert!(messaging.tile_has_video(&state, channel, &shown[0]));
+		messaging.call_hide_own_camera = true;
+		assert_eq!(
+			messaging.stage_tiles(&state, channel, &entries).len(),
+			everyone,
+			"with no video showing, nobody is hidden"
+		);
 	}
 }

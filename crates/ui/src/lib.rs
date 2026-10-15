@@ -434,6 +434,15 @@ pub struct MessagingUi {
 	pub voice_ring_epoch: Option<f64>,
 	/// Custom colour of call rings and halos; unset lifts the theme accent for the dark stage.
 	pub call_color: Option<[u8; 3]>,
+	/// The call options' view choices, as in Discord: every tile the same size even while
+	/// watching, this device's own camera hidden from itself, and people without video
+	/// hidden while someone shows some.
+	pub call_grid: bool,
+	pub call_hide_own_camera: bool,
+	pub call_hide_non_video: bool,
+	/// How long restoring a saved login took lately, in milliseconds; the restore screen's
+	/// bar and time left follow it. Zero until one has been measured.
+	pub restore_ms: u32,
 	/// The conversation shown and when the switch to it began, for the content fade.
 	conversation_fade: Option<(Option<Id>, f64)>,
 	/// Session-only visibility of the selected guild voice channel's chat.
@@ -9851,29 +9860,36 @@ fn loading_people(ui: &mut egui::Ui, label: &str) {
 	if !ui.is_rect_visible(rect) {
 		return;
 	}
-	let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
-	let heading = design::placeholder_fill(ui, 0.24);
-	let fill = design::placeholder_fill(ui, 0.2);
-	let faint = design::placeholder_fill(ui, 0.12);
+	let shown = design::shown_for(ui, response.id);
+	let shimmer = design::shimmer(ui, rect, false);
+	let mut painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
 	let width = (rect.width() - 56.0).max(0.0);
+	painter.set_opacity(design::cascade(shown, 0));
 	painter.rect_filled(
 		egui::Rect::from_min_size(rect.min + egui::vec2(8.0, 8.0), egui::vec2(88.0, 8.0)),
 		4.0,
-		heading,
+		shimmer(rect.top() + 12.0, 0.24),
 	);
+	// Rows drop in one after another while a light sweeps down the list.
 	for (index, share) in NAMES.iter().enumerate() {
-		let top = rect.top() + 26.0 + index as f32 * 42.0;
+		let rise = design::cascade(shown, index + 1);
+		let top = rect.top() + 26.0 + index as f32 * 42.0 - 6.0 * (1.0 - rise);
 		if top > rect.bottom() {
 			break;
 		}
-		painter.circle_filled(egui::pos2(rect.left() + 24.0, top + 21.0), 16.0, faint);
+		painter.set_opacity(rise);
+		painter.circle_filled(
+			egui::pos2(rect.left() + 24.0, top + 21.0),
+			16.0,
+			shimmer(top + 21.0, 0.12),
+		);
 		painter.rect_filled(
 			egui::Rect::from_min_size(
 				egui::pos2(rect.left() + 48.0, top + 16.0),
 				egui::vec2(width * share, 10.0),
 			),
 			5.0,
-			fill,
+			shimmer(top + 21.0, 0.2),
 		);
 	}
 }

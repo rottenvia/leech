@@ -335,6 +335,24 @@ impl Connection {
 									})));
 									continue;
 								}
+								if matches!(control,V::Regions|V::SetRegion{..}) {
+									rings.retain(|task|!task.0.is_finished());
+									if !*voice_availability.borrow() || rings.len()>=4 {
+										let event=match control {V::SetRegion{channel,..}=>E::RegionFailed{channel,message:"Changing the region is unavailable while disconnected"},_=>E::Regions(Err("Voice regions are unavailable while disconnected"))};
+										emit(Event::Voice(event))?;
+										continue;
+									}
+									let api=api.clone();let emit=emit.clone();let finished=finished.clone();let wake=wake.clone();
+									rings.push(AbortTask(tokio::spawn(async move {
+										let failure=match control {
+											V::SetRegion{channel,region}=>api.set_call_region(channel,region.as_deref()).await.err().inspect(|failure|{let _=emit(Event::Voice(E::RegionFailed{channel,message:failure.label()}));}),
+											_=>match api.voice_regions().await {Ok(regions)=>{let _=emit(Event::Voice(E::Regions(Ok(regions))));None}Err(failure)=>{let _=emit(Event::Voice(E::Regions(Err(failure.label()))));Some(failure)}},
+										};
+										if let Some(failure)=failure.filter(|failure|failure.ends_session()) {api.stop();let _=finished.send(Some(failure));}
+										wake.request_repaint();
+									})));
+									continue;
+								}
 								// The call controller paces and resends; anything not queued goes back to it.
 								if !*voice_availability.borrow() {
 									emit(Event::Voice(E::Unsent(control)))?;
