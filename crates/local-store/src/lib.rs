@@ -52,6 +52,8 @@ pub struct AppPreferences {
 	pub hide_title_bar: bool,
 	pub hide_window_decorations: bool,
 	pub primary_color: Option<[u8; 3]>,
+	/// Rings and halos on the call stage; unset follows the theme accent.
+	pub call_color: Option<[u8; 3]>,
 	pub transparency_blur: bool,
 	pub transparency: u8,
 	pub blur: u8,
@@ -97,6 +99,7 @@ impl Default for AppPreferences {
 			hide_title_bar: false,
 			hide_window_decorations: false,
 			primary_color: None,
+			call_color: None,
 			transparency_blur: false,
 			transparency: 15,
 			blur: 50,

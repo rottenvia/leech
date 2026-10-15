@@ -20,32 +20,41 @@ pub struct Runtime {
 	sounds: crate::notification_sounds::Sounds,
 	options: Device,
 	was_audible: bool,
-	ring: Option<((Id, Sound), Instant)>,
+	/// What rings, when its cycle began and when the next cue is due.
+	ring: Option<((Id, Sound), Instant, Instant)>,
 	badge: Option<u32>,
 	badge_check: Option<Instant>,
 	badge_status: &'static str,
 }
 impl Runtime {
 	fn ring_cue(&mut self, ringing: Option<(Id, Sound)>, now: Instant) -> Option<Sound> {
-		if self.ring.map(|(key, _)| key) != ringing {
+		if self.ring.map(|(key, ..)| key) != ringing {
 			if self.ring.is_some() {
 				self.sounds.stop();
 			}
-			self.ring = ringing.map(|key| (key, now));
-			return ringing.map(|(_, cue)| cue);
-		}
-		if let Some(((_, cue), played)) = &mut self.ring {
-			let interval = if *cue == Sound::OutgoingRing {
-				crate::notification_sounds::OUTGOING_RING_INTERVAL
-			} else {
-				crate::notification_sounds::RING_INTERVAL
+			// Dialing waits for the join chime to ring out; an incoming ring starts at once.
+			let start = match ringing {
+				Some((_, Sound::OutgoingRing)) => {
+					now + crate::notification_sounds::OUTGOING_RING_DELAY
+				}
+				_ => now,
 			};
-			if now.duration_since(*played) >= interval {
-				*played = now;
-				return Some(*cue);
-			}
+			self.ring = ringing.map(|key| (key, start, start));
 		}
-		None
+		let ((_, cue), _, next) = self.ring.as_mut()?;
+		if now < *next {
+			return None;
+		}
+		let interval = if *cue == Sound::OutgoingRing {
+			crate::notification_sounds::OUTGOING_RING_INTERVAL
+		} else {
+			crate::notification_sounds::RING_INTERVAL
+		};
+		// A fixed cadence from the first cue keeps the call stage's pulse on the beat.
+		while *next <= now {
+			*next += interval;
+		}
+		Some(*cue)
 	}
 	pub fn clear(&mut self, window: &winit::window::Window) {
 		self.sounds.stop();
@@ -108,18 +117,30 @@ impl Runtime {
 		let incoming = state.voice.incoming.filter(|id| {
 			audible && state.notification_allowed(*id) && options.allows(Sound::IncomingRing)
 		});
-		// Dialing is explicit local feedback, like mute/camera cues; DND only silences alerts.
-		let outgoing = state
-			.outgoing_ring()
-			.filter(|_| live && options.allows(Sound::OutgoingRing));
+		// Dialing starts once the call connects. The cycle runs even when its sound is off or
+		// silent in the demo, so the ringing seat still pulses on the stage.
+		let outgoing = state.outgoing_ring().filter(|_| state.call_connected());
 		let ringing = incoming
 			.map(|id| (id, Sound::IncomingRing))
 			.or_else(|| outgoing.map(|id| (id, Sound::OutgoingRing)));
-		if let Some(cue) = self.ring_cue(ringing, Instant::now()) {
+		let now = Instant::now();
+		if let Some(cue) = self.ring_cue(ringing, now)
+			// Dialing is explicit local feedback, like mute/camera cues; DND only silences alerts.
+			&& (cue != Sound::OutgoingRing || (live && options.allows(Sound::OutgoingRing)))
+		{
 			sound = Some(cue);
 		}
-		if self.ring.is_some() {
-			ctx.request_repaint_after(Duration::from_millis(250));
+		ui.voice_ring_epoch = None;
+		if let Some(((_, cue), start, next)) = self.ring {
+			ctx.request_repaint_after(next.saturating_duration_since(now));
+			if cue == Sound::OutgoingRing {
+				let time = ctx.input(|input| input.time);
+				ui.voice_ring_epoch = Some(if start > now {
+					time + (start - now).as_secs_f64()
+				} else {
+					time - (now - start).as_secs_f64()
+				});
+			}
 		}
 		// Explicit previews are allowed in the offline demo and intentionally ignore automatic mute choices.
 		if let Some(preview) = ui.notification_preview.take() {
@@ -176,13 +197,24 @@ mod tests {
 		let mut runtime = Runtime::default();
 		let now = Instant::now();
 		let outgoing = Some((Id(2), Sound::OutgoingRing));
-		assert_eq!(runtime.ring_cue(outgoing, now), Some(Sound::OutgoingRing));
+		let first = now + crate::notification_sounds::OUTGOING_RING_DELAY;
+		// Dialing waits for the join chime, then keeps a fixed cadence from its first cue.
+		assert_eq!(runtime.ring_cue(outgoing, now), None);
+		assert_eq!(runtime.ring_cue(outgoing, first), Some(Sound::OutgoingRing));
 		assert_eq!(
-			runtime.ring_cue(outgoing, now + Duration::from_secs(2)),
+			runtime.ring_cue(outgoing, first + Duration::from_secs(2)),
 			None
 		);
 		assert_eq!(
-			runtime.ring_cue(outgoing, now + Duration::from_secs(3)),
+			runtime.ring_cue(outgoing, first + Duration::from_millis(3200)),
+			Some(Sound::OutgoingRing)
+		);
+		assert_eq!(
+			runtime.ring_cue(outgoing, first + Duration::from_millis(5900)),
+			None
+		);
+		assert_eq!(
+			runtime.ring_cue(outgoing, first + Duration::from_secs(6)),
 			Some(Sound::OutgoingRing)
 		);
 		let incoming = Some((Id(2), Sound::IncomingRing));

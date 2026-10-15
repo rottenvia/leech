@@ -1092,6 +1092,35 @@ impl MessagingUi {
 						});
 					},
 				);
+				design::card_divider(ui);
+				design::row(
+					ui,
+					"settings-appearance-settings-call-color",
+					Some("settings-appearance-settings-call-color-description"),
+					|ui| {
+						if self.call_color.is_some()
+							&& design::text_action(
+								ui,
+								&crate::i18n::translate("settings-appearance-settings-reset"),
+							)
+							.clicked()
+						{
+							self.call_color = None;
+						}
+						let mut color = self.call_color.unwrap_or_else(|| {
+							let glow = crate::voice::stage_glow(design::palette(ui).accent);
+							[glow.r(), glow.g(), glow.b()]
+						});
+						if design::color_edit(ui, &mut color)
+							.on_hover_text(crate::i18n::translate(
+								"settings-appearance-settings-choose-call-color",
+							))
+							.changed()
+						{
+							self.call_color = Some(color);
+						}
+					},
+				);
 			},
 		);
 		design::group(

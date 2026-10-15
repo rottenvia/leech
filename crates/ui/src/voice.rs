@@ -1031,6 +1031,8 @@ impl MessagingUi {
 		dm: bool,
 	) {
 		let tiles = self.stage_tiles(state, channel, entries);
+		let changed = self.seat_roster(ui.ctx(), channel, entries);
+		self.departed_seats(ui, state, channel);
 		if tiles.is_empty() {
 			return;
 		}
@@ -1126,6 +1128,7 @@ impl MessagingUi {
 				for tile in &tiles[first..first + in_row] {
 					let rect = egui::Rect::from_min_size(egui::pos2(x, y), size);
 					x += size.x + TILE_GAP;
+					let rect = self.seat_glide(ui.ctx(), tile, channel, rect, changed);
 					if let Some(focus) = self.tile(ui, state, channel, tile, rect, frameless, false)
 					{
 						toggle = Some(focus);
@@ -1608,44 +1611,51 @@ impl MessagingUi {
 				.ringing(entry.channel)
 				.contains(&entry.participant.user);
 		let offset = if compact || frameless { 0.0 } else { 10.0 };
-		// Joining: the own avatar rests dimmed and breathing while a comet circles just
-		// inside its edge. Once connected the comet closes into a ring that turns from the
-		// accent to green and fades as the avatar brightens with a small lift, in time with
-		// the join sound. Everything stays within the avatar, so a tight stage never crops it.
+		// A seat waits, smaller and faded, while its own call connects (a comet circles inside
+		// the avatar edge) or while it is only being rung (it beats with each ring). It arrives
+		// in time with the join chime: the ring closes on the first note, the avatar springs to
+		// full size on the second and a soft halo spreads around it.
 		let joining = own && video.is_none() && call.is_some_and(|call| !call.phase.connected());
-		let settled = if own {
-			ui.ctx().animate_bool_with_time(
-				egui::Id::unique(("join-settle", entry.channel)),
-				!joining,
-				JOIN_SETTLE_SECS,
-			)
-		} else {
-			1.0
-		};
-		let scale = if joining {
-			let time = ui.input(|input| input.time);
-			0.975 + 0.025 * (time * 3.6).cos() as f32
-		} else {
-			1.0 + 0.04 * (settled * std::f32::consts::PI).sin()
-		};
+		let waiting = joining || inactive;
 		let avatar_rect = egui::Rect::from_center_size(
 			rect.center() - egui::vec2(0.0, offset),
 			egui::Vec2::splat(avatar_size),
 		);
+		let motion = self.seat_motion(ui.ctx(), entry, waiting, avatar_rect);
+		let glow = self.call_glow(ui);
+		let rest = if own { 0.55 } else { 0.45 };
+		let ripples = self
+			.voice_ring_epoch
+			.filter(|_| ringing && video.is_none())
+			.map(|epoch| ring_ripples(ui.ctx(), ui.input(|input| input.time) - epoch))
+			.unwrap_or_default();
+		let (scale, opacity) = if let Some(elapsed) = motion.arrived {
+			let lit = ((elapsed - CUE_LATENCY) / 0.18).clamp(0.0, 1.0);
+			(
+				arrival_scale(elapsed),
+				rest + (1.0 - rest) * egui::emath::easing::cubic_out(lit),
+			)
+		} else if waiting {
+			let beat: f32 = ripples
+				.iter()
+				.flatten()
+				.map(|ripple| 0.02 * (-9.0 * ripple).exp())
+				.sum();
+			(WAITING_SCALE + beat, rest)
+		} else {
+			(1.0, 1.0)
+		};
 		let mut avatar_ui = ui.new_child(egui::UiBuilder::new().max_rect(
 			egui::Rect::from_center_size(avatar_rect.center(), avatar_rect.size() * scale),
 		));
-		if video.is_some() {
-			avatar_ui.set_opacity(0.0);
-		} else if ringing {
-			// Only a ringing recipient keeps a faded seat before joining.
-			avatar_ui.set_opacity(0.45);
-		} else if own {
-			let lit = egui::emath::easing::cubic_out(settled);
-			avatar_ui.set_opacity(0.72 + 0.28 * lit);
-		}
-		if ringing && video.is_none() {
-			ringing_pulse(ui, avatar_rect, rect);
+		avatar_ui.set_opacity(if video.is_some() {
+			0.0
+		} else {
+			opacity * motion.appear
+		});
+		let halo = self.halo_painter(ui);
+		for ripple in ripples.into_iter().flatten() {
+			self::halo(&halo, avatar_rect, glow, ripple, 0.5);
 		}
 		let avatar_size = avatar_size * scale;
 		let avatar = if let Some(user) = user {
@@ -1684,11 +1694,11 @@ impl MessagingUi {
 				egui::Color32::WHITE,
 			);
 		}
-		if own && video.is_none() {
+		if video.is_none() {
 			if joining {
-				connecting_comet(ui, avatar.rect, colors.accent);
-			} else if settled < 1.0 {
-				join_ring(ui, avatar.rect, colors.accent, colors.positive, settled);
+				connecting_comet(ui, avatar.rect, glow, 0.0);
+			} else if let Some(elapsed) = motion.arrived {
+				arrival_rings(ui, &halo, avatar.rect, glow, elapsed, own);
 			}
 		}
 		if silenced.is_none() && speaking {
@@ -3499,6 +3509,293 @@ impl MessagingUi {
 			.or_else(|| join_stage(state))
 	}
 
+	/// The direct-message stage is folding away in the open conversation. It keeps the
+	/// conversation header until it has.
+	pub(super) fn stage_closing(&self, ui: &egui::Ui, selected: Option<Id>) -> bool {
+		let motion = &self.voice_stage;
+		let now = ui.input(|input| input.time);
+		motion.channel == selected
+			&& !motion.shot.shapes.is_empty()
+			&& (motion.shown || motion.closed.is_some_and(|at| now - at < STAGE_SWEEP_SECS))
+	}
+
+	/// Opening progress (0 to 1) of the direct-message stage. The stage unfolds from the
+	/// header when a call appears in the open conversation and folds back when it ends;
+	/// switching conversations does neither.
+	fn stage_sweep(&mut self, ui: &egui::Ui, selected: Option<Id>, showing: bool) -> f32 {
+		let now = ui.input(|input| input.time);
+		let motion = &mut self.voice_stage;
+		if motion.channel != selected {
+			*motion = StageMotion {
+				channel: selected,
+				shown: showing,
+				..StageMotion::default()
+			};
+		}
+		if showing && !motion.shown {
+			motion.opened = Some(now);
+		}
+		if showing {
+			motion.closed = None;
+		} else if motion.shown && !motion.shot.shapes.is_empty() {
+			motion.closed = Some(now);
+		}
+		motion.shown = showing;
+		let open = motion
+			.opened
+			.map_or(1.0, |at| ((now - at) / STAGE_SWEEP_SECS) as f32);
+		if open >= 1.0 {
+			motion.opened = None;
+			return 1.0;
+		}
+		ui.ctx().request_repaint();
+		open
+	}
+
+	/// The stage's last frame folding back into the header once its call ended, while the
+	/// leave chime plays: the seats and bar fade as the stage shrinks.
+	fn closing_stage(
+		&mut self,
+		ui: &mut egui::Ui,
+		state: &mut State,
+		header: Option<(bool, bool, bool)>,
+		commands: &mut Vec<Command>,
+	) {
+		let Some(at) = self.voice_stage.closed else {
+			return;
+		};
+		let t = ((ui.input(|input| input.time) - at) / STAGE_SWEEP_SECS) as f32;
+		if t >= 1.0 {
+			self.voice_stage.closed = None;
+			self.voice_stage.shot.shapes.clear();
+			return;
+		}
+		ui.ctx().request_repaint();
+		let shot = std::mem::take(&mut self.voice_stage.shot);
+		let fold = egui::emath::easing::cubic_in_out(t);
+		// The stage colour gives way to the conversation over the last part of the fold.
+		let fill = 1.0 - ((t - 0.6) / 0.4).clamp(0.0, 1.0);
+		egui::Panel::top("dm-call-closing")
+			.exact_size(shot.header + (shot.height - shot.header) * (1.0 - fold))
+			.show_separator_line(false)
+			.frame(egui::Frame::new().fill(STAGE_FILL.gamma_multiply(fill)))
+			.show(ui, |ui| {
+				let rect = ui.max_rect();
+				ui.expand_to_include_rect(rect);
+				let mut painter = ui.painter().clone();
+				painter.set_opacity(1.0 - egui::emath::easing::cubic_out((t / 0.55).min(1.0)));
+				for shape in &shot.shapes {
+					painter
+						.with_clip_rect(shape.clip_rect)
+						.add(shape.shape.clone());
+				}
+				self.stage_header(ui, state, rect, header, 1.0, commands);
+			});
+		self.voice_stage.shot = shot;
+	}
+
+	/// Rings and halos on call stages: the owner's call colour, else the theme accent lifted
+	/// until it stands out on the dark stage.
+	fn call_glow(&self, ui: &egui::Ui) -> egui::Color32 {
+		self.call_color.map_or_else(
+			|| stage_glow(design::palette(ui).accent),
+			|[r, g, b]| egui::Color32::from_rgb(r, g, b),
+		)
+	}
+
+	/// Painter for glows around avatars, clipped to the whole stage while one draws its seats,
+	/// so a halo is never cut at a tile's edge.
+	fn halo_painter(&self, ui: &egui::Ui) -> egui::Painter {
+		let mut painter = ui
+			.ctx()
+			.layer_painter(ui.layer_id())
+			.with_clip_rect(self.voice_halo_clip.unwrap_or_else(|| ui.clip_rect()));
+		painter.set_opacity(ui.opacity());
+		painter
+	}
+
+	/// Who sits on this stage now: forget stale seats, mark those gone since the last pass
+	/// so they fade out, and pick how the others glide to their new places: quickly to make
+	/// room for someone new, gently while someone who left is still fading.
+	fn seat_roster(
+		&mut self,
+		ctx: &egui::Context,
+		channel: Id,
+		entries: &[RosterEntry],
+	) -> Option<fn(f32) -> f32> {
+		let now = ctx.input(|input| input.time);
+		let pass = ctx.cumulative_pass_nr();
+		self.voice_seats.retain(|seat| {
+			seat.left
+				.map_or(seat.pass + 1 >= pass, |at| now - at < f64::from(LEAVE_SECS))
+		});
+		let mut left = false;
+		for seat in &mut self.voice_seats {
+			if seat.channel == channel
+				&& seat.left.is_none()
+				&& seat.pass < pass
+				&& !entries
+					.iter()
+					.any(|entry| entry.participant.user == seat.entry.participant.user)
+			{
+				seat.left = Some(now);
+				left = true;
+			}
+		}
+		let arrived = entries.iter().any(|entry| {
+			!self.voice_seats.iter().any(|seat| {
+				seat.channel == channel
+					&& seat.left.is_none()
+					&& seat.entry.participant.user == entry.participant.user
+			})
+		});
+		if left {
+			Some(egui::emath::easing::cubic_in_out)
+		} else if arrived {
+			Some(egui::emath::easing::cubic_out)
+		} else {
+			None
+		}
+	}
+
+	/// Arrival motion of one seat drawn this pass. Someone new on a stage that was already
+	/// showing fades in; the first seats of a stage just appear.
+	fn seat_motion(
+		&mut self,
+		ctx: &egui::Context,
+		entry: &RosterEntry,
+		waiting: bool,
+		avatar: egui::Rect,
+	) -> SeatMotion {
+		let now = ctx.input(|input| input.time);
+		let (channel, user) = (entry.channel, entry.participant.user);
+		let showing = self.voice_seats.iter().any(|seat| {
+			seat.channel == channel && seat.left.is_none() && seat.entry.participant.user != user
+		});
+		let index = self.voice_seats.iter().position(|seat| {
+			seat.channel == channel && seat.left.is_none() && seat.entry.participant.user == user
+		});
+		let seat = if let Some(index) = index {
+			let seat = &mut self.voice_seats[index];
+			if seat.waiting && !waiting {
+				seat.arrived = Some(now);
+			}
+			seat.entry.participant = entry.participant;
+			seat
+		} else {
+			let x = avatar.center().x;
+			self.voice_seats.push(Seat {
+				channel,
+				entry: entry.clone(),
+				avatar,
+				pass: 0,
+				waiting,
+				arrived: (showing && !waiting).then_some(now),
+				shown: showing.then_some(now),
+				left: None,
+				x,
+				from: x,
+				glide: now - f64::from(GLIDE_SECS),
+				ease: egui::emath::easing::cubic_out,
+			});
+			self.voice_seats.last_mut().expect("seat added")
+		};
+		seat.avatar = avatar;
+		seat.pass = ctx.cumulative_pass_nr();
+		seat.waiting = waiting;
+		let arrived = seat
+			.arrived
+			.map(|at| (now - at) as f32)
+			.filter(|elapsed| *elapsed < ARRIVE_SECS);
+		// A new seat fades in once the others have begun to make room for it.
+		let appear = seat.shown.map_or(1.0, |at| {
+			egui::emath::easing::cubic_out(((now - at) as f32 - 0.08).max(0.0) / APPEAR_SECS)
+				.min(1.0)
+		});
+		if arrived.is_some() || appear < 1.0 {
+			ctx.request_repaint();
+		}
+		SeatMotion { arrived, appear }
+	}
+
+	/// Seats slide to their new places when someone joins or leaves instead of jumping; a
+	/// resized window moves them at once.
+	fn seat_glide(
+		&mut self,
+		ctx: &egui::Context,
+		tile: &Tile<'_>,
+		channel: Id,
+		rect: egui::Rect,
+		changed: Option<fn(f32) -> f32>,
+	) -> egui::Rect {
+		let Tile::Participant(entry) = tile else {
+			return rect;
+		};
+		let Some(seat) = self.voice_seats.iter_mut().find(|seat| {
+			seat.channel == channel
+				&& seat.left.is_none()
+				&& seat.entry.participant.user == entry.participant.user
+		}) else {
+			return rect;
+		};
+		let now = ctx.input(|input| input.time);
+		let place = |seat: &Seat| {
+			let t = ((now - seat.glide) as f32 / GLIDE_SECS).clamp(0.0, 1.0);
+			(seat.from + (seat.x - seat.from) * (seat.ease)(t), t)
+		};
+		let target = rect.center().x;
+		if (target - seat.x).abs() > 0.5 {
+			seat.from = if changed.is_some() {
+				place(seat).0
+			} else {
+				target
+			};
+			seat.ease = changed.unwrap_or(seat.ease);
+			seat.x = target;
+			seat.glide = now;
+		}
+		let (x, t) = place(seat);
+		if t < 1.0 && seat.from != seat.x {
+			ctx.request_repaint();
+		}
+		rect.translate(egui::vec2(x - target, 0.0))
+	}
+
+	/// Seats that left fade and shrink where they sat.
+	fn departed_seats(&mut self, ui: &mut egui::Ui, state: &State, channel: Id) {
+		let now = ui.input(|input| input.time);
+		let gone: Vec<_> = self
+			.voice_seats
+			.iter()
+			.filter(|seat| seat.channel == channel)
+			.filter_map(|seat| {
+				let t = ((now - seat.left?) as f32 / LEAVE_SECS).min(1.0);
+				let size = seat.avatar.size() * (1.0 - 0.12 * egui::emath::easing::cubic_in(t));
+				let rest = if seat.waiting { 0.5 } else { 1.0 };
+				Some((
+					seat.entry.clone(),
+					egui::Rect::from_center_size(seat.avatar.center(), size),
+					rest * (1.0 - egui::emath::easing::cubic_out(t)),
+				))
+			})
+			.collect();
+		if gone.is_empty() {
+			return;
+		}
+		ui.ctx().request_repaint();
+		for (entry, rect, opacity) in gone {
+			let (user, name) = resolve_member(state, &entry);
+			let mut seat_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+			seat_ui.set_opacity(opacity);
+			if let Some(user) = user {
+				self.avatars
+					.show(&mut seat_ui, user, rect.width(), state.demo);
+			} else {
+				design::avatar(&mut seat_ui, name, rect.width());
+			}
+		}
+	}
+
 	/// The conversation header drawn on the stage, which stays black in every theme.
 	fn stage_header(
 		&mut self,
@@ -3540,6 +3837,7 @@ impl MessagingUi {
 		state: &mut State,
 		channel: Id,
 		header: Option<(bool, bool, bool)>,
+		open: f32,
 		commands: &mut Vec<Command>,
 	) {
 		let colors = design::palette(ui);
@@ -3547,19 +3845,27 @@ impl MessagingUi {
 		let unavailable = self.call_unavailable(state, channel);
 		let entries = join_participants(state, channel);
 		let header_height = if header.is_some() { 48.0 } else { 0.0 };
+		let full = header_height
+			+ STAGE_MARGIN
+			+ FRAMELESS_HEIGHT
+			+ TILE_GAP
+			+ CONTROL_HEIGHT
+			+ STAGE_MARGIN;
 		egui::Panel::top("dm-call-join")
 			.exact_size(
-				header_height
-					+ STAGE_MARGIN + FRAMELESS_HEIGHT
-					+ TILE_GAP + CONTROL_HEIGHT
-					+ STAGE_MARGIN,
+				header_height + (full - header_height) * egui::emath::easing::cubic_out(open),
 			)
 			.show_separator_line(false)
 			.frame(egui::Frame::new().fill(STAGE_FILL))
 			.show(ui, |ui| {
-				let rect = ui.max_rect();
-				ui.expand_to_include_rect(rect);
+				let visible = ui.max_rect();
+				ui.expand_to_include_rect(visible);
+				ui.set_clip_rect(visible.intersect(ui.clip_rect()));
+				let rect =
+					egui::Rect::from_min_size(visible.min, egui::vec2(visible.width(), full));
+				let content = egui::emath::easing::cubic_out((open / 0.7).min(1.0));
 				self.stage_header(ui, state, rect, header, 1.0, commands);
+				let first = ui.painter().add(egui::Shape::Noop);
 				let bar_top = rect.bottom() - STAGE_MARGIN - CONTROL_HEIGHT;
 				let body = egui::Rect::from_min_max(
 					egui::pos2(
@@ -3574,7 +3880,10 @@ impl MessagingUi {
 						.layout(egui::Layout::top_down(egui::Align::Min)),
 				);
 				body_ui.set_clip_rect(body.intersect(ui.clip_rect()));
+				body_ui.set_opacity(content);
+				self.voice_halo_clip = Some(visible);
 				self.participant_tiles(&mut body_ui, state, channel, &entries, true);
+				self.voice_halo_clip = None;
 				let count = if incoming { 3.0 } else { 2.0 };
 				let width = JOIN_WIDTH * count + BAR_GAP * (count - 1.0);
 				let mut bar_ui = ui.new_child(
@@ -3586,6 +3895,7 @@ impl MessagingUi {
 						.layout(egui::Layout::left_to_right(egui::Align::Center)),
 				);
 				bar_ui.spacing_mut().item_spacing.x = BAR_GAP;
+				bar_ui.set_opacity(content);
 				let video = call_action(
 					&mut bar_ui,
 					crate::icons::Icon::Video,
@@ -3624,6 +3934,8 @@ impl MessagingUi {
 				if video.clicked() || voice.clicked() {
 					self.request_call(state, channel, false, commands);
 				}
+				self.voice_stage
+					.capture(ui, first, visible.height(), header_height);
 			});
 	}
 
@@ -3665,13 +3977,16 @@ impl MessagingUi {
 		let colors = design::palette(ui);
 		let selected = state.selected;
 		self.apply_camera_on_join(state);
-		if let Some(channel) = state
+		let active = state
 			.voice
 			.active
 			.as_ref()
 			.filter(|call| call.guild.is_none() && Some(call.channel) == selected)
-			.map(|call| call.channel)
-		{
+			.map(|call| call.channel);
+		let join = join_stage(state);
+		let open = self.stage_sweep(ui, selected, active.or(join).is_some());
+		let header_height = if header.is_some() { 48.0 } else { 0.0 };
+		if let Some(channel) = active {
 			let stage = self.stage_shows_video(state, channel) || state.is_group_dm(channel);
 			// The stage also carries the conversation header when it draws one.
 			let height = if stage {
@@ -3696,17 +4011,43 @@ impl MessagingUi {
 			// panel's size, so a frame with little room (opening the call while the join stage
 			// still took space) used to leave the avatars squeezed for the rest of the session.
 			let minimum = if stage { 180.0 } else { height.min(maximum) };
-			egui::Panel::top(id)
-				.resizable(true)
-				.default_size(height)
-				.size_range(minimum..=maximum)
+			// A new call unfolds the stage from the header. The sweep draws a fixed-size panel
+			// under its own id, so the real one keeps the size the owner dragged it to.
+			let full = egui::containers::panel::PanelState::load(
+				ui.ctx(),
+				ui.scope_id().with_salt(egui::IdSalt::new(id)),
+			)
+			.map_or(height, |panel| panel.size().y)
+			.clamp(minimum, maximum);
+			let panel = if open < 1.0 {
+				egui::Panel::top((id, "opening")).exact_size(
+					header_height + (full - header_height) * egui::emath::easing::cubic_out(open),
+				)
+			} else {
+				egui::Panel::top(id)
+					.resizable(true)
+					.default_size(height)
+					.size_range(minimum..=maximum)
+			};
+			panel
 				.show_separator_line(false)
 				.frame(egui::Frame::new().fill(STAGE_FILL))
 				.show(ui, |ui| {
-					let rect = ui.max_rect();
+					let visible = ui.max_rect();
 					// The children below do not grow this Ui; claim the whole panel so its
 					// background follows a resize and egui keeps the dragged size.
-					ui.expand_to_include_rect(rect);
+					ui.expand_to_include_rect(visible);
+					ui.set_clip_rect(visible.intersect(ui.clip_rect()));
+					// While it opens, the stage is laid out at full size and revealed from the top.
+					let rect = egui::Rect::from_min_size(
+						visible.min,
+						egui::vec2(
+							visible.width(),
+							if open < 1.0 { full } else { visible.height() },
+						),
+					);
+					let content = egui::emath::easing::cubic_out((open / 0.7).min(1.0));
+					let first = ui.painter().add(egui::Shape::Noop);
 					let reveal = chrome_reveal(ui, rect, "dm-call-chrome");
 					// The header and the bar keep their own strips beside the avatars, so they
 					// hide only over an enlarged video, as in Discord.
@@ -3728,6 +4069,7 @@ impl MessagingUi {
 							.layout(egui::Layout::top_down(egui::Align::Min)),
 					);
 					notice_ui.set_clip_rect(notice_rect.intersect(ui.clip_rect()));
+					notice_ui.set_opacity(content);
 					stage_notices(&mut notice_ui, &notices);
 					// Without notices the avatars may use the whole height of a shrunken panel.
 					let body_top = if notices.is_empty() {
@@ -3761,7 +4103,9 @@ impl MessagingUi {
 							.layout(egui::Layout::top_down(egui::Align::Min)),
 					);
 					body_ui.set_clip_rect(body.intersect(ui.clip_rect()));
+					body_ui.set_opacity(content);
 					self.voice_chrome_hidden = 1.0 - reveal;
+					self.voice_halo_clip = Some(visible);
 					self.participant_tiles(
 						&mut body_ui,
 						state,
@@ -3769,12 +4113,12 @@ impl MessagingUi {
 						&stage_participants(state, channel),
 						true,
 					);
+					self.voice_halo_clip = None;
 					self.voice_chrome_hidden = 0.0;
 					if self.voice_focus.is_some() {
 						chrome_shade(ui, rect, 72.0, true, reveal);
 						chrome_shade(ui, rect, 96.0, false, reveal);
 					}
-					self.stage_header(ui, state, rect, header, chrome, commands);
 					let bar = egui::Rect::from_min_max(
 						egui::pos2(rect.left(), rect.bottom() - CONTROL_HEIGHT - STAGE_MARGIN),
 						egui::pos2(rect.right(), rect.bottom() - STAGE_MARGIN),
@@ -3784,14 +4128,18 @@ impl MessagingUi {
 							.max_rect(bar)
 							.layout(egui::Layout::left_to_right(egui::Align::Center)),
 					);
-					bar_ui.set_opacity(chrome);
+					bar_ui.set_opacity(chrome * content);
 					self.call_controls(&mut bar_ui, state, channel);
+					self.voice_stage
+						.capture(ui, first, visible.height(), header_height);
+					self.stage_header(ui, state, rect, header, chrome, commands);
 				});
 			self.apply_watch_request(state);
 		}
-		let join = join_stage(state);
 		if let Some(channel) = join {
-			self.call_join_stage(ui, state, channel, header, commands);
+			self.call_join_stage(ui, state, channel, header, open, commands);
+		} else if active.is_none() {
+			self.closing_stage(ui, state, header, commands);
 		}
 		// A call ringing in another conversation keeps the slim banner.
 		if let Some(channel) = state
@@ -3945,8 +4293,7 @@ impl MessagingUi {
 						ui.allocate_exact_size(egui::Vec2::splat(40.0), egui::Sense::hover());
 					// While connecting the tile breathes, so the wait reads as progress.
 					let breath = if settled < 1.0 {
-						ui.ctx()
-							.request_repaint_after(std::time::Duration::from_millis(33));
+						ui.ctx().request_repaint();
 						let time = ui.input(|input| input.time);
 						(1.0 - settled) * (0.5 + 0.5 * (time * 4.0).sin() as f32)
 					} else {
@@ -4545,15 +4892,192 @@ fn chrome_shade(ui: &egui::Ui, stage: egui::Rect, height: f32, top: bool, reveal
 	ui.painter().add(mesh);
 }
 
-/// Length of the own avatar's settle once its call connects.
-const JOIN_SETTLE_SECS: f32 = 0.7;
 /// Width of the join rings, the same as the speaking ring's.
 const JOIN_RING: f32 = 3.0;
+/// Seconds from asking for a cue until it is heard (a fresh output stream plus the device
+/// buffer). Visual beats aim at the audible notes.
+const CUE_LATENCY: f32 = 0.03;
+/// Discord's join chime has two notes 85 ms apart: the ring closes on the first and the
+/// avatar springs on the second.
+const CHIME_NOTE: f32 = 0.085;
+/// Length of a seat's arrival: ring, spring and halo.
+const ARRIVE_SECS: f32 = 0.8;
+/// Fade-in of a waiting seat that appears on a stage already showing.
+const APPEAR_SECS: f32 = 0.25;
+/// Fade-out of a seat whose person left.
+const LEAVE_SECS: f32 = 0.28;
+/// Slide of the remaining seats after someone joins or leaves.
+const GLIDE_SECS: f32 = 0.32;
+/// Size of a seat that is connecting or only being rung, against its full size.
+const WAITING_SCALE: f32 = 0.92;
+/// Opening and closing of the direct-message stage.
+const STAGE_SWEEP_SECS: f64 = 0.32;
+/// Discord's outgoing ring cycle: one burst of notes at each offset; the desktop's ring
+/// timer uses the same three seconds.
+const OUTGOING_RING_CYCLE: f64 = 3.0;
+const RING_BURSTS: [f64; 2] = [0.24, 0.93];
+/// How long one ring pulse takes to spread and fade.
+const RIPPLE_SECS: f64 = 1.1;
+
+/// One seat on a call stage, remembered across frames so arrivals and departures animate.
+pub(crate) struct Seat {
+	channel: Id,
+	entry: RosterEntry,
+	/// Where its avatar was last drawn, at full size.
+	avatar: egui::Rect,
+	/// Pass in which it was last drawn.
+	pass: u64,
+	/// Connecting (the own seat) or only being rung.
+	waiting: bool,
+	/// When it arrived on a stage that was already showing.
+	arrived: Option<f64>,
+	/// When it appeared on a stage that was already showing.
+	shown: Option<f64>,
+	/// When its person left; the seat then fades out where it sat.
+	left: Option<f64>,
+	/// Horizontal glide from `from` to the layout's `x`, started at `glide`.
+	x: f32,
+	from: f32,
+	glide: f64,
+	ease: fn(f32) -> f32,
+}
+
+struct SeatMotion {
+	/// Seconds since the seat arrived, while its arrival plays.
+	arrived: Option<f32>,
+	/// Fade-in of a seat new to the stage.
+	appear: f32,
+}
+
+/// Opening and closing of the direct-message stage in the open conversation.
+#[derive(Default)]
+pub(crate) struct StageMotion {
+	channel: Option<Id>,
+	/// The stage was drawn in the previous pass.
+	shown: bool,
+	opened: Option<f64>,
+	closed: Option<f64>,
+	/// The last drawn stage, replayed while it closes.
+	shot: Shot,
+}
+
+#[derive(Default)]
+struct Shot {
+	height: f32,
+	header: f32,
+	/// Shapes of the seats and the bar; the header stays live.
+	shapes: Vec<egui::epaint::ClippedShape>,
+}
+
+impl StageMotion {
+	/// Keep the seats and bar painted after `first` this frame for the closing fold.
+	fn capture(&mut self, ui: &egui::Ui, first: egui::layers::ShapeIdx, height: f32, header: f32) {
+		let shot = &mut self.shot;
+		shot.height = height;
+		shot.header = header;
+		shot.shapes.clear();
+		ui.ctx().graphics(|graphics| {
+			if let Some(list) = graphics.get(ui.layer_id()) {
+				// ponytail: capped copy of one frame's stage shapes, ample for 64 seats.
+				shot.shapes
+					.extend(list.all_entries().skip(first.0 + 1).take(4096).cloned());
+			}
+		});
+	}
+}
+
+/// The theme accent lifted toward white until it stands out on the dark stage.
+pub(crate) fn stage_glow(accent: egui::Color32) -> egui::Color32 {
+	let mut glow = accent.to_opaque();
+	for _ in 0..8 {
+		if design::contrast(glow, STAGE_FILL) >= 6.0 {
+			break;
+		}
+		glow = glow.lerp_to_gamma(egui::Color32::WHITE, 0.12);
+	}
+	glow
+}
+
+/// Seat scale `elapsed` seconds into its arrival: an underdamped spring from the waiting size
+/// that overshoots by about two percent at the chime's second note and settles in under half
+/// a second.
+fn arrival_scale(elapsed: f32) -> f32 {
+	const OMEGA: f32 = 24.0;
+	const ZETA: f32 = 0.42;
+	let t = (elapsed - CUE_LATENCY).max(0.0);
+	let damped = OMEGA * (1.0 - ZETA * ZETA).sqrt();
+	let envelope = (-ZETA * OMEGA * t).exp();
+	1.0 - (1.0 - WAITING_SCALE)
+		* envelope
+		* ((damped * t).cos() + ZETA * OMEGA / damped * (damped * t).sin())
+}
+
+/// Progress (0 to 1) of the ring pulses spreading `since` seconds into the outgoing ring
+/// cycle, one per burst of the ring sound. Repaints only while one spreads.
+fn ring_ripples(ctx: &egui::Context, since: f64) -> [Option<f32>; 2] {
+	let ripples = RING_BURSTS.map(|burst| {
+		let after = since - burst - f64::from(CUE_LATENCY);
+		(after >= 0.0)
+			.then(|| after % OUTGOING_RING_CYCLE)
+			.filter(|after| *after < RIPPLE_SECS)
+			.map(|after| (after / RIPPLE_SECS) as f32)
+	});
+	if ripples.iter().any(Option::is_some) {
+		ctx.request_repaint();
+	} else {
+		let next = RING_BURSTS
+			.iter()
+			.map(|burst| (burst + f64::from(CUE_LATENCY) - since).rem_euclid(OUTGOING_RING_CYCLE))
+			.fold(OUTGOING_RING_CYCLE, f64::min);
+		ctx.request_repaint_after(std::time::Duration::from_secs_f64(next));
+	}
+	ripples
+}
+
+/// A soft glow hugging the avatar: a band fading from `color` at the avatar edge to nothing
+/// further out, spreading with `progress` while it fades. It never spreads past the painter's
+/// clip, so it is never cut off.
+fn halo(
+	painter: &egui::Painter,
+	avatar: egui::Rect,
+	color: egui::Color32,
+	progress: f32,
+	strength: f32,
+) {
+	const SEGMENTS: u32 = 72;
+	let clip = painter.clip_rect();
+	let room = (avatar.top() - clip.top())
+		.min(clip.bottom() - avatar.bottom())
+		.min(avatar.left() - clip.left())
+		.min(clip.right() - avatar.right())
+		.clamp(0.0, 14.0);
+	let alpha = strength * (1.0 - progress).powi(2);
+	if room < 2.0 || alpha < 0.01 {
+		return;
+	}
+	let center = avatar.center();
+	let inner = avatar.width() * 0.5;
+	let outer = inner + 2.0 + (room - 2.0) * egui::emath::easing::cubic_out(progress);
+	let solid = color.gamma_multiply(alpha);
+	let mut mesh = egui::Mesh::default();
+	for step in 0..=SEGMENTS {
+		let angle = std::f32::consts::TAU * step as f32 / SEGMENTS as f32;
+		let direction = egui::vec2(angle.cos(), angle.sin());
+		mesh.colored_vertex(center + direction * inner, solid);
+		mesh.colored_vertex(center + direction * outer, egui::Color32::TRANSPARENT);
+		if step > 0 {
+			let base = step * 2;
+			mesh.add_triangle(base - 2, base - 1, base);
+			mesh.add_triangle(base - 1, base, base + 1);
+		}
+	}
+	painter.add(mesh);
+}
 
 /// The own avatar while its call connects: a comet with a fading tail circling just inside
-/// the edge over a faint track, in the accent.
-fn connecting_comet(ui: &egui::Ui, avatar: egui::Rect, color: egui::Color32) {
-	const SEGMENTS: usize = 48;
+/// the edge over a faint track. `close` (0 to 1) grows the tail into an even, full ring.
+fn connecting_comet(ui: &egui::Ui, avatar: egui::Rect, color: egui::Color32, close: f32) {
+	const SEGMENTS: usize = 64;
 	const TAIL: f32 = 4.6;
 	let time = ui.input(|input| input.time);
 	let head = (time * 4.2 % std::f64::consts::TAU) as f32;
@@ -4564,13 +5088,14 @@ fn connecting_comet(ui: &egui::Ui, avatar: egui::Rect, color: egui::Color32) {
 	painter.circle_stroke(
 		center,
 		radius,
-		egui::Stroke::new(JOIN_RING, color.gamma_multiply(0.14)),
+		egui::Stroke::new(JOIN_RING, color.gamma_multiply(0.14 * (1.0 - close))),
 	);
 	// One gradient stroke: the tail warms toward a lighter tip and fades out behind it.
 	let tip = design::mix(color, egui::Color32::WHITE, 0.45);
-	let tail = head - TAIL;
+	let length = TAIL + (std::f32::consts::TAU - 0.01 - TAIL) * close;
+	let tail = head - length;
 	let points = (0..=SEGMENTS)
-		.map(|step| point(tail + TAIL * step as f32 / SEGMENTS as f32))
+		.map(|step| point(tail + length * step as f32 / SEGMENTS as f32))
 		.collect();
 	painter.add(egui::Shape::line(
 		points,
@@ -4578,64 +5103,70 @@ fn connecting_comet(ui: &egui::Ui, avatar: egui::Rect, color: egui::Color32) {
 			let angle = (pos.y - center.y).atan2(pos.x - center.x);
 			// Just before the tail's start wraps to a full turn; that end stays dark.
 			let swept = (angle - tail).rem_euclid(std::f32::consts::TAU);
-			let along = if swept > TAIL + 0.3 {
+			let along = if swept > length + 0.3 {
 				0.0
 			} else {
-				(swept / TAIL).min(1.0)
+				(swept / length).min(1.0)
 			};
 			color
-				.lerp_to_gamma(tip, along * along)
-				.gamma_multiply(along.powf(1.6))
+				.lerp_to_gamma(tip, along * along * (1.0 - close))
+				.gamma_multiply(along.powf(1.6) * (1.0 - close) + close)
 		}),
 	));
 	// A soft glow and a bright core at the head.
 	let head = point(head);
-	painter.circle_filled(head, JOIN_RING * 2.0, color.gamma_multiply(0.18));
-	painter.circle_filled(head, JOIN_RING * 1.3, color.gamma_multiply(0.45));
-	painter.circle_filled(head, JOIN_RING * 0.8, tip);
-	// Connecting lasts a second or two; 60 fps keeps the comet smooth for that long.
-	ui.ctx()
-		.request_repaint_after(std::time::Duration::from_millis(16));
+	let lit = 1.0 - close;
+	painter.circle_filled(head, JOIN_RING * 2.0, color.gamma_multiply(0.18 * lit));
+	painter.circle_filled(head, JOIN_RING * 1.3, color.gamma_multiply(0.45 * lit));
+	painter.circle_filled(head, JOIN_RING * 0.8, tip.gamma_multiply(lit));
+	// Every frame, like egui's own animations: a timer would round to every other vsync.
+	ui.ctx().request_repaint();
 }
 
-/// The comet's ring once connected (`settled` 0 to 1): it closes, turns from the accent to
-/// green, then fades away.
-fn join_ring(
+/// A seat arriving (`elapsed` seconds ago): its ring closes on the chime's first note (the
+/// own seat's comet closes on itself, someone picking up gets a ring drawn around them), then
+/// flashes and fades while a halo spreads around the avatar.
+fn arrival_rings(
 	ui: &egui::Ui,
+	halo: &egui::Painter,
 	avatar: egui::Rect,
-	accent: egui::Color32,
-	positive: egui::Color32,
-	settled: f32,
+	color: egui::Color32,
+	elapsed: f32,
+	comet: bool,
 ) {
-	let turn = (settled / 0.35).min(1.0);
-	let fade = 1.0 - ((settled - 0.35) / 0.65).clamp(0.0, 1.0);
+	let closing = CUE_LATENCY + CHIME_NOTE;
+	if elapsed < closing {
+		let close = egui::emath::easing::cubic_in_out(elapsed / closing);
+		if comet {
+			connecting_comet(ui, avatar, color, close);
+		} else {
+			let center = avatar.center();
+			let radius = avatar.width() * 0.5 - JOIN_RING * 0.5;
+			let points = (0..=64)
+				.map(|step| {
+					let angle = -std::f32::consts::FRAC_PI_2
+						+ std::f32::consts::TAU * close * step as f32 / 64.0;
+					center + radius * egui::vec2(angle.cos(), angle.sin())
+				})
+				.collect();
+			ui.painter().add(egui::Shape::line(
+				points,
+				egui::Stroke::new(JOIN_RING, color),
+			));
+		}
+		return;
+	}
+	let since = elapsed - closing;
+	let fade = 1.0 - (since / 0.5).min(1.0);
 	ui.painter().circle_stroke(
 		avatar.center(),
 		avatar.width() * 0.5 - JOIN_RING * 0.5,
 		egui::Stroke::new(
 			JOIN_RING,
-			accent
-				.lerp_to_gamma(positive, egui::emath::easing::cubic_out(turn))
-				.gamma_multiply(egui::emath::easing::cubic_in_out(fade)),
+			design::mix(color, egui::Color32::WHITE, 0.6 * fade).gamma_multiply(fade * fade),
 		),
 	);
-}
-
-/// Discord's ringing seat: a grey ring breathing outward from the avatar, from just inside
-/// its edge to the edge of its tile, so a tight stage never crops it.
-fn ringing_pulse(ui: &egui::Ui, avatar: egui::Rect, tile: egui::Rect) {
-	const PERIOD: f64 = 1.6;
-	let phase = (ui.input(|input| input.time) % PERIOD / PERIOD) as f32;
-	let room = ((tile.height() - avatar.height()).min(tile.width() - avatar.width()) * 0.5 - 1.5)
-		.clamp(0.0, 18.0);
-	ui.painter().circle_stroke(
-		avatar.center(),
-		avatar.width() * 0.5 - 4.0 + phase * (4.0 + room),
-		egui::Stroke::new(3.0, STAGE_MUTED.gamma_multiply(0.9 * (1.0 - phase))),
-	);
-	// The pulse only needs a smooth 30 fps while someone is being rung.
-	ui.ctx()
-		.request_repaint_after(std::time::Duration::from_millis(33));
+	self::halo(halo, avatar, color, (since / 0.65).min(1.0), 0.55);
 }
 
 fn speaking_avatar(ui: &egui::Ui, avatar: &egui::Response, name: &str) {
@@ -4796,21 +5327,43 @@ fn call_action(
 }
 
 /// The selected conversation's call this device can answer or join, shown as a join stage.
+/// A call known to have nobody else in it is not one: after hanging up on an unanswered call,
+/// Discord's record outlives the call by a moment and used to show the person rung as if
+/// they had joined. A call whose members are not known yet still offers to join.
 fn join_stage(state: &State) -> Option<Id> {
+	let own = state.user.as_ref().map(|user| user.id);
 	state.selected.filter(|channel| {
 		state.can_view(*channel)
-			&& (state.voice.incoming == Some(*channel) || state.voice.has_dm_call(*channel))
-			&& state
-				.voice
-				.active
-				.as_ref()
-				.is_none_or(|call| call.channel != *channel)
+			&& (state.voice.incoming == Some(*channel)
+				|| (state.voice.has_dm_call(*channel)
+					&& state
+						.voice
+						.dm_call_participants()
+						.find(|(id, _)| id == channel)
+						.is_none_or(|(_, participants)| {
+							participants
+								.iter()
+								.any(|participant| Some(participant.user) != own)
+						}))) && state
+			.voice
+			.active
+			.as_ref()
+			.is_none_or(|call| call.channel != *channel)
 	})
 }
 
-/// Who a join stage shows: the call's known members, else the people it would ring.
+/// Who a join stage shows: the call's known members, else the people it would ring. This
+/// device is not in that call, so its own seat is only Discord's echo of a leave still on the
+/// way; it fades out instead of lingering.
 fn join_participants(state: &State, channel: Id) -> Vec<RosterEntry> {
-	let known = state.voice.dm_participants(channel);
+	let own = state.user.as_ref().map(|user| user.id);
+	let known: Vec<Participant> = state
+		.voice
+		.dm_participants(channel)
+		.iter()
+		.filter(|participant| Some(participant.user) != own)
+		.copied()
+		.collect();
 	let participants: Vec<Participant> = if known.is_empty() {
 		state
 			.channel(channel)
@@ -4831,7 +5384,7 @@ fn join_participants(state: &State, channel: Id) -> Vec<RosterEntry> {
 					.collect()
 			})
 	} else {
-		known.to_vec()
+		known
 	};
 	participants
 		.into_iter()
@@ -5913,6 +6466,84 @@ mod tests {
 				stop: false,
 			}));
 		assert!(inactive_recipient(&state, Id(22), Id(2)));
+	}
+
+	#[test]
+	fn arrivals_spring_on_the_chime_and_ring_pulses_follow_the_ring() {
+		assert!((arrival_scale(0.0) - WAITING_SCALE).abs() < 1e-6);
+		let samples: Vec<f32> = (0..100)
+			.map(|step| arrival_scale(step as f32 * 0.01))
+			.collect();
+		let (peak_at, peak) =
+			samples
+				.iter()
+				.enumerate()
+				.fold((0, 0.0_f32), |best, (index, scale)| {
+					if *scale > best.1 {
+						(index, *scale)
+					} else {
+						best
+					}
+				});
+		assert!((1.01..1.03).contains(&peak), "a small overshoot: {peak}");
+		assert!(
+			(0.12..0.24).contains(&(peak_at as f32 * 0.01)),
+			"peaks just after the second note"
+		);
+		assert!(
+			samples[50..]
+				.iter()
+				.all(|scale| (scale - 1.0).abs() < 0.003),
+			"settled by half a second"
+		);
+
+		let ctx = egui::Context::default();
+		let beat = |since: f64| ring_ripples(&ctx, since);
+		assert_eq!(beat(0.1), [None, None], "silent before the first burst");
+		let first = RING_BURSTS[0] + f64::from(CUE_LATENCY);
+		assert!(beat(first + 0.01)[0].is_some_and(|ripple| ripple < 0.05));
+		let second = RING_BURSTS[1] + f64::from(CUE_LATENCY);
+		assert!(beat(second + 0.01)[1].is_some_and(|ripple| ripple < 0.05));
+		assert!(
+			beat(first + OUTGOING_RING_CYCLE * 4.0 + 0.01)[0].is_some_and(|ripple| ripple < 0.05),
+			"later cycles stay on the beat"
+		);
+		assert_eq!(beat(2.5), [None, None], "a pause before the next cycle");
+	}
+
+	#[test]
+	fn hanging_up_on_an_unanswered_call_shows_no_join_stage() {
+		// Discord's record outlives an unanswered call by a moment; the person rung must not
+		// appear as if they had joined.
+		let mut state = test_support::existing_call_demo_state();
+		assert_eq!(
+			join_stage(&state),
+			Some(Id(22)),
+			"a call whose members are not known yet still offers to join"
+		);
+		state.demo = false;
+		for (members, shown) in [(vec![], false), (vec![Id(1)], false), (vec![Id(2)], true)] {
+			state.apply_voice(client_core::voice::Event::Call {
+				channel: Id(22),
+				ringing: Some(vec![]),
+				participants: Some(
+					members
+						.into_iter()
+						.map(|user| Participant {
+							user,
+							muted: false,
+							deafened: false,
+							server_muted: false,
+							server_deafened: false,
+							video: false,
+							streaming: false,
+						})
+						.collect(),
+				),
+				unavailable: false,
+			});
+			assert_eq!(join_stage(&state).is_some(), shown);
+		}
 	}
 
 	#[test]
