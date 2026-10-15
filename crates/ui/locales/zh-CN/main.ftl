@@ -4102,11 +4102,7 @@ voice-call-bar-join-call = 加入通话
 # Context: call_controls
 voice-call-controls-disconnect = 断开连接
 # Context: call_controls
-voice-call-controls-dismiss-call = 关闭通话
-# Context: call_controls
 voice-call-controls-leaving-is-unavailable-in-the-offline-preview = 离线预览中无法离开通话。
-# Context: call_failure
-voice-call-failure-copy-failure-reason = 复制失败原因
 # Context: camera_settings_content
 voice-camera-settings-content-camera-capture-is-unavailable-on-this-platform = 此平台无法使用摄像头。
 # Context: camera_settings_content
@@ -4183,8 +4179,6 @@ voice-voice-audio-controls-speakers = 扬声器
 voice-voice-card-section-camera-settings = 摄像头设置
 # Context: voice_card_section
 voice-voice-card-section-disconnect = 断开连接
-# Context: voice_card_section
-voice-voice-card-section-dismiss-call = 关闭通话
 # Context: voice_card_section
 voice-voice-card-section-microphone-unavailable-a-still-connected-choose-another-input-in-audio = 麦克风不可用 · 仍保持连接。请在音频设置改选其他输入。
 # Context: voice_channel_button
@@ -4540,7 +4534,6 @@ public-upload-error-conversation = 请先回到原对话，重新检查文件后
 public-upload-error-selection = 选择已更改；请重新检查文件后再公开上传
 public-upload-error-missing = 请重新选择文件后再公开上传
 
-voice-call-moved-to-another-client = 这台设备的通话会话已被取代
 
 # Synchronized favorite GIFs (unofficial account settings).
 gif-favorites-sync-refresh = 从 Discord 刷新

@@ -219,6 +219,8 @@ pub struct Voice {
 	camera_generation: u64,
 	camera_preview: Option<std::sync::Arc<std::sync::Mutex<CameraPicture>>>,
 	cues: CallCues,
+	/// Whether Discord's voice states name this Gateway session, reported once per run.
+	sessions_reported: bool,
 	device_scan: Option<mpsc::Receiver<Result<discord_voice::audio::DeviceList, &'static str>>>,
 	camera_scan: Option<mpsc::Receiver<Result<discord_voice::camera::DeviceList, &'static str>>>,
 	/// Remote camera textures behind `ui.voice_remote_video`, by user.
@@ -287,6 +289,16 @@ impl Voice {
 		self.poll_camera_devices(state.demo, ui, ctx);
 		self.poll_audio_devices(state.demo, ui, ctx);
 		self.poll_cues(state, ui, ctx);
+		if !self.sessions_reported
+			&& state.voice.media_plan().is_some()
+			&& std::env::var_os("LEECH_VOICE_DIAGNOSTICS").is_some_and(|value| value == "1")
+		{
+			self.sessions_reported = true;
+			eprintln!(
+				"[Leech voice Call] voice_session_is_gateway_session={}",
+				state.voice.sessions_verified()
+			);
+		}
 		if state.voice.simulated {
 			// The simulated Discord runs pretend media itself; nothing real opens.
 			ui.voice_camera_available = state.voice.camera_negotiated();

@@ -346,6 +346,8 @@ pub struct State {
 	pub preview: Option<StreamPreview>,
 	/// The offline demo drives calls against the simulated Discord instead of refusing them.
 	pub simulated: bool,
+	/// Why the call, share or watch last ended or reconnected, for the interface to show once.
+	pub notice: Option<&'static str>,
 	pub(crate) phone: phone::Phone,
 	/// The controller's clock: the latest time it was given. Actions run on it, so deadlines
 	/// never mix it with another clock.
@@ -382,6 +384,9 @@ impl State {
 			.iter()
 			.find(|(id, _)| *id == channel)
 			.map_or(&[], |(_, recipients)| recipients)
+	}
+	pub fn take_notice(&mut self) -> Option<&'static str> {
+		self.notice.take()
 	}
 	fn next_request(&mut self) -> u64 {
 		self.sequence = self.sequence.wrapping_add(1);
@@ -833,6 +838,7 @@ impl ClientState {
 					.is_some_and(|call| call.channel == channel)
 				{
 					self.status = message;
+					self.voice.notice = Some(message);
 					self.voice.ring_error = Some((channel, message));
 				}
 			}

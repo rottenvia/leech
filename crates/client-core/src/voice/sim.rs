@@ -88,6 +88,9 @@ pub struct Config {
 	pub silent: u64,
 	/// Rung private-call recipients join after this long; `None` leaves them ringing.
 	pub answer: Option<Duration>,
+	/// Own voice states name the Gateway session. Discord does not document this, so the
+	/// controller must also work when they never do.
+	pub sessions_match: bool,
 }
 impl Default for Config {
 	fn default() -> Self {
@@ -97,6 +100,7 @@ impl Default for Config {
 			ring_failures: 0,
 			silent: 100,
 			answer: None,
+			sessions_match: true,
 		}
 	}
 }
@@ -261,7 +265,12 @@ impl Discord {
 		let Some(owner) = state.owner() else {
 			return;
 		};
-		let session = (ours && voice.is_some()).then(|| Self::secret("session", self.session));
+		let session = Some(if ours {
+			Self::secret("session", self.session)
+		} else {
+			Self::secret("phone", self.session)
+		});
+		let ours = ours && self.config.sessions_match;
 		self.gateway(
 			now,
 			Event::State {

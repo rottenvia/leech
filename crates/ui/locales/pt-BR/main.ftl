@@ -4070,11 +4070,7 @@ voice-call-bar-join-call = Participar da chamada
 # Context: call_controls
 voice-call-controls-disconnect = Desconectar
 # Context: call_controls
-voice-call-controls-dismiss-call = Dispensar chamada
-# Context: call_controls
 voice-call-controls-leaving-is-unavailable-in-the-offline-preview = Sair não está disponível na visualização offline.
-# Context: call_failure
-voice-call-failure-copy-failure-reason = Motivo da falha na cópia
 # Context: camera_settings_content
 voice-camera-settings-content-camera-capture-is-unavailable-on-this-platform = A captura da câmera não está disponível nesta plataforma.
 # Context: camera_settings_content
@@ -4151,8 +4147,6 @@ voice-voice-audio-controls-speakers = Alto-falantes
 voice-voice-card-section-camera-settings = Configurações da câmera
 # Context: voice_card_section
 voice-voice-card-section-disconnect = Desconectar
-# Context: voice_card_section
-voice-voice-card-section-dismiss-call = Dispensar chamada
 # Context: voice_card_section
 voice-voice-card-section-microphone-unavailable-a-still-connected-choose-another-input-in-audio = Microfone indisponível · ainda conectado. Escolha outra entrada nas configurações de áudio.
 # Context: voice_channel_button
@@ -4453,7 +4447,6 @@ voice-recipient-ringing = Chamando…
 voice-recipient-not-in-call = Fora da chamada
 reconnect-now = Reconectar agora
 
-voice-call-moved-to-another-client = A sessão de chamada deste dispositivo foi substituída
 
 server-settings-page-safety = Configuração de segurança
 

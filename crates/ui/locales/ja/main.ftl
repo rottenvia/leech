@@ -4064,11 +4064,7 @@ voice-call-bar-join-call = 通話に参加する
 # Context: call_controls
 voice-call-controls-disconnect = 切断する
 # Context: call_controls
-voice-call-controls-dismiss-call = 通話を終了する
-# Context: call_controls
 voice-call-controls-leaving-is-unavailable-in-the-offline-preview = オフライン プレビューでは退席することはできません。
-# Context: call_failure
-voice-call-failure-copy-failure-reason = コピー失敗の理由
 # Context: camera_settings_content
 voice-camera-settings-content-camera-capture-is-unavailable-on-this-platform = このプラットフォームではカメラ キャプチャは利用できません。
 # Context: camera_settings_content
@@ -4145,8 +4141,6 @@ voice-voice-audio-controls-speakers = スピーカー
 voice-voice-card-section-camera-settings = カメラの設定
 # Context: voice_card_section
 voice-voice-card-section-disconnect = 切断する
-# Context: voice_card_section
-voice-voice-card-section-dismiss-call = 通話を終了する
 # Context: voice_card_section
 voice-voice-card-section-microphone-unavailable-a-still-connected-choose-another-input-in-audio = マイクが使用できません · 接続されたままです。オーディオ設定で別の入力を選択します。
 # Context: voice_channel_button
@@ -4439,7 +4433,6 @@ voice-recipient-ringing = 呼び出し中…
 voice-recipient-not-in-call = 通話に未参加
 reconnect-now = 今すぐ再接続
 
-voice-call-moved-to-another-client = このデバイスの通話セッションが置き換えられました
 
 server-settings-page-safety = 安全設定
 

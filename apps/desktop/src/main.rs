@@ -5396,6 +5396,11 @@ impl Desktop {
 		for command in commands {
 			self.command(Command::Voice(command));
 		}
+		if let Some(notice) = self.state.voice.take_notice() {
+			self.messaging
+				.toasts
+				.push(ui::design::Level::Info, ui::i18n::translate_if_key(notice));
+		}
 		if let Some(deadline) = self.state.voice.next_deadline() {
 			ctx.request_repaint_after(deadline.saturating_duration_since(now));
 		}

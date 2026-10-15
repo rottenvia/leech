@@ -190,6 +190,12 @@ pub(crate) struct Phone {
 	pub share: Share,
 	pub watch: Watch,
 	pub outbox: VecDeque<Command>,
+	/// An own voice state has named this Gateway session, so Discord ties voice states to
+	/// Gateway sessions and `ours` can be trusted alone.
+	pub matched: bool,
+	/// The last voice session this device accepted; it survives a reset of the link, so a
+	/// late state of ours is still recognised and corrected.
+	pub accepted: Option<Secret>,
 }
 impl Phone {
 	pub(crate) fn send(&mut self, command: Command) {
@@ -243,6 +249,10 @@ impl super::State {
 		let (id, streamer) = self.phone.watch.want?;
 		(self.phone.watch.stream.ready() && self.media_ready())
 			.then_some(WatchPlan { id, streamer })
+	}
+	/// An own voice state has named this Gateway session (see `own_voice_state`).
+	pub fn sessions_verified(&self) -> bool {
+		self.phone.matched
 	}
 	/// The call's media is connected, alone or with others.
 	pub fn media_ready(&self) -> bool {
@@ -311,6 +321,7 @@ impl ClientState {
 			&& let Some(message) = message
 		{
 			self.status = message;
+			self.voice.notice = Some(message);
 		}
 		self.voice.phone.ring = None;
 		self.voice.phone.retry = Retry::default();
@@ -320,12 +331,18 @@ impl ClientState {
 	}
 
 	pub(crate) fn end_share(&mut self, message: Option<&'static str>) {
+		if self.voice.phone.share.want.is_some() && message.is_some() {
+			self.voice.notice = message;
+		}
 		let share = &mut self.voice.phone.share;
 		share.want = None;
 		share.live = false;
 		share.status = message.unwrap_or("");
 	}
 	pub(crate) fn end_watch(&mut self, message: Option<&'static str>) {
+		if self.voice.phone.watch.want.is_some() && message.is_some() {
+			self.voice.notice = message;
+		}
 		let watch = &mut self.voice.phone.watch;
 		watch.want = None;
 		watch.live = false;
@@ -363,7 +380,13 @@ impl ClientState {
 		}
 	}
 
-	/// Own voice state for this account. `ours` is false when another device holds it.
+	/// Own voice state for this account. `ours` says it names this Gateway session.
+	///
+	/// Discord does not document that a voice state's session is the Gateway session that
+	/// joined. Once one has named it, `ours` decides alone. Until then a state counts as this
+	/// device's when it answers our own operation, names the voice session we accepted, or
+	/// is in the channel we asked for (the latest such state wins); only a state elsewhere
+	/// is another device of the same account.
 	pub(crate) fn own_voice_state(
 		&mut self,
 		ours: bool,
@@ -374,11 +397,31 @@ impl ClientState {
 	) {
 		let phone = &mut self.voice.phone;
 		let told = phone.wire.told;
-		if !ours {
-			// Another device of this account joined a call, so Discord moved the voice session
-			// there. An answer to our own operation still in flight decides first.
-			if channel.is_some() && phone.wire.pending.is_none() && told.channel.is_some() {
+		let known = session.as_ref().is_some_and(|session| {
+			[phone.link.session.as_ref(), phone.accepted.as_ref()]
+				.into_iter()
+				.flatten()
+				.any(|accepted| accepted.expose() == session.expose())
+		});
+		let answers = phone.wire.pending.is_some() && channel == told.channel;
+		phone.matched |= ours;
+		let mine = if phone.matched {
+			ours
+		} else {
+			ours || known || answers || (channel.is_some() && channel == told.channel)
+		};
+		if !mine {
+			// Another device of this account joined a call after ours was established, so
+			// Discord moved the voice session there. A state from before our own session
+			// arrived, or racing an answer we still wait for, is stale.
+			if channel.is_some()
+				&& told.channel.is_some()
+				&& phone.link.session.is_some()
+				&& (phone.matched || phone.wire.pending.is_none())
+			{
+				// The other device's state is now Discord's; nothing of ours is in flight.
 				phone.wire.told = Target::default();
+				phone.wire.pending = None;
 				phone.link.reset();
 				phone.share.stream.doomed(now);
 				phone.watch.stream.doomed(now);
@@ -401,6 +444,7 @@ impl ClientState {
 					.as_ref()
 					.is_none_or(|old| old.expose() != session.expose())
 			{
+				phone.accepted = Some(session.duplicate());
 				phone.link.session = Some(session);
 				phone.link.revision = next_id();
 			}
@@ -554,6 +598,7 @@ impl ClientState {
 							Some(now + Duration::from_secs(1 << (phone.retry.count - 1)));
 						phone.wire.rejoin = true;
 						self.status = message;
+						self.voice.notice = Some("Call connection lost; reconnecting…");
 					}
 				}
 				Report::Status(_) | Report::Live => {}

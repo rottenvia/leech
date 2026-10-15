@@ -4064,11 +4064,7 @@ voice-call-bar-join-call = Görüşmeye katıl
 # Context: call_controls
 voice-call-controls-disconnect = Bağlantıyı kes
 # Context: call_controls
-voice-call-controls-dismiss-call = Aramayı reddet
-# Context: call_controls
 voice-call-controls-leaving-is-unavailable-in-the-offline-preview = Çevrimdışı önizlemede ayrılmak mümkün değildir.
-# Context: call_failure
-voice-call-failure-copy-failure-reason = Kopyalama hatası nedeni
 # Context: camera_settings_content
 voice-camera-settings-content-camera-capture-is-unavailable-on-this-platform = Bu platformda kamera çekimi kullanılamıyor.
 # Context: camera_settings_content
@@ -4145,8 +4141,6 @@ voice-voice-audio-controls-speakers = Hoparlörler
 voice-voice-card-section-camera-settings = Kamera ayarları
 # Context: voice_card_section
 voice-voice-card-section-disconnect = Bağlantıyı kes
-# Context: voice_card_section
-voice-voice-card-section-dismiss-call = Aramayı reddet
 # Context: voice_card_section
 voice-voice-card-section-microphone-unavailable-a-still-connected-choose-another-input-in-audio = Mikrofon kullanılamıyor · hala bağlı. Ses ayarlarında başka bir giriş seçin.
 # Context: voice_channel_button
@@ -4441,7 +4435,6 @@ voice-recipient-not-in-call = Aramada değil
 
 reconnect-now = Şimdi yeniden bağlan
 
-voice-call-moved-to-another-client = Bu cihazın arama oturumu değiştirildi
 
 server-settings-page-safety = Güvenlik Kurulumu
 

@@ -4083,11 +4083,7 @@ voice-call-bar-join-call = Připojte se k hovoru
 # Context: call_controls
 voice-call-controls-disconnect = Odpojit
 # Context: call_controls
-voice-call-controls-dismiss-call = Zrušit hovor
-# Context: call_controls
 voice-call-controls-leaving-is-unavailable-in-the-offline-preview = Opuštění není v offline náhledu dostupné.
-# Context: call_failure
-voice-call-failure-copy-failure-reason = Důvod selhání kopírování
 # Context: camera_settings_content
 voice-camera-settings-content-camera-capture-is-unavailable-on-this-platform = Snímání fotoaparátem není na této platformě dostupné.
 # Context: camera_settings_content
@@ -4164,8 +4160,6 @@ voice-voice-audio-controls-speakers = Reproduktory
 voice-voice-card-section-camera-settings = Nastavení fotoaparátu
 # Context: voice_card_section
 voice-voice-card-section-disconnect = Odpojit
-# Context: voice_card_section
-voice-voice-card-section-dismiss-call = Zrušit hovor
 # Context: voice_card_section
 voice-voice-card-section-microphone-unavailable-a-still-connected-choose-another-input-in-audio = Mikrofon není k dispozici · stále připojen. V nastavení zvuku vyberte jiný vstup.
 # Context: voice_channel_button
@@ -4529,7 +4523,6 @@ public-upload-error-conversation = Před veřejným nahráním se vraťte do pů
 public-upload-error-selection = Výběr se změnil; před veřejným nahráním znovu zkontrolujte soubor
 public-upload-error-missing = Před veřejným nahráním znovu vyberte soubor
 
-voice-call-moved-to-another-client = Relace hovoru na tomto zařízení byla nahrazena
 
 # Synchronizované oblíbené GIFy (neoficiální nastavení účtu).
 gif-favorites-sync-refresh = Obnovit z Discordu
