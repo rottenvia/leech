@@ -396,6 +396,11 @@ impl Voice {
 				request: Some(call.request),
 				..CallCues::default()
 			};
+			// A soft tick acknowledges the click; the join sound follows once connected.
+			if !call.phase.connected() && ui.notification_options.allows(Sound::Joining) {
+				ui.notification_preview = Some(Sound::Joining);
+				ctx.request_repaint();
+			}
 		}
 		let Some(owner) = state.user.as_ref().map(|user| user.id) else {
 			return;

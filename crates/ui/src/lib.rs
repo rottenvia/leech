@@ -1549,11 +1549,12 @@ impl MessagingUi {
 							});
 							let row = rect.shrink2(egui::vec2(0.0, 1.0));
 							let focused = response.hovered() || response.has_focus();
-							if focused {
+							let hover = design::hover_motion(ui, &response);
+							if hover > 0.0 {
 								ui.painter().rect_filled(
 									row,
 									6,
-									design::row_highlight(ui, colors.hover, 1.0),
+									design::row_highlight(ui, colors.hover, hover),
 								);
 							}
 							self.avatars.paint_nameplate(
@@ -1815,20 +1816,20 @@ impl MessagingUi {
 						egui::Sense::click(),
 					);
 					let row = rect.shrink2(egui::vec2(0.0, 1.0));
-					let hovered = response.hovered() || response.has_focus();
+					let hover = design::hover_motion(ui, &response);
 					if selected {
 						ui.painter().rect_filled(row, 8, colors.selected);
-					} else if hovered {
+					} else if hover > 0.0 {
 						ui.painter().rect_filled(
 							row,
 							8,
-							design::row_highlight(ui, colors.hover, 1.0),
+							design::row_highlight(ui, colors.hover, hover),
 						);
 					}
-					let ink = if selected || hovered {
+					let ink = if selected {
 						colors.text_strong
 					} else {
-						colors.muted
+						colors.muted.lerp_to_gamma(colors.text_strong, hover)
 					};
 					icons::paint(
 						ui.painter(),
@@ -1859,7 +1860,17 @@ impl MessagingUi {
 						self.guild = None;
 						self.search.open = false;
 					}
-					ui.add_space(8.0);
+					// Discord's hairline between Friends and the conversations, centred
+					// between the two rows' text.
+					let (line, _) = ui.allocate_exact_size(
+						egui::vec2(ui.available_width(), 4.0),
+						egui::Sense::hover(),
+					);
+					ui.painter().hline(
+						line.x_range().shrink(8.0),
+						line.center().y,
+						egui::Stroke::new(1.0, colors.border),
+					);
 				}
 				if let Some(guild) = self.guild
 					&& state.can_open_member_settings(guild)
@@ -2027,6 +2038,9 @@ impl MessagingUi {
 											let identity = ui
 												.vertical(|ui| {
 													ui.spacing_mut().item_spacing.y = 0.0;
+													// A horizontal row is at least this tall, which
+													// pushed "In a call" below the status line.
+													ui.spacing_mut().interact_size.y = 0.0;
 													ui.add(
 														egui::Label::new(
 															design::semibold(
@@ -2060,7 +2074,6 @@ impl MessagingUi {
 													if in_call {
 														ui.horizontal(|ui| {
 															ui.spacing_mut().item_spacing.x = 4.0;
-															ui.spacing_mut().interact_size.y = 0.0;
 															icons::inline(
 																ui,
 																icons::Icon::InCall,

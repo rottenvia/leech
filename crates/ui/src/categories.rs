@@ -868,13 +868,18 @@ impl MessagingUi {
 								});
 							}
 							let hovered = enabled && (response.hovered() || response.has_focus());
+							let hover = if enabled {
+								crate::design::hover_motion(ui, &response)
+							} else {
+								0.0
+							};
 							if active {
 								ui.painter().rect_filled(row, 8, colors.selected);
-							} else if hovered {
+							} else if hover > 0.0 {
 								ui.painter().rect_filled(
 									row,
 									8,
-									crate::design::row_highlight(ui, colors.hover, 1.0),
+									crate::design::row_highlight(ui, colors.hover, hover),
 								);
 							}
 							if dm_list
