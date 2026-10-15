@@ -156,7 +156,7 @@ only this account and known group recipients, rejects duplicate participants, an
 to 64 participants per call. Recipient removal drops stale participant/watch UI state; removal
 of this account closes local media and revokes subsequent call actions.
 
-The offline debug command is `cargo run --locked -p leech --example group_call`.
+The offline debug command is `cargo run --locked -p leech --features demo --example group_call`.
 Group signaling remains unofficial and live-unverified. For owner-controlled verification,
 repeat the one-to-one gate below in a private group whose participating clients the owner
 controls, including simultaneous speech, additions/removals, ringing/decline/join, camera,

@@ -761,7 +761,6 @@ mod tests {
 					participants: vec![],
 					camera: false,
 					watching: None,
-					error: None,
 				});
 				assert_eq!(
 					click_menu_action(&state, &user, "Start a Call", light, keyboard, true),

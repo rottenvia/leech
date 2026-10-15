@@ -17,7 +17,7 @@ mod phone;
 pub mod sim;
 
 pub use phone::{
-	ACK_TIMEOUT, MAX_RETRIES, MediaPlan, STREAM_TIMEOUT, ShareState, SharePlan, WatchPlan,
+	ACK_TIMEOUT, MAX_RETRIES, MediaPlan, STREAM_TIMEOUT, SharePlan, ShareState, WatchPlan,
 };
 
 pub const MAX_PARTICIPANTS: usize = 64;
@@ -197,13 +197,18 @@ pub enum Command {
 /// One Go Live stream update from the Gateway, by stream key.
 #[derive(Debug)]
 pub enum StreamEvent {
-	Created { rtc_server: Id, rtc_channel: Id },
+	Created {
+		rtc_server: Id,
+		rtc_channel: Id,
+	},
 	Server {
 		token: Option<Secret>,
 		endpoint: Option<String>,
 	},
 	/// `reason` names Discord's cause when it sent one we recognise.
-	Deleted { reason: Option<&'static str> },
+	Deleted {
+		reason: Option<&'static str>,
+	},
 }
 
 /// What a media worker reports about its run, by run id.
@@ -277,6 +282,8 @@ pub enum Event {
 		channel: Id,
 		message: &'static str,
 	},
+	/// A command could not be sent; the controller sends it again when it can.
+	Unsent(Command),
 }
 impl Event {
 	pub fn bytes(&self) -> usize {
@@ -465,7 +472,11 @@ impl ClientState {
 		let owner = self.owner()?;
 		(call.guild.is_none()
 			&& !call.participants.iter().any(|p| p.user != owner)
-			&& self.voice.ringing(call.channel).iter().any(|id| *id != owner))
+			&& self
+				.voice
+				.ringing(call.channel)
+				.iter()
+				.any(|id| *id != owner))
 		.then_some(call.channel)
 	}
 	/// A call in this channel may run: signed in, with access. The socket may be resuming.
@@ -477,8 +488,7 @@ impl ClientState {
 	/// A wanted call must end: signed out, the channel is gone, or Discord denies access.
 	/// Permissions still loading after a fresh READY keep it.
 	pub(crate) fn voice_revoked(&self, channel: Id) -> bool {
-		(self.demo && !self.voice.simulated)
-			|| self.auth != AuthState::Authenticated
+		self.auth != AuthState::Authenticated
 			|| self.channel(channel).is_none()
 			|| self.permission(
 				channel,
@@ -498,7 +508,9 @@ impl ClientState {
 			}),
 			Command::Sync { .. } | Command::ChannelInfo { .. } => {}
 			// A lost stream operation times out and is retried by the controller.
-			Command::StreamCreate { .. } | Command::StreamDelete { .. } | Command::StreamWatch { .. } => {
+			Command::StreamCreate { .. }
+			| Command::StreamDelete { .. }
+			| Command::StreamWatch { .. } => {
 				self.status = "Screen-share control was not sent; retrying";
 			}
 		}
@@ -579,8 +591,11 @@ impl ClientState {
 			own.map_or((false, false), |p| (p.server_muted, p.server_deafened));
 		let muted = muted || !self.can_speak(channel);
 		let request = self.voice.next_request();
-		// Ring only a private call nobody is in yet; joining an existing one is silent.
-		let ring = ring && guild.is_none() && !participants.iter().any(|p| Some(p.user) != self.owner());
+		// Ring only a new private call; joining an existing one is silent.
+		let ring = ring
+			&& guild.is_none()
+			&& !self.voice.has_dm_call(channel)
+			&& !participants.iter().any(|p| Some(p.user) != self.owner());
 		self.voice.phone.ring = ring.then_some(request);
 		self.voice.ring_error = None;
 		self.voice.active = Some(Call {
@@ -610,7 +625,13 @@ impl ClientState {
 		};
 		let (channel, guild) = (call.channel, call.guild);
 		let owner = self.owner();
-		if guild.is_none() && self.voice.ringing(channel).iter().any(|id| Some(*id) != owner) {
+		if guild.is_none()
+			&& self
+				.voice
+				.ringing(channel)
+				.iter()
+				.any(|id| Some(*id) != owner)
+		{
 			// Hanging up while still ringing stops the ringing, as in Discord.
 			self.voice.phone.send(Command::Ring {
 				channel,
@@ -623,21 +644,40 @@ impl ClientState {
 		self.pump(self.voice_now());
 		true
 	}
-	pub fn ring_recipient(&mut self, recipient: Id, stop: bool) -> bool {
+	/// Demo without the simulated Discord: calls only render.
+	pub fn offline_preview(&self) -> bool {
+		self.demo && !self.voice.simulated
+	}
+	/// The wanted call's media is connected; a rendered offline fixture counts by its phase.
+	pub fn call_connected(&self) -> bool {
+		if self.offline_preview() {
+			self.voice
+				.active
+				.as_ref()
+				.is_some_and(|call| call.phase.connected())
+		} else {
+			self.voice.media_ready()
+		}
+	}
+	/// One recipient of the connected private call can be rung (or stop ringing) now.
+	pub fn can_ring_recipient(&self, recipient: Id, stop: bool) -> bool {
 		let Some(call) = self.voice.active.as_ref() else {
 			return false;
 		};
 		let channel = call.channel;
-		if call.guild.is_some()
-			|| !call.phase.connected()
-			|| !self.can_call(channel)
-			|| self.owner().is_none_or(|own| own == recipient)
-			|| !self.dm_call_participant(channel, recipient)
-			|| (!stop && call.participants.iter().any(|p| p.user == recipient))
-			|| self.voice.ringing(channel).contains(&recipient) != stop
-		{
+		call.guild.is_none()
+			&& call.phase.connected()
+			&& self.can_call(channel)
+			&& self.owner().is_some_and(|own| own != recipient)
+			&& self.dm_call_participant(channel, recipient)
+			&& (stop || !call.participants.iter().any(|p| p.user == recipient))
+			&& self.voice.ringing(channel).contains(&recipient) == stop
+	}
+	pub fn ring_recipient(&mut self, recipient: Id, stop: bool) -> bool {
+		if !self.can_ring_recipient(recipient, stop) {
 			return false;
 		}
+		let channel = self.voice.active.as_ref().expect("active call").channel;
 		self.voice.phone.send(Command::Ring {
 			channel,
 			recipient: Some(recipient),
@@ -674,7 +714,7 @@ impl ClientState {
 		if call.camera == enabled {
 			return true;
 		}
-		if enabled && (!self.voice.media_ready() || !self.can_camera(call.channel)) {
+		if enabled && (!self.call_connected() || !self.can_camera(call.channel)) {
 			return false;
 		}
 		self.voice.active.as_mut().expect("active call").camera = enabled;
@@ -686,7 +726,7 @@ impl ClientState {
 		let Some(channel) = self.voice.active.as_ref().map(|call| call.channel) else {
 			return false;
 		};
-		if !settings.valid() || !self.can_stream(channel) || !self.voice.media_ready() {
+		if !settings.valid() || !self.can_stream(channel) || !self.call_connected() {
 			return false;
 		}
 		let share = &mut self.voice.phone.share;
@@ -703,10 +743,11 @@ impl ClientState {
 	/// Watch one streaming participant of the connected call.
 	pub fn watch_stream(&mut self, streamer: Id) -> bool {
 		let owner = self.owner();
+		let connected = self.call_connected();
 		let Some(call) = self.voice.active.as_mut() else {
 			return false;
 		};
-		if !self.voice.phone.media.as_ref().is_some_and(|run| run.ready)
+		if !connected
 			|| owner == Some(streamer)
 			|| !call
 				.participants
@@ -796,6 +837,10 @@ impl ClientState {
 				}
 			}
 			Event::Media { id, report } => self.media_report(id, report, now),
+			Event::Unsent(command) => {
+				self.voice_command_rejected(command);
+				self.pump(now);
+			}
 			Event::Stream { key, event } => self.stream_event(&key, event, now),
 			Event::Server {
 				guild,
@@ -1008,7 +1053,9 @@ impl ClientState {
 			p.len() > MAX_PARTICIPANTS
 				|| p.iter().enumerate().any(|(index, participant)| {
 					!self.dm_call_participant(channel, participant.user)
-						|| p[..index].iter().any(|other| other.user == participant.user)
+						|| p[..index]
+							.iter()
+							.any(|other| other.user == participant.user)
 				})
 		}) {
 			return;
@@ -1098,7 +1145,12 @@ impl ClientState {
 	}
 	pub(crate) fn refresh_voice_participants(&mut self) {
 		let owner = self.owner();
-		let Some(call) = self.voice.active.as_mut().filter(|call| call.guild.is_some()) else {
+		let Some(call) = self
+			.voice
+			.active
+			.as_mut()
+			.filter(|call| call.guild.is_some())
+		else {
 			return;
 		};
 		call.participants = self

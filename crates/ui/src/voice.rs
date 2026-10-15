@@ -23,7 +23,6 @@ pub(super) struct CallSwitch {
 	channel: Id,
 	ring: bool,
 	generation: u64,
-	confirmed_at: Option<std::time::Instant>,
 	audio: Option<(bool, bool)>,
 }
 
@@ -47,17 +46,14 @@ impl MessagingUi {
 			.voice
 			.active
 			.as_ref()
-			.filter(|call| {
-				call.phase != Phase::Failed
-					&& match focus {
-						StageFocus::LocalScreen => {
-							self.screen.context
-								== Some((state.generation, call.channel, call.request))
-								&& self.screen.busy && self.screen.preview.is_some()
-						}
-						StageFocus::Stream(user) => call.watching == Some(*user),
-						StageFocus::Participant(_) => false,
-					}
+			.filter(|call| match focus {
+				StageFocus::LocalScreen => {
+					self.screen.context == Some((state.generation, call.channel, call.request))
+						&& self.screen.busy
+						&& self.screen.preview.is_some()
+				}
+				StageFocus::Stream(user) => call.watching == Some(*user),
+				StageFocus::Participant(_) => false,
 			})
 			.map(|call| call.channel)
 	}
@@ -251,9 +247,7 @@ impl MessagingUi {
 						.voice
 						.ringing(call.channel)
 						.contains(&entry.participant.user);
-					let enabled = state
-						.ring_recipient(call.channel, call.request, entry.participant.user, stop)
-						.is_some();
+					let enabled = state.can_ring_recipient(entry.participant.user, stop);
 					if ui
 						.add_enabled(
 							enabled,
@@ -821,13 +815,21 @@ impl MessagingUi {
 			state.status = "This stream is no longer live";
 			return;
 		}
-		match state
-			.voice
-			.active
-			.as_ref()
-			.map(|call| (call.channel, call.phase))
-		{
-			None => {
+		// Like Discord, watching a stream in another channel moves the call there first; the
+		// watch follows once that call connects.
+		match state.voice.active.as_ref().map(|call| call.channel) {
+			Some(active) if active == channel => {
+				if state.call_connected() {
+					self.stream_preview_watch = None;
+					if state.watch_stream(user) {
+						self.voice_focus = Some(StageFocus::Stream(user));
+					} else {
+						state.status =
+							"This stream is not available in the connected voice channel";
+					}
+				}
+			}
+			_ => {
 				if self
 					.request_call_audio(state, channel, false, None, commands)
 					.is_err()
@@ -836,24 +838,6 @@ impl MessagingUi {
 					state.status = "Could not join this stream's voice channel";
 				}
 			}
-			Some((active, _)) if active != channel => {
-				self.stream_preview_watch = None;
-				state.status = "Leave the current call before watching this stream";
-			}
-			Some((_, Phase::Connected | Phase::Waiting)) => {
-				self.stream_preview_watch = None;
-				if state.voice.active.as_ref().and_then(|call| call.watching) == Some(user)
-					|| state.watch_stream(user).is_some()
-				{
-					self.voice_focus = Some(StageFocus::Stream(user));
-				} else {
-					state.status = "This stream is not available in the connected voice channel";
-				}
-			}
-			Some((_, Phase::Failed)) => {
-				self.stream_preview_watch = None;
-			}
-			Some((_, _)) => {}
 		}
 	}
 
@@ -902,16 +886,6 @@ impl MessagingUi {
 		// A short stage clips notices and tiles instead of drawing them over the call bar.
 		body_ui.set_clip_rect(body.intersect(ui.clip_rect()));
 		stage_notices(&mut body_ui, &notices);
-		call_failure(
-			&mut body_ui,
-			state
-				.voice
-				.active
-				.as_ref()
-				.filter(|c| c.channel == channel)
-				.and_then(|c| c.error),
-			STAGE_TEXT,
-		);
 		if !state.can_view(channel) {
 			body_ui.label(
 				RichText::new(crate::i18n::translate(
@@ -928,7 +902,7 @@ impl MessagingUi {
 						design::semibold(
 							ui,
 							crate::i18n::translate_if_key(
-								if !state.demo && !state.gateway_connected {
+								if !state.offline_preview() && !state.gateway_connected {
 									"voice-voice-channel-participant-list-unavailable-while-disconnected"
 								} else {
 									"voice-voice-channel-no-one-s-here-yet"
@@ -940,7 +914,7 @@ impl MessagingUi {
 					);
 				});
 			} else {
-				if !state.demo && !state.gateway_connected {
+				if !state.offline_preview() && !state.gateway_connected {
 					body_ui.label(
 						RichText::new(crate::i18n::translate(
 							"voice-voice-channel-last-known-participants-a-reconnect-to-refresh",
@@ -969,7 +943,7 @@ impl MessagingUi {
 			// The bar has its own strip under the tiles, so it only hides over an enlarged
 			// video; an empty strip that fills on hover reads as a missing control.
 			bar_ui.set_opacity(if full { reveal } else { 1.0 });
-			self.call_controls(&mut bar_ui, state, channel, commands);
+			self.call_controls(&mut bar_ui, state, channel);
 		} else {
 			bar_ui.horizontal_centered(|ui| {
 				ui.add_space((ui.available_width() - 160.0).max(0.0) * 0.5);
@@ -989,7 +963,7 @@ impl MessagingUi {
 			.voice
 			.active
 			.as_ref()
-			.filter(|call| call.channel == channel && call.phase != Phase::Failed);
+			.filter(|call| call.channel == channel);
 		let mut tiles = Vec::with_capacity(entries.len() + 2);
 		if call.is_some_and(|call| {
 			self.screen.context == Some((state.generation, channel, call.request))
@@ -1153,11 +1127,11 @@ impl MessagingUi {
 	}
 
 	fn watching(&self, state: &State, channel: Id, streamer: Id) -> bool {
-		state.voice.active.as_ref().is_some_and(|call| {
-			call.channel == channel
-				&& call.phase != Phase::Failed
-				&& call.watching == Some(streamer)
-		})
+		state
+			.voice
+			.active
+			.as_ref()
+			.is_some_and(|call| call.channel == channel && call.watching == Some(streamer))
 	}
 
 	fn remote_texture(&self, user: Id) -> Option<&egui::load::SizedTexture> {
@@ -1178,9 +1152,11 @@ impl MessagingUi {
 					.is_some_and(|user| user.id == entry.participant.user);
 				if own {
 					self.voice_camera_preview.is_some()
-						&& state.voice.active.as_ref().is_some_and(|call| {
-							call.channel == channel && call.camera && call.phase != Phase::Failed
-						})
+						&& state
+							.voice
+							.active
+							.as_ref()
+							.is_some_and(|call| call.channel == channel && call.camera)
 				} else {
 					entry.participant.video && self.remote_texture(entry.participant.user).is_some()
 				}
@@ -1551,7 +1527,7 @@ impl MessagingUi {
 		match self.watch_request.take() {
 			// Like Discord, a share opens enlarged as soon as you choose to watch it.
 			Some(Some(user)) => {
-				if state.watch_stream(user).is_some() {
+				if state.watch_stream(user) {
 					self.voice_focus = Some(StageFocus::Stream(user));
 				}
 			}
@@ -1559,12 +1535,16 @@ impl MessagingUi {
 			None => {}
 		}
 	}
-	pub(super) fn apply_ring_request(&mut self, state: &mut State, commands: &mut Vec<Command>) {
+	pub(super) fn apply_ring_request(&mut self, state: &mut State) {
 		if let Some((channel, request, recipient, stop)) = self.ring_request.take()
-			&& let Some(command) = state.ring_recipient(channel, request, recipient, stop)
+			&& state
+				.voice
+				.active
+				.as_ref()
+				.is_some_and(|call| (call.channel, call.request) == (channel, request))
+			&& state.ring_recipient(recipient, stop)
 		{
 			state.voice.ring_error = None;
-			commands.push(command);
 		}
 	}
 
@@ -1588,7 +1568,7 @@ impl MessagingUi {
 			.voice
 			.active
 			.as_ref()
-			.filter(|call| call.channel == entry.channel && call.phase != Phase::Failed);
+			.filter(|call| call.channel == entry.channel);
 		let inactive = inactive_recipient(state, entry.channel, entry.participant.user);
 		// The local preview is mirrored like a webcam; remote cameras fill the tile edge to edge.
 		let video = if own && call.is_some_and(|call| call.camera) {
@@ -1745,11 +1725,7 @@ impl MessagingUi {
 	fn stage_notices(&self, state: &State, channel: Id, connected: bool) -> Vec<(String, bool)> {
 		let mut notices = Vec::new();
 		if let Some(call) = state.voice.active.as_ref().filter(|c| c.channel == channel) {
-			if let Some((_, _, error)) = state
-				.voice
-				.ring_error
-				.filter(|(id, request, _)| *id == channel && *request == call.request)
-			{
+			if let Some((_, error)) = state.voice.ring_error.filter(|(id, _)| *id == channel) {
 				notices.push((error.into(), true));
 			}
 			// Screen-share status stays in the share dialog and the button's tooltip: as a stage
@@ -1765,12 +1741,12 @@ impl MessagingUi {
 			} else if call.server_muted {
 				notices.push(("Muted by the server".into(), false));
 			}
-			if !state.demo && !state.can_speak(channel) {
+			if !state.offline_preview() && !state.can_speak(channel) {
 				notices.push((
 					"Speaking is unavailable in this channel. You can still listen.".into(),
 					false,
 				));
-			} else if !state.demo
+			} else if !state.offline_preview()
 				&& state.permission(channel, model::permissions::USE_VAD) != Some(true)
 			{
 				notices.push((
@@ -1779,7 +1755,7 @@ impl MessagingUi {
 				));
 			}
 		} else if !connected {
-			if state.demo {
+			if state.offline_preview() {
 				notices.push((
 					"Synthetic participants · microphone and speakers are off.".into(),
 					false,
@@ -1792,18 +1768,12 @@ impl MessagingUi {
 	}
 
 	pub(crate) fn call_unavailable(&self, state: &State, channel: Id) -> Option<&'static str> {
-		if state.demo {
+		if state.offline_preview() {
 			Some("Calls are unavailable in the offline preview. No microphone is accessed.")
 		} else if !self.voice_available {
 			Some("Voice is unavailable in this session.")
 		} else if state.auth != AuthState::Authenticated || !state.gateway_connected {
 			Some("Reconnect to Discord before calling.")
-		} else if self
-			.voice_switch
-			.as_ref()
-			.is_some_and(|switch| switch.confirmed_at.is_some())
-		{
-			Some("Waiting for the previous call to disconnect.")
 		} else if state
 			.voice
 			.active
@@ -1841,11 +1811,10 @@ impl MessagingUi {
 			member: None,
 			server_muted: false,
 			server_deafened: false,
-			request: None,
 			channel: None,
 			user: peer,
+			ours: false,
 			session: None,
-			negotiation_revision: None,
 			muted: false,
 			deafened: false,
 			video: false,
@@ -1871,58 +1840,6 @@ impl MessagingUi {
 				expected
 			);
 		}
-	}
-
-	/// Device-free check; the caller supplies an offline synthetic call fixture.
-	#[cfg(all(debug_assertions, feature = "demo"))]
-	pub fn debug_call_switch_check(mut state: State) {
-		state.demo = false;
-		state.gateway_connected = true;
-		assert!(state.start_call(Id(25), false).is_some());
-		let mut view = Self {
-			voice_available: true,
-			..Default::default()
-		};
-		let mut commands = Vec::new();
-		view.request_call(&mut state, Id(22), false, &mut commands);
-		assert!(commands.is_empty());
-		let from = view
-			.voice_switch
-			.as_ref()
-			.expect("switch requires confirmation")
-			.from;
-		assert_eq!(state.voice.active.as_ref().unwrap().channel, from.0);
-		assert!(state.leave_call().is_some());
-		view.voice_switch.as_mut().unwrap().confirmed_at = Some(std::time::Instant::now());
-		let ctx = egui::Context::default();
-		state.apply_voice(client_core::voice::Event::Departed {
-			channel: from.0,
-			request: from.1 + 1,
-		});
-		view.show_call_switch(&ctx, &mut state, &mut commands);
-		assert!(commands.is_empty());
-		state.apply_voice(client_core::voice::Event::Departed {
-			channel: from.0,
-			request: from.1,
-		});
-		view.show_call_switch(&ctx, &mut state, &mut commands);
-		assert!(commands.is_empty(), "audio teardown must complete too");
-		view.voice_switch_ready = true;
-		view.show_call_switch(&ctx, &mut state, &mut commands);
-		assert!(matches!(
-			commands.as_slice(),
-			[Command::Voice(client_core::voice::Command::Join {
-				channel: Id(22),
-				ring: false,
-				..
-			})]
-		));
-		assert!(view.voice_switch.is_none());
-		view.request_call(&mut state, Id(25), false, &mut commands);
-		assert!(view.voice_switch.is_some());
-		state.gateway_connected = false;
-		view.show_call_switch(&ctx, &mut state, &mut commands);
-		assert!(view.voice_switch.is_none());
 	}
 
 	pub(crate) fn request_call(
@@ -1958,35 +1875,53 @@ impl MessagingUi {
 		if let Some(reason) = self.call_unavailable(state, channel) {
 			return Err(reason.into());
 		}
+		let _ = commands;
 		if let Some(call) = &state.voice.active {
 			self.voice_switch = Some(CallSwitch {
 				from: (call.channel, call.request),
 				channel,
 				ring,
 				generation: state.generation,
-				confirmed_at: None,
 				audio,
 			});
-		} else {
-			let (muted, deafened) = audio.unwrap_or((self.voice_muted, self.voice_deafened));
-			let command = state
-				.start_call_with_mute(channel, ring, muted, deafened)
-				.ok_or("Joining this call is no longer available")?;
-			if audio.is_some() {
-				self.voice_muted = muted;
-				self.voice_deafened = deafened;
-			}
-			commands.push(command);
+			return Ok(());
+		}
+		self.join_call(state, channel, ring, audio)
+	}
+
+	/// Joins at once; the call controller leaves a current call first.
+	fn join_call(
+		&mut self,
+		state: &mut State,
+		channel: Id,
+		ring: bool,
+		audio: Option<(bool, bool)>,
+	) -> Result<(), String> {
+		let (muted, deafened) = audio.unwrap_or((self.voice_muted, self.voice_deafened));
+		if !state.start_call_with_mute(channel, ring, muted, deafened) {
+			return Err("Joining this call is no longer available".into());
+		}
+		if audio.is_some() {
+			self.voice_muted = muted;
+			self.voice_deafened = deafened;
 		}
 		Ok(())
 	}
 
-	pub(super) fn show_call_switch(
-		&mut self,
-		ctx: &egui::Context,
-		state: &mut State,
-		commands: &mut Vec<Command>,
-	) {
+	/// Leaves the current call and joins the chosen one; the controller does both in order.
+	fn confirm_call_switch(&mut self, state: &mut State) {
+		let Some(switch) = self.voice_switch.take() else {
+			return;
+		};
+		if self
+			.join_call(state, switch.channel, switch.ring, switch.audio)
+			.is_err()
+		{
+			state.status = "Joining this call is no longer available";
+		}
+	}
+
+	pub(super) fn show_call_switch(&mut self, ctx: &egui::Context, state: &mut State) {
 		let Some(switch) = &self.voice_switch else {
 			return;
 		};
@@ -1995,31 +1930,6 @@ impl MessagingUi {
 			|| !state.can_call(switch.channel)
 		{
 			self.voice_switch = None;
-			return;
-		}
-		if let Some(started) = switch.confirmed_at {
-			if state.voice.active.is_some() {
-				self.voice_switch = None;
-			} else if state.voice.departed == Some(switch.from) && self.voice_switch_ready {
-				let switch = self.voice_switch.take().expect("pending switch");
-				let (muted, deafened) = switch
-					.audio
-					.unwrap_or((self.voice_muted, self.voice_deafened));
-				if let Some(command) =
-					state.start_call_with_mute(switch.channel, switch.ring, muted, deafened)
-				{
-					if switch.audio.is_some() {
-						self.voice_muted = muted;
-						self.voice_deafened = deafened;
-					}
-					commands.push(command);
-				}
-			} else if started.elapsed() >= std::time::Duration::from_secs(12) {
-				self.voice_switch = None;
-				state.status = "Call switch cancelled: previous call did not finish disconnecting. Reconnect before calling again.";
-			} else {
-				ctx.request_repaint_after(std::time::Duration::from_millis(100));
-			}
 			return;
 		}
 		if state
@@ -2044,15 +1954,7 @@ impl MessagingUi {
 		.cancel_label("Stay in call")
 		.show(ctx)
 		{
-			Some(crate::dialog::Choice::Confirmed) => {
-				if let Some(command) = state.leave_call() {
-					self.voice_switch
-						.as_mut()
-						.expect("pending switch")
-						.confirmed_at = Some(std::time::Instant::now());
-					commands.push(command);
-				}
-			}
+			Some(crate::dialog::Choice::Confirmed) => self.confirm_call_switch(state),
 			Some(crate::dialog::Choice::Cancelled) => self.voice_switch = None,
 			None => {}
 		}
@@ -2991,13 +2893,7 @@ impl MessagingUi {
 
 	/// Whether the local mute/deafen controls may emit commands for the active call.
 	fn controls_enabled(&self, state: &State) -> bool {
-		self.voice_available
-			&& !state.demo
-			&& state
-				.voice
-				.active
-				.as_ref()
-				.is_some_and(|call| call.phase != Phase::Failed)
+		self.voice_available && !state.offline_preview() && state.voice.active.as_ref().is_some()
 	}
 
 	fn queue_voice_toggle_cue(&mut self, deafen: bool, active: bool) {
@@ -3047,7 +2943,6 @@ impl MessagingUi {
 		&mut self,
 		ui: &mut egui::Ui,
 		state: &mut State,
-		commands: &mut Vec<Command>,
 		deafen: bool,
 		size: f32,
 	) -> egui::Response {
@@ -3102,8 +2997,8 @@ impl MessagingUi {
 		};
 		// A momentary push-to-mute stays neutral unless mute/deafen is latched.
 		let ptm = !deafen && !active && self.voice_ptm_active;
-		let enabled =
-			(self.controls_enabled(state) || state.demo) && (deafen || can_speak || state.demo);
+		let enabled = (self.controls_enabled(state) || state.offline_preview())
+			&& (deafen || can_speak || state.offline_preview());
 		let label = crate::i18n::translate_if_key(match (deafen, active) {
 			(true, true) => "voice-mute-toggle-undeafen",
 			(true, false) => "voice-mute-toggle-deafen",
@@ -3153,21 +3048,13 @@ impl MessagingUi {
 			));
 		if response.clicked() {
 			let (muted, deafened) = self.toggle_voice(deafen);
-			if let Some(command) = state.set_call_mute(muted, deafened) {
-				commands.push(command);
-			}
+			state.set_call_mute(muted, deafened);
 		}
 		response
 	}
 
 	/// Discord's call control bar: one media pill and the red hang-up button.
-	fn call_controls(
-		&mut self,
-		ui: &mut egui::Ui,
-		state: &mut State,
-		channel: Id,
-		commands: &mut Vec<Command>,
-	) {
+	fn call_controls(&mut self, ui: &mut egui::Ui, state: &mut State, channel: Id) {
 		let colors = design::palette(ui);
 		let Some(call) = state.voice.active.as_ref() else {
 			return;
@@ -3181,7 +3068,7 @@ impl MessagingUi {
 		let deafened = self.voice_deafened;
 		let muted = self.voice_muted || deafened || !can_speak;
 		let controls = self.controls_enabled(state);
-		let voice_toggles = controls || state.demo;
+		let voice_toggles = controls || state.offline_preview();
 		let focused = self.voice_focus.is_some();
 		let screen_focused = matches!(
 			self.voice_focus,
@@ -3246,7 +3133,7 @@ impl MessagingUi {
 					crate::icons::Icon::Microphone
 				},
 				48.0,
-				voice_toggles && (can_speak || state.demo),
+				voice_toggles && (can_speak || state.offline_preview()),
 				if muted { colors.danger } else { STAGE_TEXT },
 				if muted { "Unmute" } else { "Mute" },
 				if !can_speak {
@@ -3300,7 +3187,7 @@ impl MessagingUi {
 				},
 				if camera {
 					"Stop sharing your camera"
-				} else if state.demo {
+				} else if state.offline_preview() {
 					"Camera is off in the offline preview"
 				} else if !cfg!(any(
 					target_os = "macos",
@@ -3364,7 +3251,7 @@ impl MessagingUi {
 		let hang_up = {
 			let (rect, response) =
 				row.allocate_exact_size(egui::vec2(HANG_UP, CONTROL_HEIGHT), egui::Sense::click());
-			let enabled = watched.is_some() || !state.demo;
+			let enabled = watched.is_some() || !state.offline_preview();
 			let fill = if !enabled {
 				colors.danger.gamma_multiply(0.45)
 			} else if response.hovered() || response.has_focus() {
@@ -3386,11 +3273,7 @@ impl MessagingUi {
 			let label = if watched.is_some() {
 				"Stop watching".to_owned()
 			} else {
-				crate::i18n::translate_if_key(if phase == Phase::Failed {
-					"voice-call-controls-dismiss-call"
-				} else {
-					"voice-call-controls-disconnect"
-				})
+				crate::i18n::translate_if_key("voice-call-controls-disconnect")
 			};
 			response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &label));
 			response.on_hover_text(if enabled {
@@ -3405,7 +3288,7 @@ impl MessagingUi {
 			if watched.is_some() {
 				stop_watching = true;
 			} else {
-				leave = !state.demo;
+				leave = !state.offline_preview();
 			}
 		}
 		let mut view = ui.new_child(
@@ -3473,27 +3356,24 @@ impl MessagingUi {
 			self.watch_request = Some(None);
 			self.voice_focus = None;
 		}
-		if camera_clicked && let Some(command) = state.set_call_camera(!camera) {
+		if camera_clicked && state.set_call_camera(!camera) {
 			self.voice_camera_status = "";
-			commands.push(command);
 		}
 		// Each toggle reads the newest choice, so two in one frame never undo each other.
 		for (clicked, deafen) in [(mute_clicked, false), (deafen_clicked, true)] {
 			if clicked {
 				let (muted, deafened) = self.toggle_voice(deafen);
-				if let Some(command) = state.set_call_mute(muted, deafened) {
-					commands.push(command);
-				}
+				state.set_call_mute(muted, deafened);
 			}
 		}
-		if leave && let Some(command) = state.leave_call() {
-			commands.push(command);
+		if leave {
+			state.leave_call();
 		}
 	}
 
 	fn screen_share_control(&mut self, ui: &mut egui::Ui, state: &State) {
 		let enabled = self.screen.busy
-			|| state.demo
+			|| state.offline_preview()
 			|| (self.screen.supported
 				&& state.voice.active.as_ref().is_some_and(|call| {
 					matches!(call.phase, Phase::Connected | Phase::Waiting)
@@ -3675,12 +3555,12 @@ impl MessagingUi {
 						&mut bar_ui,
 						crate::icons::Icon::HangUp,
 						colors.danger,
-						!state.demo,
+						!state.offline_preview(),
 						"Decline",
 					)
-					.clicked() && let Some(command) = state.decline_call()
+					.clicked()
 				{
-					commands.push(command);
+					state.decline_call();
 				}
 				if video.clicked() {
 					self.voice_camera_on_join = Some(channel);
@@ -3693,7 +3573,7 @@ impl MessagingUi {
 
 	/// "Join with video" turns the camera on once that call connects, and forgets the wish
 	/// when the call fails or another one takes its place.
-	fn apply_camera_on_join(&mut self, state: &mut State, commands: &mut Vec<Command>) {
+	fn apply_camera_on_join(&mut self, state: &mut State) {
 		let Some(target) = self.voice_camera_on_join else {
 			return;
 		};
@@ -3707,13 +3587,11 @@ impl MessagingUi {
 			.as_ref()
 			.filter(|call| call.channel == target)
 		{
-			Some(call) if matches!(call.phase, Phase::Connected | Phase::Waiting) => {
+			Some(_) if state.call_connected() => {
 				self.voice_camera_on_join = None;
-				if let Some(command) = state.set_call_camera(true) {
-					commands.push(command);
-				}
+				state.set_call_camera(true);
 			}
-			Some(call) if call.phase != Phase::Failed => {}
+			Some(_) => {}
 			None if switching => {}
 			_ => self.voice_camera_on_join = None,
 		}
@@ -3730,7 +3608,7 @@ impl MessagingUi {
 	) {
 		let colors = design::palette(ui);
 		let selected = state.selected;
-		self.apply_camera_on_join(state, commands);
+		self.apply_camera_on_join(state);
 		if let Some(channel) = state
 			.voice
 			.active
@@ -3779,7 +3657,6 @@ impl MessagingUi {
 					};
 					let top = rect.top() + if header.is_some() { 48.0 } else { 0.0 };
 					let notices = self.stage_notices(state, channel, true);
-					let error = state.voice.active.as_ref().and_then(|c| c.error);
 					let bar_top = rect.bottom() - CONTROL_HEIGHT - STAGE_MARGIN - TILE_GAP;
 					let notice_rect = egui::Rect::from_min_max(
 						egui::pos2(rect.left() + STAGE_MARGIN, top + STAGE_MARGIN),
@@ -3792,9 +3669,8 @@ impl MessagingUi {
 					);
 					notice_ui.set_clip_rect(notice_rect.intersect(ui.clip_rect()));
 					stage_notices(&mut notice_ui, &notices);
-					call_failure(&mut notice_ui, error, STAGE_TEXT);
 					// Without notices the avatars may use the whole height of a shrunken panel.
-					let body_top = if notices.is_empty() && error.is_none() {
+					let body_top = if notices.is_empty() {
 						top + TILE_GAP
 					} else {
 						notice_ui.cursor().top() + TILE_GAP
@@ -3849,7 +3725,7 @@ impl MessagingUi {
 							.layout(egui::Layout::left_to_right(egui::Align::Center)),
 					);
 					bar_ui.set_opacity(chrome);
-					self.call_controls(&mut bar_ui, state, channel, commands);
+					self.call_controls(&mut bar_ui, state, channel);
 				});
 			self.apply_watch_request(state);
 		}
@@ -3899,13 +3775,11 @@ impl MessagingUi {
 								ui,
 								crate::icons::Icon::HangUp,
 								colors.danger,
-								!state.demo,
+								!state.offline_preview(),
 								"Decline",
 							);
-							if decline.clicked()
-								&& let Some(command) = state.decline_call()
-							{
-								commands.push(command);
+							if decline.clicked() {
+								state.decline_call();
 							}
 							let answer = call_action(
 								ui,
@@ -3949,12 +3823,7 @@ impl MessagingUi {
 
 	/// Call details drawn inside the account card while connected: Discord's "Voice
 	/// Connected" header, then a row of quick actions above the identity row.
-	pub(super) fn voice_card_section(
-		&mut self,
-		ui: &mut egui::Ui,
-		state: &mut State,
-		commands: &mut Vec<Command>,
-	) {
+	pub(super) fn voice_card_section(&mut self, ui: &mut egui::Ui, state: &mut State) {
 		let Some(call) = state.voice.active.as_ref() else {
 			return;
 		};
@@ -3963,7 +3832,6 @@ impl MessagingUi {
 		let channel_id = call.channel;
 		let camera = call.camera;
 		let connected = matches!(phase, Phase::Connected | Phase::Waiting);
-		let error = call.error;
 		let channel = state
 			.channel(call.channel)
 			.map_or("Direct message", |c| c.name.as_str())
@@ -3976,18 +3844,14 @@ impl MessagingUi {
 			Some(guild) => format!("{channel} / {guild}"),
 			None => channel,
 		};
-		let title = if state.demo && phase != Phase::Failed {
+		let title = if state.offline_preview() {
 			"Voice preview"
-		} else if phase == Phase::Failed {
-			"Call failed"
 		} else if connected {
 			"Voice Connected"
 		} else {
 			"Connecting…"
 		};
-		let color = if phase == Phase::Failed {
-			colors.danger
-		} else if connected || state.demo {
+		let color = if connected || state.offline_preview() {
 			colors.positive
 		} else {
 			colors.warning
@@ -4027,12 +3891,9 @@ impl MessagingUi {
 					ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
 						ui.spacing_mut().item_spacing.x = 6.0;
 						let leave = ui
-							.add_enabled_ui(!state.demo, |ui| {
-								let label = crate::i18n::translate_if_key(if phase == Phase::Failed {
-									"voice-voice-card-section-dismiss-call"
-								} else {
-									"voice-voice-card-section-disconnect"
-								});
+							.add_enabled_ui(!state.offline_preview(), |ui| {
+								let label =
+									crate::i18n::translate_if_key("voice-voice-card-section-disconnect");
 								let (rect, response) = ui
 									.allocate_exact_size(egui::Vec2::splat(32.0), egui::Sense::click());
 								// Quiet like the rest of Discord's panel header; it turns red only
@@ -4071,10 +3932,8 @@ impl MessagingUi {
 								response.on_hover_text(label)
 							})
 							.inner;
-						if leave.clicked()
-							&& let Some(command) = state.leave_call()
-						{
-							commands.push(command);
+						if leave.clicked() {
+							state.leave_call();
 						}
 						// Noise suppression sits beside disconnect, as in Discord's panel. It opens
 						// a popover with the filter choice; the glyph shows whether it is on.
@@ -4143,13 +4002,12 @@ impl MessagingUi {
 						});
 					});
 				});
-				call_failure(ui, error, colors.text_strong);
 				let controls = self.controls_enabled(state);
 				let can_camera = self.voice_camera_available
 					&& state.can_camera(channel_id)
 					&& matches!(phase, Phase::Connected | Phase::Waiting);
 				let can_share = self.screen.busy
-					|| state.demo || (self.screen.supported
+					|| state.offline_preview() || (self.screen.supported
 					&& matches!(phase, Phase::Connected | Phase::Waiting)
 					&& state.can_stream(channel_id));
 				let mut camera_clicked = false;
@@ -4184,7 +4042,7 @@ impl MessagingUi {
 						},
 						if camera {
 							"Stop sharing your camera"
-						} else if state.demo {
+						} else if state.offline_preview() {
 							"Camera is off in the offline preview"
 						} else if !self.voice_camera_available {
 							"Camera requires H264 support from the voice server"
@@ -4230,9 +4088,8 @@ impl MessagingUi {
 					)
 					.clicked();
 				});
-				if camera_clicked && let Some(command) = state.set_call_camera(!camera) {
+				if camera_clicked && state.set_call_camera(!camera) {
 					self.voice_camera_status = "";
-					commands.push(command);
 				}
 				if share_clicked {
 					self.screen.launch(state);
@@ -4249,7 +4106,6 @@ impl MessagingUi {
 		&mut self,
 		ui: &mut egui::Ui,
 		state: &mut State,
-		commands: &mut Vec<Command>,
 		deafen: bool,
 	) {
 		let colors = design::palette(ui);
@@ -4267,7 +4123,7 @@ impl MessagingUi {
 			},
 		);
 		self.voice_settings_popup(&chevron, state.demo, state.voice.active.is_some(), !deafen);
-		let toggle = self.mute_toggle(ui, state, commands, deafen, 32.0);
+		let toggle = self.mute_toggle(ui, state, deafen, 32.0);
 		ui.spacing_mut().item_spacing.x = spacing;
 		let latched = self.voice_deafened || (!deafen && self.voice_muted);
 		ui.painter().set(
@@ -4653,32 +4509,6 @@ fn speaking_avatar(ui: &egui::Ui, avatar: &egui::Response, name: &str) {
 	avatar.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &label));
 }
 
-fn call_failure(ui: &mut egui::Ui, error: Option<&str>, color: egui::Color32) {
-	let Some(error) = error else { return };
-	ui.horizontal_top(|ui| {
-		ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-			if crate::icons::button(
-				ui,
-				crate::icons::Icon::Copy,
-				28.0,
-				&crate::i18n::translate("voice-call-failure-copy-failure-reason"),
-			)
-			.clicked()
-			{
-				ui.ctx()
-					.copy_text(format!("Leech call failed\nReason: {error}"));
-			}
-			ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-				ui.add(
-					egui::Label::new(RichText::new(error).size(12.0).color(color))
-						.wrap()
-						.selectable(true),
-				);
-			});
-		});
-	});
-}
-
 fn stage_notices(ui: &mut egui::Ui, notices: &[(String, bool)]) {
 	ui.spacing_mut().item_spacing.y = 2.0;
 	for (text, strong) in notices {
@@ -4880,7 +4710,7 @@ fn stage_participants(state: &State, channel: Id) -> Vec<RosterEntry> {
 			.cloned()
 			.collect()
 	};
-	if call.is_some_and(|call| call.guild.is_none() && call.phase != Phase::Failed)
+	if call.is_some_and(|call| call.guild.is_none())
 		&& let Some(conversation) = state.channel(channel)
 	{
 		for user in conversation
@@ -4911,7 +4741,7 @@ fn stage_participants(state: &State, channel: Id) -> Vec<RosterEntry> {
 			}
 		}
 	}
-	if let Some(call) = call.filter(|call| call.phase != Phase::Failed)
+	if let Some(call) = call
 		&& let Some(user) = &state.user
 	{
 		// Discord seats everyone else first and the local participant last.
@@ -4949,7 +4779,7 @@ fn shown_participant(state: &State, entry: &RosterEntry) -> Participant {
 		.voice
 		.active
 		.as_ref()
-		.filter(|call| call.channel == entry.channel && call.phase != Phase::Failed)
+		.filter(|call| call.channel == entry.channel)
 		&& state
 			.user
 			.as_ref()
@@ -5215,7 +5045,7 @@ mod tests {
 	}
 
 	#[test]
-	fn explicit_join_audio_waits_for_call_switch_and_survives_teardown() {
+	fn explicit_join_audio_waits_for_the_switch_confirmation() {
 		let mut state = test_support::call_demo_state();
 		state.demo = false;
 		state.gateway_connected = true;
@@ -5229,30 +5059,18 @@ mod tests {
 			.unwrap();
 		assert_eq!((view.voice_muted, view.voice_deafened), before);
 		assert!(commands.is_empty());
-		let origin = view.voice_switch.as_ref().unwrap().from;
-		assert!(state.leave_call().is_some());
-		view.voice_switch.as_mut().unwrap().confirmed_at = Some(std::time::Instant::now());
-		state.apply_voice(client_core::voice::Event::Departed {
-			channel: origin.0,
-			request: origin.1,
-		});
-		let ctx = egui::Context::default();
-		view.show_call_switch(&ctx, &mut state, &mut commands);
-		assert!(commands.is_empty());
-		assert_eq!((view.voice_muted, view.voice_deafened), before);
-		view.voice_switch_ready = true;
-		view.show_call_switch(&ctx, &mut state, &mut commands);
-		assert!(matches!(
-			&commands[..],
-			[Command::Voice(client_core::voice::Command::Join {
-				channel: Id(25),
-				mute: true,
-				deaf: true,
-				..
-			})]
-		));
+		assert_eq!(state.voice.active.as_ref().unwrap().channel, Id(22));
+		view.confirm_call_switch(&mut state);
+		let call = state.voice.active.as_ref().unwrap();
+		assert_eq!(
+			(call.channel, call.muted, call.deafened),
+			(Id(25), true, true)
+		);
 		assert_eq!((view.voice_muted, view.voice_deafened), (true, true));
-		commands.clear();
+		assert!(
+			commands.is_empty(),
+			"the controller sends call commands itself"
+		);
 		assert!(
 			view.request_call_with_audio(
 				&mut state,
@@ -5915,7 +5733,7 @@ mod tests {
 			participants: Some(vec![]),
 			unavailable: false,
 		});
-		assert!(state.start_call(Id(22), false).is_some());
+		assert!(state.start_call(Id(22), false));
 		let call = state.voice.active.as_mut().unwrap();
 		let request = call.request;
 		// Synthetic confirmed media phase; this test never starts a transport/device.
@@ -5925,17 +5743,14 @@ mod tests {
 			..Default::default()
 		};
 		view.ring_request = Some((Id(22), request, Id(2), false));
-		let mut commands = vec![];
-		view.apply_ring_request(&mut state, &mut commands);
-		assert!(matches!(
-			commands.as_slice(),
-			[Command::Voice(client_core::voice::Command::RingRecipient {
+		let _ = state.voice.take_commands().count();
+		view.apply_ring_request(&mut state);
+		assert!(state.voice.take_commands().any(|command| command
+			== client_core::voice::Command::Ring {
 				channel: Id(22),
-				recipient: Id(2),
+				recipient: Some(Id(2)),
 				stop: false,
-				..
-			})]
-		));
+			}));
 		assert!(inactive_recipient(&state, Id(22), Id(2)));
 	}
 
@@ -5967,22 +5782,16 @@ mod tests {
 		let mut view = MessagingUi::default();
 		view.voice_speaking.push(Id(2));
 		assert!(!view.is_speaking(&state, channel, &peer.participant));
-		state.voice.ring_error = Some((channel, request, "Synthetic recipient error"));
+		state.voice.ring_error = Some((channel, "Synthetic recipient error"));
 		assert!(
 			view.stage_notices(&state, channel, true)
 				.contains(&("Synthetic recipient error".into(), true))
 		);
-		state.voice.ring_error = Some((channel, request + 1, "Stale recipient error"));
-		assert!(
-			!view
-				.stage_notices(&state, channel, true)
-				.iter()
-				.any(|(text, _)| text == "Stale recipient error")
-		);
+		// A ring chosen for an earlier attempt of this call is dropped.
 		view.ring_request = Some((channel, request + 1, Id(2), false));
-		let mut commands = vec![];
-		view.apply_ring_request(&mut state, &mut commands);
-		assert!(commands.is_empty());
+		let _ = state.voice.take_commands().count();
+		view.apply_ring_request(&mut state);
+		assert_eq!(state.voice.take_commands().count(), 0);
 		assert!(view.ring_request.is_none());
 	}
 	#[test]
@@ -6037,7 +5846,7 @@ mod tests {
 					messaging.screen.context = Some((state.generation, channel, request));
 					assert_eq!(stage_participants(&state, channel).len(), 1);
 					let mut commands = vec![];
-					for phase in [Phase::Waiting, Phase::Connected, Phase::Failed] {
+					for phase in [Phase::Waiting, Phase::Connected] {
 						state.voice.active.as_mut().unwrap().phase = phase;
 						let mut output = ctx.run_ui(
 							egui::RawInput {
@@ -6061,9 +5870,8 @@ mod tests {
 						}
 						output.textures_delta.clear();
 						for id in expected {
-							assert_eq!(
+							assert!(
 								rendered.contains(&id),
-								phase != Phase::Failed,
 								"guild={guild}, width={width}, phase={phase:?}, texture={id:?}"
 							);
 						}
@@ -6137,7 +5945,7 @@ mod tests {
 					state.demo = mode == 1;
 					state.gateway_connected = mode != 2;
 					if mode == 4 {
-						assert!(state.start_call(Id(25), false).is_some());
+						assert!(state.start_call(Id(25), false));
 					}
 					state
 						.channels
@@ -6191,21 +5999,17 @@ mod tests {
 						);
 						sent.extend(commands);
 					}
-					if mode == 0 {
-						assert!(matches!(
-							sent.as_slice(),
-							[Command::Voice(client_core::voice::Command::Join {
-								channel: Id(22),
-								ring: false,
-								..
-							})]
-						));
-					} else {
-						assert!(
-							sent.is_empty(),
-							"Demo, offline, voice-unavailable and busy states cannot join"
-						);
-					}
+					assert!(sent.is_empty(), "the controller sends call commands itself");
+					let joined = state
+						.voice
+						.active
+						.as_ref()
+						.is_some_and(|call| call.channel == Id(22));
+					assert_eq!(
+						joined,
+						mode == 0,
+						"Demo, offline, voice-unavailable and busy states cannot join"
+					);
 					state.apply_voice(client_core::voice::Event::Deleted { channel: Id(22) });
 					let (text, _) = frame(&ctx, &mut messaging, &mut state, width, vec![]);
 					assert!(
@@ -6445,15 +6249,9 @@ mod tests {
 				messaging.call_button(ui, &mut state, Id(25), &mut commands);
 			})
 			.drop_without_applying_deltas();
-		assert!(matches!(
-			commands.as_slice(),
-			[Command::Voice(client_core::voice::Command::Join {
-				channel: Id(25),
-				ring: false,
-				..
-			})]
-		));
+		assert!(commands.is_empty());
 		let call = state.voice.active.as_mut().unwrap();
+		assert_eq!(call.channel, Id(25));
 		assert!(elapsed_label(call).is_none());
 		call.connected_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(3663));
 		call.phase = Phase::Waiting;
@@ -6461,7 +6259,7 @@ mod tests {
 		call.channel_started_at =
 			Some(std::time::Instant::now() - std::time::Duration::from_secs(7540));
 		assert_eq!(elapsed_label(call).as_deref(), Some("02:05:40"));
-		call.phase = Phase::Failed;
+		call.phase = Phase::Connecting;
 		assert!(elapsed_label(call).is_none());
 		state.demo = true;
 		for width in [640.0, 1120.0] {

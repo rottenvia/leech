@@ -1434,48 +1434,18 @@ async fn run_recoverable(
 				}
 				command=voice_controls.recv(), if voice_open && ready_at.is_some() => {
 					let Some(command)=command else {voice_open=false;continue;};
-					if let client_core::voice::Command::ConfirmSession {channel,request,revision}=command {
-						if let Some(event)=calls.confirm_session(channel,request,revision) {emit(event)?;}
-						continue;
-					}
-					let connect=if let client_core::voice::Command::Join{channel,..}=command {Some(channel)}else{None};
-					let stream=matches!(command,client_core::voice::Command::StartStream{..}|client_core::voice::Command::StopStream{..}|client_core::voice::Command::WatchStream{..}|client_core::voice::Command::StopWatching{..});
-					let packet=match if stream {calls.stream_packet(command,owner_id)} else {calls.packet(command)} {
-						Ok(packet)=>packet,
-						Err(_) => {
-							match command {
-								client_core::voice::Command::Join{channel,request,..} => emit(Event::Voice(client_core::voice::Event::Failed{channel,request,message:"Previous call is still leaving, or the channel is unavailable; wait for departure or reconnect"}))?,
-								client_core::voice::Command::StartStream{channel,request,stream_request} => emit(Event::Voice(client_core::voice::Event::Stream{channel,request,stream_request,event:client_core::screen::Event::Failed("A screen share is already active, stopping, or the call is unavailable")}))?,
-								client_core::voice::Command::WatchStream{channel,request,stream_request,streamer} => emit(Event::Voice(client_core::voice::Event::Watch{channel,request,stream_request,streamer,event:client_core::screen::Event::Failed("Another stream is already being watched, or the call is unavailable")}))?,
-								_=>{}
+					// The call controller paces and retries; a refused or unsendable command is
+					// reported back so it can be sent again.
+					match calls.packet(&command) {
+						Ok(Some(packet)) => {
+							if !matches!(timeout(Duration::from_secs(5),socket.send(packet)).await,Ok(Ok(()))) {
+								emit(Event::Voice(client_core::voice::Event::Unsent(command)))?;
+								break;
 							}
-							continue;
 						}
-					};
-					if let client_core::voice::Command::Leave { channel, request } | client_core::voice::Command::AbandonSession { channel, request } = command
-						&& packet.is_none() && !calls.has_call() {
-						emit(Event::Voice(client_core::voice::Event::Departed { channel, request }))?;
+						Ok(None) => {}
+						Err(_) => emit(Event::Voice(client_core::voice::Event::Unsent(command)))?,
 					}
-					if let Some(channel)=connect && let Some(packet)=calls.packet(client_core::voice::Command::Sync { channel })?
-						&& !matches!(timeout(Duration::from_secs(5),socket.send(packet)).await,Ok(Ok(()))) {break;}
-					if let Some(packet)=packet && !matches!(timeout(Duration::from_secs(5),socket.send(packet)).await,Ok(Ok(()))) {
-						if matches!(command,client_core::voice::Command::SetMute{..}|client_core::voice::Command::SetCamera{..}) {
-							calls.state_send_failed();
-						}
-						break;
-					}
-					if let Some(channel)=connect && let Some(packet)=calls.channel_info_packet(channel)
-						&& !matches!(timeout(Duration::from_secs(5),socket.send(packet)).await,Ok(Ok(()))) {break;}
-				}
-
-				_=tokio::time::sleep_until(calls.state_deadline.unwrap_or(ready_deadline)), if calls.state_deadline.is_some() && ready_at.is_some() => {
-					if let Some(packet)=calls.flush_state() && !matches!(timeout(Duration::from_secs(5),socket.send(packet)).await,Ok(Ok(()))) {
-						calls.state_send_failed();
-						break;
-					}
-				}
-				_=tokio::time::sleep_until(calls.departure_deadline.unwrap_or(ready_deadline)), if calls.departure_deadline.is_some() => {
-					if let Some(event)=calls.departure_expired() {emit(event)?;}
 				}
 				changed = member_queries.changed(), if queries_open && ready_at.is_some() => {
 					queries_open = changed.is_ok();
@@ -1713,7 +1683,7 @@ async fn run_recoverable(
 										calls.users.clear();
 									}
 									"RESUMED" => { emit(Event::Interaction(client_core::interactions::Event::Session(state.session.clone().ok_or(Failure::Protocol)?)))?; emit(Event::Resumed)?; state.failures = 0; ready_at = Some(Instant::now()); },
-									"CALL_CREATE" | "CALL_UPDATE" | "CALL_DELETE" | "CHANNEL_INFO" | "VOICE_CHANNEL_START_TIME_UPDATE" | "VOICE_STATE_UPDATE" | "VOICE_SERVER_UPDATE" | "STREAM_CREATE" | "STREAM_SERVER_UPDATE" | "STREAM_DELETE" => calls.dispatch(packet.t.as_deref().unwrap_or(""),packet.d.get().as_bytes(),owner_id,&emit)?,
+									"CALL_CREATE" | "CALL_UPDATE" | "CALL_DELETE" | "CHANNEL_INFO" | "VOICE_CHANNEL_START_TIME_UPDATE" | "VOICE_STATE_UPDATE" | "VOICE_SERVER_UPDATE" | "STREAM_CREATE" | "STREAM_SERVER_UPDATE" | "STREAM_DELETE" => calls.dispatch(packet.t.as_deref().unwrap_or(""),packet.d.get().as_bytes(),owner_id,state.session.as_deref().map(String::as_str),&emit)?,
 									"THREAD_MEMBER_LIST_UPDATE" => {
 										if let Some(active) = &mut active_members {
 											match active.thread_update(packet.d.get().as_bytes()) {
@@ -1835,7 +1805,7 @@ async fn run_recoverable(
 										}
 										let mut update = envelope.voice().map_err(|_|Failure::Protocol)?;
 										let latest = std::mem::take(&mut update.updated_channels);
-										calls.passive(update,owner_id,&emit)?;
+										calls.passive(update,owner_id,state.session.as_deref().map(String::as_str),&emit)?;
 										emit(Event::ReadState(client_core::read_state::Event::Latest(latest.into_iter().map(|c|(c.id,c.last_message_id)).collect())))?;
 									}
 									"MESSAGE_POLL_VOTE_ADD" | "MESSAGE_POLL_VOTE_REMOVE" => {
@@ -3005,7 +2975,7 @@ mod tests {
 							assert!(!unavailable);
 							observed.lock().unwrap().push(if let Some(rows) = participants { assert_eq!(rows[0].user, Id(3)); "create" } else { "update" });
 						}
-						Event::Voice(E::State { request, session, .. }) => { assert_eq!(request, None); assert!(session.is_none()); observed.lock().unwrap().push("state"); }
+						Event::Voice(E::State { ours, session, .. }) => { assert!(!ours); assert!(session.is_none()); observed.lock().unwrap().push("state"); }
 						Event::Voice(E::Deleted { channel }) => { assert_eq!(channel, Id(2)); observed.lock().unwrap().push("delete"); deleted.send(true).unwrap(); }
 						_ => {}
 					}
@@ -3038,7 +3008,7 @@ mod tests {
                     assert_eq!(p["op"],4);assert!(p["d"]["guild_id"].is_null());
                     if !joined {
                         assert!(requested);assert_eq!(p["d"]["channel_id"],"2");joined=true;
-                        send(&mut socket,json!({"op":0,"t":"VOICE_STATE_UPDATE","s":2,"d":{"user_id":"1","channel_id":"2","session_id":"synthetic-call-session","self_mute":false,"self_deaf":false}})).await;
+                        send(&mut socket,json!({"op":0,"t":"VOICE_STATE_UPDATE","s":2,"d":{"user_id":"1","channel_id":"2","session_id":"synthetic-main-session","self_mute":false,"self_deaf":false}})).await;
                         send(&mut socket,json!({"op":0,"t":"VOICE_SERVER_UPDATE","s":3,"d":{"guild_id":null,"channel_id":"2","token":"synthetic-call-token","endpoint":"voice.discord.media:443"}})).await;
                     } else {assert!(p["d"]["channel_id"].is_null());break;}
                 }
@@ -3046,9 +3016,9 @@ mod tests {
             };
             let client=run_inner(Arc::new(SessionSecret::from_owner_input("synthetic-owner-session".into()).unwrap()),"wss://gateway.discord.gg/".into(),watch::channel(None).1,receive,None,|event| {
                 match event {
-                    Event::Startup(_)=>controls.try_send(V::Join{channel:Id(2),request:7,ring:false,mute:false,deaf:false}).unwrap(),
-                    Event::Voice(E::State{request,session,..})=>{assert_eq!(request,Some(7));assert_eq!(session.unwrap().expose(),"synthetic-call-session");},
-                    Event::Voice(E::Server{request,token,..})=>{assert_eq!(request,7);assert_eq!(token.unwrap().expose(),"synthetic-call-token");controls.try_send(V::Leave{channel:Id(2),request}).unwrap();},
+                    Event::Startup(_)=>{controls.try_send(V::Sync{channel:Id(2)}).unwrap();controls.try_send(V::VoiceState{guild:None,channel:Some(Id(2)),mute:false,deaf:false,video:false}).unwrap();},
+                    Event::Voice(E::State{ours,session,..})=>{assert!(ours);assert_eq!(session.unwrap().expose(),"synthetic-main-session");},
+                    Event::Voice(E::Server{channel,token,..})=>{assert_eq!(channel,Some(Id(2)));assert_eq!(token.unwrap().expose(),"synthetic-call-token");controls.try_send(V::VoiceState{guild:None,channel:None,mute:false,deaf:false,video:false}).unwrap();},
                     _=>{},
                 }
                 Ok(())
@@ -3740,6 +3710,3 @@ mod member_tests {
 
 #[cfg(debug_assertions)]
 pub use member_search::debug_check as debug_member_search_check;
-
-#[cfg(debug_assertions)]
-pub use voice::debug_voice_state_retry_check;

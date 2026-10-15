@@ -1164,11 +1164,9 @@ fn phase(phase: client_core::voice::Phase) -> &'static str {
 		ConnectingTransport => "connecting_transport",
 		Discovering => "discovering",
 		OpeningAudio => "opening_audio",
-		Ringing => "ringing",
 		Securing => "securing",
 		Connected => "connected",
 		Waiting => "waiting",
-		Failed => "failed",
 	}
 }
 

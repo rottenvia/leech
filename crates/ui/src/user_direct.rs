@@ -108,11 +108,19 @@ mod tests {
 			assert_eq!(state.selected, Some(channel.id));
 			assert_eq!(state.drafts, drafts);
 			assert_eq!(commands.iter().filter(|command| matches!(command, Command::Send { channel: target, content, reply: None, .. } if *target == channel.id && content == "Explicit profile message")).count(), usize::from(purpose == 2));
-			assert_eq!(commands.iter().filter(|command| matches!(command, Command::Voice(client_core::voice::Command::Join { channel: target, ring: true, .. }) if *target == channel.id)).count(), usize::from(purpose == 1));
+			assert_eq!(
+				state
+					.voice
+					.active
+					.as_ref()
+					.is_some_and(|call| call.channel == channel.id),
+				purpose == 1
+			);
 			assert!(view.user_direct.is_none());
 			let before = (state.selected, state.request);
 			view.finish_user_direct(&mut state, before, &mut commands);
-			assert_eq!(commands.len(), if purpose == 0 { 2 } else { 3 });
+			// The call controller sends a call's commands itself.
+			assert_eq!(commands.len(), if purpose == 2 { 3 } else { 2 });
 		}
 	}
 
