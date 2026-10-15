@@ -1860,15 +1860,13 @@ impl MessagingUi {
 						self.guild = None;
 						self.search.open = false;
 					}
-					// Discord's hairline between Friends and the conversations, centred
-					// between the two rows' text.
-					let (line, _) = ui.allocate_exact_size(
-						egui::vec2(ui.available_width(), 4.0),
-						egui::Sense::hover(),
-					);
+					// Discord's hairline between Friends and the conversations. The first list
+					// row centres its text, so the rule sits in that row's empty top part,
+					// about midway between the two labels.
+					ui.add_space(4.0);
 					ui.painter().hline(
-						line.x_range().shrink(8.0),
-						line.center().y,
+						rect.x_range().shrink(8.0),
+						rect.bottom() + 12.5,
 						egui::Stroke::new(1.0, colors.border),
 					);
 				}
