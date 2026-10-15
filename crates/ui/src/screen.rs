@@ -2,7 +2,6 @@
 use client_core::{
 	State,
 	screen::{Settings, Source, SourceId},
-	voice::Phase,
 };
 use model::Id;
 
@@ -110,7 +109,6 @@ impl ScreenUi {
 			.voice
 			.active
 			.as_ref()
-			.filter(|c| c.phase != Phase::Failed)
 			.map(|c| (state.generation, c.channel, c.request));
 		if self.context.is_some() && current != self.context {
 			self.preview = None;
@@ -136,13 +134,15 @@ impl ScreenUi {
 		.show(ctx, |d| {
 			d.scroll(260.0, |ui| self.body(ui, state));
 			d.footer(|ui| {
-				let allowed = !state.demo
+				let allowed = !state.offline_preview()
 					&& self.supported
 					&& !self.busy && self.settings().is_some()
-					&& state.voice.active.as_ref().is_some_and(|call| {
-						matches!(call.phase, Phase::Connected | Phase::Waiting)
-							&& state.can_stream(call.channel)
-					});
+					&& state.call_connected()
+					&& state
+						.voice
+						.active
+						.as_ref()
+						.is_some_and(|call| state.can_stream(call.channel));
 				ui.add_enabled_ui(allowed, |ui| {
 					share = crate::dialog::action(
 						ui,

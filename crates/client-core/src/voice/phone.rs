@@ -236,7 +236,8 @@ impl super::State {
 	}
 	pub fn share_plan(&self) -> Option<SharePlan> {
 		let (id, settings) = self.phone.share.want?;
-		(self.phone.share.stream.ready() && self.media_ready()).then_some(SharePlan { id, settings })
+		(self.phone.share.stream.ready() && self.media_ready())
+			.then_some(SharePlan { id, settings })
 	}
 	pub fn watch_plan(&self) -> Option<WatchPlan> {
 		let (id, streamer) = self.phone.watch.want?;
@@ -584,6 +585,10 @@ impl ClientState {
 	/// Brings the wire, the link, the media runs and the streams in line with the intent.
 	/// Idempotent, and safe after any input.
 	pub(crate) fn pump(&mut self, now: Instant) {
+		// The plain offline preview only renders fixture calls; nothing drives them.
+		if self.offline_preview() {
+			return;
+		}
 		// Access can disappear with any update; the call ends rather than failing in place.
 		if let Some(channel) = self.voice.active.as_ref().map(|call| call.channel)
 			&& self.voice_revoked(channel)

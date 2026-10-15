@@ -94,7 +94,6 @@ fn main() -> eframe::Result {
 			.build()
 			.unwrap();
 		uploads::debug_reservation_check(runtime.handle());
-		discord_gateway::debug_voice_state_retry_check();
 		ui::MessagingUi::debug_double_click_reaction_check(
 			test_support::demo_state(),
 			test_support::message(60_000 << 22, model::Id(20)),
@@ -987,6 +986,9 @@ struct Desktop {
 	avatar_clear_account: Option<model::Id>,
 	avatar_cleanup: Option<std::sync::mpsc::Receiver<Result<(), &'static str>>>,
 	voice: voice::Voice,
+	/// The offline demo's simulated Discord; demo calls connect, share and fail inside it.
+	#[cfg(feature = "demo")]
+	sim: Option<client_core::voice::sim::Discord>,
 	runtime: tokio::runtime::Runtime,
 	store: Option<credentials::Store>,
 	cache: Option<cache::Cache>,
@@ -1531,35 +1533,27 @@ impl Desktop {
 				list.freshness = model::Freshness::Loading;
 			}
 		}
+		// Demo calls run against a simulated Discord: they connect, share, watch and fail
+		// like real ones, with no account, network or device.
+		#[cfg(feature = "demo")]
+		let mut sim = demo.then(|| {
+			state.voice.simulated = true;
+			let mut sim = client_core::voice::sim::Discord::new(
+				7,
+				client_core::voice::sim::Config {
+					latency: (40, 160),
+					answer: Some(std::time::Duration::from_secs(3)),
+					..Default::default()
+				},
+			);
+			sim.adopt(&state);
+			sim.settle(&mut state, std::time::Instant::now());
+			sim
+		});
 		#[cfg(feature = "demo")]
 		if demo && std::env::args().any(|arg| arg == "--demo-voice-failed") {
-			let call = state
-				.voice
-				.active
-				.as_ref()
-				.expect("voice fixture has a call");
-			let (channel, request) = (call.channel, call.request);
-			let reason = "Audio device stopped or disconnected; choose a device and call again";
-			state.apply_voice(client_core::voice::Event::Failed {
-				channel,
-				request,
-				message: reason,
-			});
-			// Synthetic recovery events must not erase the reason before it can be copied.
-			state.disconnect_voice("Later gateway disconnect");
-			state.apply_voice(client_core::voice::Event::Deleted { channel });
-			state.apply_voice(client_core::voice::Event::Progress {
-				channel,
-				request,
-				phase: client_core::voice::Phase::Connected,
-			});
-			let call = state
-				.voice
-				.active
-				.as_ref()
-				.expect("failure survives departure");
-			assert_eq!(call.error, Some(reason));
-			assert_eq!(call.phase, client_core::voice::Phase::Failed);
+			state.leave_call();
+			state.status = "Audio device stopped or disconnected; choose a device and call again";
 		}
 		#[cfg(feature = "demo")]
 		if demo {
@@ -1774,9 +1768,18 @@ impl Desktop {
 					}
 				}
 			}
-			// Watching enlarges the share, as a click on Watch Stream does.
-			if state.watch_stream(peer).is_some() {
-				messaging.voice_focus = Some(ui::StageFocus::Stream(peer));
+			if let (Some(sim), Some(channel)) = (
+				sim.as_mut(),
+				state.voice.active.as_ref().map(|call| call.channel),
+			) {
+				let now = std::time::Instant::now();
+				sim.other_state(&state, now, peer, Some(channel), true);
+				let now = sim.settle(&mut state, now);
+				// Watching enlarges the share, as a click on Watch Stream does.
+				if state.watch_stream(peer) {
+					messaging.voice_focus = Some(ui::StageFocus::Stream(peer));
+				}
+				sim.settle(&mut state, now);
 			}
 			let (width, height) = (640usize, 360usize);
 			let pixels = (0..width * height)
@@ -2293,6 +2296,8 @@ impl Desktop {
 			avatar_start_failed: false,
 			avatar_clear_account: None,
 			voice: voice::Voice::default(),
+			#[cfg(feature = "demo")]
+			sim,
 			runtime,
 			store,
 			cache,
@@ -3569,40 +3574,9 @@ impl Desktop {
 				channel: *channel,
 			}));
 		}
-		if let Command::Voice(control) = &command {
-			if self.state.demo || self.fixture_only {
-				self.state.status = "Voice calls are unavailable in the offline preview";
-				return;
-			}
-			if let client_core::voice::Command::Join {
-				channel,
-				request,
-				ring,
-				..
-			} = control
-			{
-				let result = self.voice.begin(&self.state, *ring);
-				if let Err(message) = result {
-					self.state.apply_voice(client_core::voice::Event::Failed {
-						channel: *channel,
-						request: *request,
-						message,
-					});
-					return;
-				}
-			}
-			if matches!(
-				control,
-				client_core::voice::Command::SetCamera { enabled: false, .. }
-			) {
-				self.voice.stop_camera();
-				self.messaging.voice_camera_preview = None;
-			}
-			if matches!(control, client_core::voice::Command::Leave { .. }) {
-				self.voice.stop();
-				self.messaging.camera_test_requested = false;
-				self.messaging.camera_test_texture = None;
-			}
+		if matches!(command, Command::Voice(_)) && (self.state.demo || self.fixture_only) {
+			// The simulated Discord answers demo calls; nothing reaches a network.
+			return;
 		}
 		if let Command::History {
 			channel,
@@ -5405,12 +5379,25 @@ impl Desktop {
 			}
 		}
 	}
+	/// The call controller ticks, media follows its plans, and its commands go out.
 	fn poll_voice(&mut self, ctx: &egui::Context) {
-		if let Some(command) =
-			self.voice
-				.poll(&self.runtime, &mut self.state, &mut self.messaging, ctx)
-		{
-			self.command(command);
+		let now = std::time::Instant::now();
+		self.state.voice_tick(now);
+		self.voice
+			.poll(&self.runtime, &mut self.state, &mut self.messaging, ctx);
+		#[cfg(feature = "demo")]
+		if let Some(sim) = &mut self.sim {
+			sim.step(&mut self.state, now);
+			if let Some(due) = sim.next_due() {
+				ctx.request_repaint_after(due.saturating_duration_since(now));
+			}
+		}
+		let commands: Vec<_> = self.state.voice.take_commands().collect();
+		for command in commands {
+			self.command(Command::Voice(command));
+		}
+		if let Some(deadline) = self.state.voice.next_deadline() {
+			ctx.request_repaint_after(deadline.saturating_duration_since(now));
 		}
 	}
 	fn poll(&mut self, ctx: &egui::Context) {
@@ -5771,20 +5758,12 @@ impl Desktop {
 			}
 			let typing_count = events.len() - reliable_count;
 			events.rotate_right(typing_count);
-			// A local candidate failure must remain deliverable when reliable account
-			// events are full. Apply queued signaling first; observe rechecks its scope.
-			if let Some(failure) = connection::take_confirmation_failure(
-				&mut connection.confirmation_failure,
-				&connection.events,
-			) {
-				events.push(failure);
-			}
 			terminal = *connection.terminal.borrow();
 		}
 		let mut persist_timeline = false;
 		let mut full_window = false;
 		let mut changed_messages = std::collections::BTreeSet::new();
-		for mut event in events {
+		for event in events {
 			if event.generation != self.state.generation {
 				continue;
 			}
@@ -5802,8 +5781,6 @@ impl Desktop {
 				}
 				_ => {}
 			}
-			let takeover_notice = voice::takeover_notice(&self.state, &event.event);
-			let voice_failure = self.voice.observe(&self.state, &mut event.event);
 			let ready = event.event.ready_navigation().is_some();
 			let resumed = matches!(event.event, Event::Resumed);
 			if (ready || resumed)
@@ -5896,11 +5873,6 @@ impl Desktop {
 				self.extensions.access_changed(&mut self.messaging);
 			}
 			self.state.apply(event);
-			if let Some(message) = takeover_notice {
-				self.messaging
-					.toasts
-					.push(ui::design::Level::Info, ui::i18n::translate(message));
-			}
 			self.extensions.data_changed(data_changes);
 			self.extensions.cancel_stale_message_events(&self.state);
 			for candidate in extension_events {
@@ -5929,11 +5901,6 @@ impl Desktop {
 					self.messaging.channel_preferences_changed |=
 						self.messaging.channel_preferences.forget(channel);
 				}
-			}
-			if let Some(error) = voice_failure
-				&& let Some(command) = self.voice.fail(&mut self.state, error)
-			{
-				self.command(command);
 			}
 			// ponytail: accepted navigation removals clear account-wide history;
 			// add scoped disk deletion if channel churn makes refetch cost significant.
@@ -6279,11 +6246,8 @@ impl eframe::App for Desktop {
 			}
 			let (muted, deafened) =
 				latest.unwrap_or((self.messaging.voice_muted, self.messaging.voice_deafened));
-			if self.state.auth == AuthState::Authenticated
-				&& let Some(command) = self.state.set_call_mute(muted, deafened)
-				&& !self.state.demo
-			{
-				self.command(command);
+			if self.state.auth == AuthState::Authenticated {
+				self.state.set_call_mute(muted, deafened);
 			}
 		}
 		if self.updater.sync(

@@ -1,9 +1,10 @@
-//! Guild voice signaling and unofficial DM calls. Never joins on incoming events or reconnect.
+//! Voice signaling on the main Gateway: framing the call controller's commands and parsing
+//! voice, call and stream dispatches into its events. No call state lives here; the
+//! controller in `client_core::voice` decides everything. Never joins on its own.
 use client_core::{
 	Event,
 	auth::Failure,
-	screen,
-	voice::{self, Command, Participant, RosterEntry, Secret},
+	voice::{self, Command, Participant, RosterEntry, Secret, StreamEvent},
 };
 use discord_protocol::{
 	CallDto, ChannelInfoDto, GuildDto, UserDto, VoiceChannelStartTimeDto, VoiceMemberDto,
@@ -11,115 +12,37 @@ use discord_protocol::{
 };
 use model::{Id, Member, User};
 use serde_json::json;
-use std::{collections::BTreeMap, time::Duration};
-use tokio::time::Instant;
+use std::collections::BTreeMap;
 use tokio_tungstenite::tungstenite::Message as Frame;
 use zeroize::Zeroizing;
 
-/// Rapid mute/deafen toggles inside this window collapse into one voice state update.
-const STATE_COALESCE: Duration = Duration::from_millis(120);
-
-struct StreamAttempt {
-	channel: Id,
-	request: u64,
-	stream_request: u64,
-	key: String,
-	created: Option<(Id, Id)>,
-	departing: bool,
-}
-/// One explicitly requested view of another participant's stream (unofficial opcode 20).
-struct WatchAttempt {
-	channel: Id,
-	request: u64,
-	stream_request: u64,
-	streamer: Id,
-	key: String,
-	created: Option<(Id, Id)>,
-}
+const MAX_STREAM_KEY: usize = 128;
 
 #[derive(Default)]
 pub(super) struct Calls {
+	/// Channels that can hold a call: private calls (`None`) and guild voice channels.
 	pub(super) allowed: BTreeMap<Id, Option<Id>>,
-	pub(super) active: Option<(Id, u64)>,
-	active_guild: Option<Id>,
-	// One validated, redacted/zeroizing candidate; ownership requires transport confirmation.
-	active_session: Option<Secret>,
-	// A candidate is replaceable until this device authenticates its voice transport.
-	session_confirmed: bool,
-	negotiation_revision: u64,
-	negotiation_server: Option<(Secret, Option<String>)>,
-	muted: bool,
-	deafened: bool,
-	camera: bool,
-	/// Last `(self_mute, self_deaf, self_video)` handed to the wire, and when.
-	/// The socket owner rolls this back with `state_send_failed` if sending fails.
-	sent_state: Option<((bool, bool, bool), Instant)>,
-	/// A coalesced mute/deafen change is sent when this passes; only the newest state goes out.
-	pub(super) state_deadline: Option<Instant>,
-	departing: Option<(Id, u64)>,
-	departing_guild: Option<Id>,
-	departing_session: Option<Secret>,
-	pub(super) departure_deadline: Option<Instant>,
-	stream: Option<StreamAttempt>,
-	watch: Option<WatchAttempt>,
+	/// The guild voice channel last asked for, so its start-time updates are kept.
+	joined: Option<(Id, Id)>,
 	// Optional metadata, retained until READY_SUPPLEMENTAL or reset within the roster budget.
 	// Overflow leaves participants using the existing user-ID fallback.
 	pub(super) users: BTreeMap<Id, User>,
 }
 impl Calls {
-	/// The gateway socket dropped. A RESUME keeps Discord's voice state, so the joined call
-	/// and its mute flags survive; only an unacknowledged hangup is abandoned.
+	/// The socket dropped. A RESUME keeps Discord's voice state.
 	pub(super) fn disconnected(&mut self) {
-		self.departing = None;
-		self.departing_session = None;
-		self.departure_deadline = None;
 		self.users.clear();
 	}
 	/// A fresh READY: Discord dropped every voice state bound to the previous session.
 	pub(super) fn session_reset(&mut self) {
-		self.active = None;
-		self.active_guild = None;
-		self.active_session = None;
-		self.negotiation_server = None;
-		self.session_confirmed = false;
-		self.muted = false;
-		self.deafened = false;
-		self.camera = false;
-		self.sent_state = None;
-		self.state_deadline = None;
-		self.departing = None;
-		self.departing_session = None;
-		self.departure_deadline = None;
-		self.stream = None;
-		self.watch = None;
+		self.joined = None;
 		self.users.clear();
 	}
 	pub(super) fn invalidate(&mut self, channel: Id) {
 		self.allowed.remove(&channel);
-		if self.active.is_some_and(|(active, _)| active == channel) {
-			self.active = None;
-			self.active_guild = None;
-			self.active_session = None;
-			self.negotiation_server = None;
-			self.session_confirmed = false;
-			self.stream = None;
-			self.watch = None;
-			self.camera = false;
+		if self.joined.is_some_and(|(_, joined)| joined == channel) {
+			self.joined = None;
 		}
-	}
-	pub(super) fn has_call(&self) -> bool {
-		self.active.is_some() || self.departing.is_some()
-	}
-
-	pub(super) fn departure_expired(&mut self) -> Option<Event> {
-		self.departure_deadline = None;
-		self.departing.map(|(channel, request)| {
-			Event::Voice(voice::Event::Failed {
-				channel,
-				request,
-				message: "Discord did not acknowledge hangup; reconnect before calling again",
-			})
-		})
 	}
 	pub(super) fn remember_users(&mut self, users: Vec<UserDto>) {
 		self.users.clear();
@@ -218,6 +141,7 @@ impl Calls {
 		&mut self,
 		mut update: discord_protocol::PassiveVoiceUpdate,
 		owner: Option<Id>,
+		session: Option<&str>,
 		emit: &impl Fn(Event) -> Result<(), Failure>,
 	) -> Result<(), Failure> {
 		if update.updated_voice_states.len() + update.removed_voice_states.len() > voice::MAX_ROSTER
@@ -237,7 +161,7 @@ impl Calls {
 		for mut state in update.updated_voice_states.drain(..) {
 			state.guild_id = Some(guild);
 			let member = members.get(&state.user_id).cloned();
-			self.state(state, member, owner, emit)?;
+			self.state(state, member, owner, session, false, emit)?;
 		}
 		for user in update.removed_voice_states {
 			self.state(
@@ -257,190 +181,60 @@ impl Calls {
 				},
 				None,
 				owner,
+				session,
+				false,
 				emit,
 			)?;
 		}
 		Ok(())
 	}
-	pub(super) fn confirm_session(
-		&mut self,
-		channel: Id,
-		request: u64,
-		revision: u64,
-	) -> Option<Event> {
-		if self.active != Some((channel, request))
-			|| self.allowed.get(&channel) != Some(&self.active_guild)
-			|| self.active_session.is_none()
-			|| self
-				.negotiation_server
-				.as_ref()
-				.is_none_or(|(_, endpoint)| endpoint.is_none())
-			|| self.negotiation_revision != revision
-		{
-			return None;
-		}
-		self.session_confirmed = true;
-		Some(Event::Voice(voice::Event::SessionConfirmed {
-			channel,
-			request,
-			revision,
-		}))
-	}
-	pub(super) fn packet(&mut self, command: Command) -> Result<Option<Frame>, Failure> {
-		let (channel, guild) = match command {
+	/// Frames one controller command for the Gateway; REST work (ringing) yields nothing.
+	pub(super) fn packet(&mut self, command: &Command) -> Result<Option<Frame>, Failure> {
+		let value = match command {
 			Command::Sync { channel } => {
-				if self.allowed.get(&channel) != Some(&None) {
+				if self.allowed.get(channel) != Some(&None) {
 					return Ok(None);
 				}
 				// Unofficial opcode 13 requests existing call state; it never joins or rings.
-				return Ok(Some(Frame::Text(
-					json!({"op":13,"d":{"channel_id":channel}})
-						.to_string()
-						.into(),
-				)));
+				json!({"op":13,"d":{"channel_id":channel}})
 			}
-			Command::Join {
+			Command::VoiceState {
+				guild,
 				channel,
-				request,
 				mute,
 				deaf,
-				..
+				video,
 			} => {
-				let guild = *self.allowed.get(&channel).ok_or(Failure::Protocol)?;
-				if self.active.is_some() || self.departing.is_some() {
-					return Err(Failure::Protocol);
-				}
-				self.active = Some((channel, request));
-				self.active_guild = guild;
-				self.active_session = None;
-				self.negotiation_server = None;
-				self.session_confirmed = false;
-				self.muted = mute || deaf;
-				self.deafened = deaf;
-				self.camera = false;
-				(Some(channel), guild)
-			}
-			Command::AbandonSession { channel, request } => {
-				if self.active == Some((channel, request)) {
-					self.active = None;
-					self.active_guild = None;
-					self.active_session = None;
-					self.negotiation_server = None;
-					self.session_confirmed = false;
-					self.stream = None;
-					self.watch = None;
-					self.camera = false;
-				}
-				return Ok(None);
-			}
-			Command::Leave { channel, request } => {
-				if self.active != Some((channel, request)) {
-					return Ok(None);
-				}
-				self.departing = self.active.take();
-				self.departing_session = self
-					.active_session
-					.take()
-					.filter(|_| self.session_confirmed);
-				self.session_confirmed = false;
-				self.negotiation_server = None;
-				self.departing_guild = self.active_guild;
-				self.departure_deadline = Some(Instant::now() + Duration::from_secs(10));
-				self.stream = None;
-				self.watch = None;
-				self.muted = true;
-				self.deafened = true;
-				self.camera = false;
-				(None, self.active_guild)
-			}
-			Command::SetMute {
-				channel,
-				request,
-				mute,
-				deaf,
-			} => {
-				if self.active != Some((channel, request)) {
-					return Ok(None);
-				}
-				if self.allowed.get(&channel) != Some(&self.active_guild) {
-					return Err(Failure::Forbidden);
-				}
-				self.muted = mute || deaf;
-				self.deafened = deaf;
-				// Idempotent against what Discord already has; a burst waits for the window.
-				match self.sent_state {
-					Some((sent, _)) if sent == (self.muted, self.deafened, self.camera) => {
-						self.state_deadline = None;
-						return Ok(None);
+				if let Some(channel) = channel {
+					if self.allowed.get(channel) != Some(guild) {
+						return Err(Failure::Forbidden);
 					}
-					Some((_, at)) if at.elapsed() < STATE_COALESCE => {
-						self.state_deadline.get_or_insert(at + STATE_COALESCE);
-						return Ok(None);
-					}
-					_ => {}
+					self.joined = guild.map(|guild| (guild, *channel));
+				} else {
+					self.joined = None;
 				}
-				(Some(channel), self.active_guild)
+				json!({"op":4,"d":{"guild_id":guild,"channel_id":channel,"self_mute":mute,"self_deaf":deaf,"self_video":video}})
 			}
-			Command::SetCamera {
-				channel,
-				request,
-				enabled,
-			} => {
-				if self.active != Some((channel, request)) {
-					return Ok(None);
-				}
-				if enabled && self.allowed.get(&channel) != Some(&self.active_guild) {
-					return Err(Failure::Forbidden);
-				}
-				self.camera = enabled;
-				(Some(channel), self.active_guild)
-			}
-			Command::ConfirmSession { .. }
-			| Command::StartStream { .. }
-			| Command::StopStream { .. }
-			| Command::WatchStream { .. }
-			| Command::StopWatching { .. }
-			| Command::Decline { .. }
-			| Command::Ring { .. }
-			| Command::RingRecipient { .. } => return Ok(None),
-		};
-		Ok(Some(self.state_frame(channel, guild)))
-	}
-	fn state_frame(&mut self, channel: Option<Id>, guild: Option<Id>) -> Frame {
-		self.sent_state = Some(((self.muted, self.deafened, self.camera), Instant::now()));
-		self.state_deadline = None;
-		Frame::Text(json!({"op":4,"d":{"guild_id":guild,"channel_id":channel,"self_mute":self.muted,"self_deaf":self.deafened,"self_video":self.camera}}).to_string().into())
-	}
-	/// Preserve a failed active-call update for the next resumed socket. A fresh READY
-	/// clears this together with the old call, so it never causes an automatic rejoin.
-	pub(super) fn state_send_failed(&mut self) {
-		self.sent_state = None;
-		self.state_deadline = self.active.map(|_| Instant::now());
-	}
-	/// Sends the newest coalesced mute/deafen state, unless it already matches the wire.
-	pub(super) fn flush_state(&mut self) -> Option<Frame> {
-		self.state_deadline = None;
-		let (channel, _) = self.active?;
-		if self.allowed.get(&channel) != Some(&self.active_guild)
-			|| self
-				.sent_state
-				.is_some_and(|(sent, _)| sent == (self.muted, self.deafened, self.camera))
-		{
-			return None;
-		}
-		Some(self.state_frame(Some(channel), self.active_guild))
-	}
-	pub(super) fn channel_info_packet(&self, channel: Id) -> Option<Frame> {
-		let guild = self.active_guild?;
-		(self.active.is_some_and(|(active, _)| active == channel)
-			&& self.allowed.get(&channel) == Some(&Some(guild)))
-		.then(|| {
-			Frame::Text(
+			Command::ChannelInfo { guild } => {
 				json!({"op":43,"d":{"guild_id":guild,"fields":["voice_start_time"]}})
-					.to_string()
-					.into(),
-			)
-		})
+			}
+			Command::StreamCreate { guild, channel } => {
+				if self.allowed.get(channel) != Some(guild) {
+					return Err(Failure::Forbidden);
+				}
+				let kind = if guild.is_some() { "guild" } else { "call" };
+				json!({"op":18,"d":{"type":kind,"guild_id":guild,"channel_id":channel,"preferred_region":null}})
+			}
+			Command::StreamDelete { key } | Command::StreamWatch { key }
+				if key.len() > MAX_STREAM_KEY =>
+			{
+				return Err(Failure::Protocol);
+			}
+			Command::StreamDelete { key } => json!({"op":19,"d":{"stream_key":key}}),
+			Command::StreamWatch { key } => json!({"op":20,"d":{"stream_key":key}}),
+			Command::Ring { .. } => return Ok(None),
+		};
+		Ok(Some(Frame::Text(value.to_string().into())))
 	}
 	fn channel_started(
 		&self,
@@ -449,9 +243,7 @@ impl Calls {
 		unix_seconds: Option<u64>,
 		emit: &impl Fn(Event) -> Result<(), Failure>,
 	) -> Result<(), Failure> {
-		if self.active.is_some_and(|(active, _)| active == channel)
-			&& self.active_guild == Some(guild)
-			&& self.allowed.get(&channel) == Some(&Some(guild))
+		if self.joined == Some((guild, channel)) && self.allowed.get(&channel) == Some(&Some(guild))
 		{
 			emit(Event::Voice(voice::Event::ChannelStarted {
 				guild,
@@ -461,460 +253,43 @@ impl Calls {
 		}
 		Ok(())
 	}
-	pub(super) fn stream_packet(
-		&mut self,
-		command: Command,
-		owner: Option<Id>,
-	) -> Result<Option<Frame>, Failure> {
-		match command {
-			Command::StartStream {
-				channel,
-				request,
-				stream_request,
-			} => {
-				let owner = owner.filter(|id| id.0 != 0).ok_or(Failure::Protocol)?;
-				if self.stream.is_some()
-					|| self.active != Some((channel, request))
-					|| self.allowed.get(&channel) != Some(&self.active_guild)
-				{
-					return Err(Failure::Forbidden);
-				}
-				let (kind, key) = self.active_guild.map_or_else(
-					|| ("call", format!("call:{channel}:{owner}")),
-					|guild| ("guild", format!("guild:{guild}:{channel}:{owner}")),
-				);
-				self.stream = Some(StreamAttempt {
-					channel,
-					request,
-					stream_request,
-					key,
-					created: None,
-					departing: false,
-				});
-				Ok(Some(Frame::Text(
-					json!({"op":18,"d":{"type":kind,"guild_id":self.active_guild,"channel_id":channel,"preferred_region":null}})
-						.to_string()
-						.into(),
-				)))
-			}
-			Command::WatchStream {
-				channel,
-				request,
-				stream_request,
-				streamer,
-			} => {
-				// Re-requesting the same stream replaces a stale attempt; a different one
-				// requires stopping first, which the viewer always sends.
-				if self
-					.watch
-					.as_ref()
-					.is_some_and(|watch| watch.streamer != streamer)
-					|| self.active != Some((channel, request))
-					|| self.allowed.get(&channel) != Some(&self.active_guild)
-					|| streamer.0 == 0
-					|| owner == Some(streamer)
-				{
-					return Err(Failure::Forbidden);
-				}
-				let key = self.active_guild.map_or_else(
-					|| format!("call:{channel}:{streamer}"),
-					|guild| format!("guild:{guild}:{channel}:{streamer}"),
-				);
-				let packet = json!({"op":20,"d":{"stream_key":key}});
-				self.watch = Some(WatchAttempt {
-					channel,
-					request,
-					stream_request,
-					streamer,
-					key,
-					created: None,
-				});
-				Ok(Some(Frame::Text(packet.to_string().into())))
-			}
-			Command::StopWatching {
-				channel,
-				request,
-				stream_request,
-			} => {
-				let Some(watch) = &self.watch else {
-					return Ok(None);
-				};
-				if (watch.channel, watch.request, watch.stream_request)
-					!= (channel, request, stream_request)
-				{
-					return Ok(None);
-				}
-				// Viewers leave with the same opcode; later events for the key are ignored.
-				let key = self.watch.take().map(|watch| watch.key);
-				Ok(Some(Frame::Text(
-					json!({"op":19,"d":{"stream_key":key}}).to_string().into(),
-				)))
-			}
-			Command::StopStream {
-				channel,
-				request,
-				stream_request,
-			} => {
-				let Some(stream) = &mut self.stream else {
-					return Ok(None);
-				};
-				if (stream.channel, stream.request, stream.stream_request)
-					!= (channel, request, stream_request)
-					|| stream.departing
-				{
-					return Ok(None);
-				}
-				stream.departing = true;
-				Ok(Some(Frame::Text(
-					json!({"op":19,"d":{"stream_key":stream.key}})
-						.to_string()
-						.into(),
-				)))
-			}
-			_ => Ok(None),
-		}
-	}
-	fn emit_stream(
-		&self,
-		event: screen::Event,
-		emit: &impl Fn(Event) -> Result<(), Failure>,
-	) -> Result<(), Failure> {
-		if let Some(stream) = &self.stream {
-			emit(Event::Voice(voice::Event::Stream {
-				channel: stream.channel,
-				request: stream.request,
-				stream_request: stream.stream_request,
-				event,
-			}))?;
-		}
-		Ok(())
-	}
-	/// Emit a watch outcome. A failure also releases the slot so the viewer can retry.
-	fn emit_watch(
-		&mut self,
-		event: screen::Event,
-		emit: &impl Fn(Event) -> Result<(), Failure>,
-	) -> Result<(), Failure> {
-		let failed = matches!(event, screen::Event::Failed(_));
-		if let Some(watch) = &self.watch {
-			emit(Event::Voice(voice::Event::Watch {
-				channel: watch.channel,
-				request: watch.request,
-				stream_request: watch.stream_request,
-				streamer: watch.streamer,
-				event,
-			}))?;
-		}
-		if failed {
-			self.watch = None;
-		}
-		Ok(())
-	}
-	fn watch_dispatch(
-		&mut self,
-		kind: &str,
-		data: &[u8],
-		emit: &impl Fn(Event) -> Result<(), Failure>,
-	) -> Result<(), Failure> {
-		match kind {
-			"STREAM_CREATE" => {
-				let Ok(created) = decode::<stream::Created>(data) else {
-					return self.emit_watch(
-						screen::Event::Failed("Discord sent invalid stream setup"),
-						emit,
-					);
-				};
-				let ids = (
-					created.rtc_server_id,
-					created.rtc_channel_id.unwrap_or(created.rtc_server_id),
-				);
-				match self.watch.as_ref().and_then(|watch| watch.created) {
-					Some(previous) if previous != ids => self.emit_watch(
-						screen::Event::Failed("Discord changed the stream connection identity"),
-						emit,
-					)?,
-					Some(_) => {}
-					None => {
-						self.watch.as_mut().unwrap().created = Some(ids);
-						self.emit_watch(
-							screen::Event::Created {
-								rtc_server: ids.0,
-								rtc_channel: ids.1,
-							},
-							emit,
-						)?;
-					}
-				}
-			}
-			"STREAM_SERVER_UPDATE" => {
-				let Ok(mut server) = decode::<stream::ServerUpdate>(data) else {
-					return self.emit_watch(
-						screen::Event::Failed("Discord sent invalid stream server data"),
-						emit,
-					);
-				};
-				if server.token.len() > 2048
-					|| server
-						.endpoint
-						.as_ref()
-						.is_some_and(|endpoint| endpoint.len() > 512)
-				{
-					return self.emit_watch(
-						screen::Event::Failed("Discord sent oversized stream server data"),
-						emit,
-					);
-				}
-				let token = Zeroizing::new(std::mem::take(&mut server.token));
-				let Ok(token) = Secret::new(token.to_string()) else {
-					return self.emit_watch(
-						screen::Event::Failed("Discord sent invalid stream server data"),
-						emit,
-					);
-				};
-				self.emit_watch(
-					screen::Event::Server {
-						token: Some(token),
-						endpoint: server.endpoint,
-					},
-					emit,
-				)?;
-			}
-			"STREAM_DELETE" => {
-				let reason = decode::<stream::Deleted>(data)
-					.ok()
-					.and_then(|deleted| deletion_reason(deleted.reason.as_deref()));
-				self.emit_watch(screen::Event::Deleted { reason }, emit)?;
-				self.watch = None;
-			}
-			_ => {}
-		}
-		Ok(())
-	}
-	fn stream_dispatch(
-		&mut self,
-		kind: &str,
-		data: &[u8],
-		emit: &impl Fn(Event) -> Result<(), Failure>,
-	) -> Result<(), Failure> {
-		let Ok(key) = decode::<stream::Key>(data) else {
-			return Ok(());
-		};
-		if let Some(watch) = &self.watch
-			&& (self.active != Some((watch.channel, watch.request))
-				|| self.allowed.get(&watch.channel) != Some(&self.active_guild))
-		{
-			self.watch = None;
-		}
-		if key.stream_key.len() <= 128
-			&& self
-				.watch
-				.as_ref()
-				.is_some_and(|watch| watch.key == key.stream_key)
-		{
-			return self.watch_dispatch(kind, data, emit);
-		}
-		if let Some(stream) = &self.stream
-			&& (self.active != Some((stream.channel, stream.request))
-				|| self.allowed.get(&stream.channel) != Some(&self.active_guild))
-		{
-			self.stream = None;
-			self.watch = None;
-			return Ok(());
-		}
-		if key.stream_key.len() > 128
-			|| self
-				.stream
-				.as_ref()
-				.is_none_or(|stream| stream.key != key.stream_key)
-		{
-			return Ok(());
-		}
-		if kind != "STREAM_DELETE" && self.stream.as_ref().is_some_and(|stream| stream.departing) {
-			return Ok(());
-		}
-		match kind {
-			"STREAM_CREATE" => {
-				let Ok(created) = decode::<stream::Created>(data) else {
-					return self.emit_stream(
-						screen::Event::Failed("Discord sent invalid screen-share setup"),
-						emit,
-					);
-				};
-				let Some(rtc_channel) = created.rtc_channel_id else {
-					return self.emit_stream(
-						screen::Event::Failed("Discord sent invalid screen-share setup"),
-						emit,
-					);
-				};
-				let ids = (created.rtc_server_id, rtc_channel);
-				match self.stream.as_ref().and_then(|stream| stream.created) {
-					Some(previous) if previous != ids => self.emit_stream(
-						screen::Event::Failed("Discord changed screen-share connection identity"),
-						emit,
-					)?,
-					Some(_) => {}
-					None => {
-						self.stream.as_mut().unwrap().created = Some(ids);
-						self.emit_stream(
-							screen::Event::Created {
-								rtc_server: ids.0,
-								rtc_channel: ids.1,
-							},
-							emit,
-						)?;
-					}
-				}
-			}
-			"STREAM_SERVER_UPDATE" => {
-				let Ok(mut server) = decode::<stream::ServerUpdate>(data) else {
-					return self.emit_stream(
-						screen::Event::Failed("Discord sent invalid screen-share server data"),
-						emit,
-					);
-				};
-				if server.token.len() > 2048
-					|| server
-						.endpoint
-						.as_ref()
-						.is_some_and(|endpoint| endpoint.len() > 512)
-				{
-					return self.emit_stream(
-						screen::Event::Failed("Discord sent oversized screen-share server data"),
-						emit,
-					);
-				}
-				let token = Zeroizing::new(std::mem::take(&mut server.token));
-				let Ok(token) = Secret::new(token.to_string()) else {
-					return self.emit_stream(
-						screen::Event::Failed("Discord sent invalid screen-share server data"),
-						emit,
-					);
-				};
-				self.emit_stream(
-					screen::Event::Server {
-						token: Some(token),
-						endpoint: server.endpoint,
-					},
-					emit,
-				)?;
-			}
-			"STREAM_DELETE" => {
-				let Ok(deleted) = decode::<stream::Deleted>(data) else {
-					return self.emit_stream(
-						screen::Event::Failed("Discord sent invalid screen-share deletion"),
-						emit,
-					);
-				};
-				let reason = deletion_reason(deleted.reason.as_deref());
-				let stream = self.stream.take().unwrap();
-				emit(Event::Voice(voice::Event::Stream {
-					channel: stream.channel,
-					request: stream.request,
-					stream_request: stream.stream_request,
-					event: screen::Event::Deleted { reason },
-				}))?;
-			}
-			_ => {}
-		}
-		Ok(())
-	}
 	fn state(
 		&mut self,
 		mut state: VoiceStateDto,
 		member: Option<Member>,
 		owner: Option<Id>,
+		session: Option<&str>,
+		direct: bool,
 		emit: &impl Fn(Event) -> Result<(), Failure>,
 	) -> Result<(), Failure> {
-		let session = state.session_id.take().map(Zeroizing::new);
+		let voice_session = state.session_id.take().map(Zeroizing::new);
 		let own = owner == Some(state.user_id);
-		if own && self.departing.is_some() {
-			let departure_session = session
-				.as_ref()
-				.map(|session| Secret::new(session.to_string()))
-				.transpose()?;
-			let replaced = state.guild_id == self.departing_guild
-				&& state.channel_id.is_some()
-				&& departure_session.as_ref().is_some_and(|session| {
-					self.departing_session
-						.as_ref()
-						.is_some_and(|previous| previous.expose() != session.expose())
-				});
-			if state.guild_id == self.departing_guild && (state.channel_id.is_none() || replaced) {
-				let (channel, request) = self.departing.take().expect("departing call");
-				self.departing_session = None;
-				self.departure_deadline = None;
-				emit(Event::Voice(voice::Event::Departed { channel, request }))?;
-			}
-			// Roster departure still applies, but this old ack must never be retagged to the next call.
-			if state.guild_id.is_none() {
-				return Ok(());
-			}
-		}
 		let allowed = state
 			.channel_id
 			.is_none_or(|channel| self.allowed.get(&channel) == Some(&state.guild_id));
 		if !allowed && !own {
 			return Ok(());
 		}
-		let matches_active = allowed
-			&& self
-				.active
-				.is_some_and(|(channel, _)| state.channel_id == Some(channel))
-			&& self.active_guild == state.guild_id;
-		if own
-			&& allowed
-			&& state.channel_id.is_some()
-			&& self.active.is_some()
-			&& !matches_active
-			&& !self.session_confirmed
-		{
-			// A previous-channel update cannot invalidate a newly submitted, unconfirmed Join.
-			return Ok(());
-		}
-		let secret = if own && matches_active {
-			session.map(|s| Secret::new(s.to_string())).transpose()?
-		} else {
-			None
+		// Discord names the Gateway session holding a voice state: ours, or another device's.
+		// A direct departure may omit it; it is then ours to acknowledge. Passive guild updates
+		// never carry one, so they never speak for this device.
+		let ours = own
+			&& match voice_session.as_deref() {
+				Some(voice) => session == Some(voice.as_str()),
+				None => direct,
+			};
+		let secret = match &voice_session {
+			Some(value) if ours && state.channel_id.is_some() => {
+				Some(Secret::new(value.to_string())?)
+			}
+			_ => None,
 		};
-		let moved = self.session_confirmed && state.channel_id.is_some() && !matches_active;
-		let changed_session = self.session_confirmed
-			&& matches_active
-			&& secret.as_ref().is_some_and(|session| {
-				self.active_session
-					.as_ref()
-					.is_some_and(|previous| previous.expose() != session.expose())
-			});
-		let taken_over = own && (moved || changed_session);
-		if taken_over {
-			let (channel, request) = self.active.take().expect("confirmed active call");
-			self.active_guild = None;
-			self.active_session = None;
-			self.negotiation_server = None;
-			self.session_confirmed = false;
-			self.stream = None;
-			self.watch = None;
-			self.camera = false;
-			emit(Event::Voice(voice::Event::TakenOver { channel, request }))?;
-		} else if let Some(session) = &secret
-			&& self
-				.active_session
-				.as_ref()
-				.is_none_or(|old| old.expose() != session.expose())
-		{
-			self.negotiation_revision = self.negotiation_revision.wrapping_add(1);
-			self.active_session = Some(Secret::new(session.expose().to_owned())?);
-		}
-		let request = self.active.and_then(|(_, request)| {
-			(own || self.active_guild == state.guild_id).then_some(request)
-		});
-		let secret = secret.filter(|_| !taken_over);
 		let participant = participant(&state);
 		emit(Event::Voice(voice::Event::State {
-			request,
 			guild: state.guild_id,
 			channel: state.channel_id.filter(|_| allowed),
 			user: state.user_id,
-			negotiation_revision: secret.as_ref().map(|_| self.negotiation_revision),
+			ours,
 			session: secret,
 			member: state
 				.member
@@ -927,29 +302,71 @@ impl Calls {
 			server_deafened: participant.server_deafened,
 			video: participant.video,
 			streaming: participant.streaming,
-		}))?;
-		if own && self.active.is_some() && !matches_active {
-			self.active = None;
-			self.active_guild = None;
-			self.active_session = None;
-			self.negotiation_server = None;
-			self.session_confirmed = false;
-			self.stream = None;
-			self.watch = None;
-			self.camera = false;
+		}))
+	}
+	fn stream(
+		&self,
+		kind: &str,
+		data: &[u8],
+		emit: &impl Fn(Event) -> Result<(), Failure>,
+	) -> Result<(), Failure> {
+		let Ok(key) = decode::<stream::Key>(data) else {
+			return Ok(());
+		};
+		if key.stream_key.len() > MAX_STREAM_KEY {
+			return Ok(());
 		}
-		Ok(())
+		let event = match kind {
+			"STREAM_CREATE" => {
+				let Ok(created) = decode::<stream::Created>(data) else {
+					return Ok(());
+				};
+				StreamEvent::Created {
+					rtc_server: created.rtc_server_id,
+					// Viewer payloads have been seen without it; the RTC server then stands in.
+					rtc_channel: created.rtc_channel_id.unwrap_or(created.rtc_server_id),
+				}
+			}
+			"STREAM_SERVER_UPDATE" => {
+				let Ok(mut server) = decode::<stream::ServerUpdate>(data) else {
+					return Ok(());
+				};
+				if server.token.len() > 2048
+					|| server
+						.endpoint
+						.as_ref()
+						.is_some_and(|endpoint| endpoint.len() > 512)
+				{
+					return Err(Failure::Capacity);
+				}
+				let token = Zeroizing::new(std::mem::take(&mut server.token));
+				StreamEvent::Server {
+					token: Secret::new(token.to_string()).ok(),
+					endpoint: server.endpoint,
+				}
+			}
+			_ => StreamEvent::Deleted {
+				reason: decode::<stream::Deleted>(data)
+					.ok()
+					.and_then(|deleted| deletion_reason(deleted.reason.as_deref())),
+			},
+		};
+		emit(Event::Voice(voice::Event::Stream {
+			key: key.stream_key,
+			event,
+		}))
 	}
 	pub(super) fn dispatch(
 		&mut self,
 		kind: &str,
 		data: &[u8],
 		owner: Option<Id>,
+		session: Option<&str>,
 		emit: &impl Fn(Event) -> Result<(), Failure>,
 	) -> Result<(), Failure> {
 		match kind {
 			"STREAM_CREATE" | "STREAM_SERVER_UPDATE" | "STREAM_DELETE" => {
-				self.stream_dispatch(kind, data, emit)?;
+				self.stream(kind, data, emit)?;
 			}
 			"CALL_CREATE" | "CALL_UPDATE" | "CALL_DELETE" => {
 				let call: CallDto = decode(data).map_err(|_| Failure::Protocol)?;
@@ -957,28 +374,6 @@ impl Calls {
 					return Ok(());
 				}
 				if kind == "CALL_DELETE" {
-					if self
-						.departing
-						.is_some_and(|(channel, _)| channel == call.channel_id)
-					{
-						let (channel, request) = self.departing.take().expect("departing call");
-						self.departing_session = None;
-						self.departure_deadline = None;
-						emit(Event::Voice(voice::Event::Departed { channel, request }))?;
-					}
-					if self
-						.active
-						.is_some_and(|(channel, _)| channel == call.channel_id)
-					{
-						self.active = None;
-						self.active_guild = None;
-						self.active_session = None;
-						self.negotiation_server = None;
-						self.session_confirmed = false;
-						self.stream = None;
-						self.watch = None;
-						self.camera = false;
-					}
 					emit(Event::Voice(voice::Event::Deleted {
 						channel: call.channel_id,
 					}))?;
@@ -1015,6 +410,8 @@ impl Calls {
 				decode(data).map_err(|_| Failure::Protocol)?,
 				None,
 				owner,
+				session,
+				true,
 				emit,
 			)?,
 			"CHANNEL_INFO" => {
@@ -1025,7 +422,7 @@ impl Calls {
 				if let Some((channel, unix_seconds)) = info
 					.channels
 					.into_iter()
-					.find(|channel| self.active.is_some_and(|(active, _)| active == channel.id))
+					.find(|channel| self.joined.is_some_and(|(_, joined)| joined == channel.id))
 					.map(|channel| (channel.id, channel.voice_start_time))
 				{
 					self.channel_started(info.guild_id, channel, unix_seconds, emit)?;
@@ -1039,36 +436,13 @@ impl Calls {
 			"VOICE_SERVER_UPDATE" => {
 				let mut server: VoiceServerDto = decode(data).map_err(|_| Failure::Protocol)?;
 				let token = Zeroizing::new(std::mem::take(&mut server.token));
-				let Some((channel, request)) = self.active else {
-					return Ok(());
-				};
-				if server.guild_id != self.active_guild
-					|| self.allowed.get(&channel) != Some(&self.active_guild)
-					|| (self.active_guild.is_none() && server.channel_id != Some(channel))
-				{
-					return Ok(());
-				}
 				if server.endpoint.as_ref().is_some_and(|s| s.len() > 512) {
 					return Err(Failure::Capacity);
 				}
-				let token = Secret::new(token.to_string())?;
-				if self
-					.negotiation_server
-					.as_ref()
-					.is_none_or(|(old, endpoint)| {
-						old.expose() != token.expose() || *endpoint != server.endpoint
-					}) {
-					self.negotiation_revision = self.negotiation_revision.wrapping_add(1);
-					self.negotiation_server = Some((
-						Secret::new(token.expose().to_owned())?,
-						server.endpoint.clone(),
-					));
-				}
 				emit(Event::Voice(voice::Event::Server {
-					request,
-					channel,
-					negotiation_revision: Some(self.negotiation_revision),
-					token: Some(token),
+					guild: server.guild_id,
+					channel: server.channel_id,
+					token: Secret::new(token.to_string()).ok(),
 					endpoint: server.endpoint,
 				}))?;
 			}
@@ -1077,6 +451,7 @@ impl Calls {
 		Ok(())
 	}
 }
+
 fn participant(state: &VoiceStateDto) -> Participant {
 	Participant {
 		user: state.user_id,
@@ -1111,53 +486,40 @@ fn deletion_reason(raw: Option<&str>) -> Option<&'static str> {
 	})
 }
 
-/// Offline retry check; no gateway or media connection is opened.
-#[cfg(debug_assertions)]
-pub fn debug_voice_state_retry_check() {
-	let mut calls = Calls::default();
-	let channel = Id(20);
-	calls.allowed.insert(channel, Some(Id(10)));
-	assert!(
-		calls
-			.packet(Command::Join {
-				channel,
-				request: 1,
-				ring: false,
-				mute: false,
-				deaf: false
-			})
-			.unwrap()
-			.is_some()
-	);
-	assert!(
-		calls
-			.packet(Command::SetMute {
-				channel,
-				request: 1,
-				mute: true,
-				deaf: true
-			})
-			.unwrap()
-			.is_none()
-	);
-	assert!(calls.flush_state().is_some());
-	calls.state_send_failed();
-	calls.disconnected();
-	assert!(calls.state_deadline.is_some());
-	let Some(Frame::Text(frame)) = calls.flush_state() else {
-		panic!("failed state must be retried after RESUMED")
-	};
-	let value: serde_json::Value = serde_json::from_str(&frame).unwrap();
-	assert_eq!(value["d"]["self_mute"], true);
-	assert_eq!(value["d"]["self_deaf"], true);
-	assert!(calls.flush_state().is_none());
-	calls.state_send_failed();
-	calls.session_reset();
-	assert!(calls.state_deadline.is_none() && calls.flush_state().is_none());
-}
-
 #[cfg(test)]
 mod tests {
+	use super::*;
+
+	fn frame(calls: &mut Calls, command: Command) -> Option<serde_json::Value> {
+		calls
+			.packet(&command)
+			.unwrap()
+			.map(|frame| serde_json::from_str(frame.to_text().unwrap()).unwrap())
+	}
+	fn collect(
+		calls: &mut Calls,
+		kind: &str,
+		data: serde_json::Value,
+		session: Option<&str>,
+	) -> Vec<voice::Event> {
+		let events = std::sync::Mutex::new(Vec::new());
+		calls
+			.dispatch(
+				kind,
+				data.to_string().as_bytes(),
+				Some(Id(1)),
+				session,
+				&|event| {
+					if let Event::Voice(event) = event {
+						events.lock().unwrap().push(event);
+					}
+					Ok(())
+				},
+			)
+			.unwrap();
+		events.into_inner().unwrap()
+	}
+
 	#[test]
 	fn deletion_reasons_map_to_messages_and_user_requests_stay_silent() {
 		assert_eq!(deletion_reason(None), None);
@@ -1167,17 +529,212 @@ mod tests {
 			Some("Discord reported the stream as ended")
 		);
 		assert_eq!(
-			deletion_reason(Some("something_new")),
-			Some("Discord ended the stream")
-		);
-		assert_eq!(
 			deletion_reason(Some(&"x".repeat(65))),
 			Some("Discord ended the stream")
 		);
 	}
 
-	use super::*;
-	use std::sync::Mutex;
+	#[test]
+	fn commands_frame_only_admitted_channels() {
+		let mut calls = Calls::default();
+		calls.allowed.insert(Id(2), None);
+		calls.allowed.insert(Id(20), Some(Id(10)));
+		assert_eq!(frame(&mut calls, Command::Sync { channel: Id(20) }), None);
+		assert_eq!(
+			frame(&mut calls, Command::Sync { channel: Id(2) }).unwrap(),
+			json!({"op":13,"d":{"channel_id":"2"}})
+		);
+		let join = Command::VoiceState {
+			guild: Some(Id(10)),
+			channel: Some(Id(20)),
+			mute: true,
+			deaf: false,
+			video: false,
+		};
+		assert_eq!(
+			frame(&mut calls, join).unwrap(),
+			json!({"op":4,"d":{"guild_id":"10","channel_id":"20","self_mute":true,"self_deaf":false,"self_video":false}})
+		);
+		assert!(
+			calls
+				.packet(&Command::VoiceState {
+					guild: None,
+					channel: Some(Id(20)),
+					mute: false,
+					deaf: false,
+					video: false,
+				})
+				.is_err(),
+			"a guild channel never joins as a private call"
+		);
+		assert!(
+			calls
+				.packet(&Command::StreamCreate {
+					guild: None,
+					channel: Id(9)
+				})
+				.is_err()
+		);
+		assert_eq!(
+			frame(
+				&mut calls,
+				Command::StreamCreate {
+					guild: None,
+					channel: Id(2)
+				}
+			)
+			.unwrap(),
+			json!({"op":18,"d":{"type":"call","guild_id":null,"channel_id":"2","preferred_region":null}})
+		);
+		assert_eq!(
+			frame(
+				&mut calls,
+				Command::StreamWatch {
+					key: "call:2:3".into()
+				}
+			)
+			.unwrap(),
+			json!({"op":20,"d":{"stream_key":"call:2:3"}})
+		);
+		assert!(
+			calls
+				.packet(&Command::StreamDelete {
+					key: "x".repeat(129)
+				})
+				.is_err()
+		);
+		assert_eq!(
+			frame(
+				&mut calls,
+				Command::Ring {
+					channel: Id(2),
+					recipient: None,
+					stop: false
+				}
+			),
+			None,
+			"ringing is REST"
+		);
+	}
+
+	#[test]
+	fn own_voice_states_name_their_device_and_carry_only_our_session() {
+		let mut calls = Calls::default();
+		calls.allowed.insert(Id(2), None);
+		let state = |session: &str, channel: Option<&str>| json!({"user_id":"1","channel_id":channel,"session_id":session,"self_mute":true});
+		let events = collect(
+			&mut calls,
+			"VOICE_STATE_UPDATE",
+			state("gateway", Some("2")),
+			Some("gateway"),
+		);
+		let voice::Event::State {
+			ours: true,
+			session: Some(secret),
+			muted: true,
+			..
+		} = &events[0]
+		else {
+			panic!("our own voice state")
+		};
+		assert_eq!(secret.expose(), "gateway");
+		let events = collect(
+			&mut calls,
+			"VOICE_STATE_UPDATE",
+			state("phone", Some("2")),
+			Some("gateway"),
+		);
+		assert!(matches!(
+			events[0],
+			voice::Event::State {
+				ours: false,
+				session: None,
+				..
+			}
+		));
+		let events = collect(
+			&mut calls,
+			"VOICE_STATE_UPDATE",
+			state("gateway", None),
+			Some("gateway"),
+		);
+		assert!(matches!(
+			events[0],
+			voice::Event::State {
+				ours: true,
+				session: None,
+				channel: None,
+				..
+			}
+		));
+		// Other users never carry a session, and calls outside navigation are dropped.
+		let events = collect(
+			&mut calls,
+			"VOICE_STATE_UPDATE",
+			json!({"user_id":"3","channel_id":"9","session_id":"x"}),
+			Some("gateway"),
+		);
+		assert!(events.is_empty());
+	}
+
+	#[test]
+	fn servers_and_streams_pass_through_bounded() {
+		let mut calls = Calls::default();
+		let events = collect(
+			&mut calls,
+			"VOICE_SERVER_UPDATE",
+			json!({"guild_id":null,"channel_id":"2","token":"t","endpoint":"e.discord.media"}),
+			None,
+		);
+		assert!(matches!(
+			&events[0],
+			voice::Event::Server {
+				channel: Some(Id(2)),
+				token: Some(_),
+				endpoint: Some(_),
+				..
+			}
+		));
+		let events = collect(
+			&mut calls,
+			"STREAM_CREATE",
+			json!({"stream_key":"call:2:1","rtc_server_id":"30"}),
+			None,
+		);
+		assert!(matches!(
+			&events[0],
+			voice::Event::Stream {
+				key,
+				event: StreamEvent::Created {
+					rtc_server: Id(30),
+					rtc_channel: Id(30)
+				}
+			} if key == "call:2:1"
+		));
+		let events = collect(
+			&mut calls,
+			"STREAM_DELETE",
+			json!({"stream_key":"call:2:1","reason":"stream_full"}),
+			None,
+		);
+		assert!(matches!(
+			&events[0],
+			voice::Event::Stream {
+				event: StreamEvent::Deleted { reason: Some(_) },
+				..
+			}
+		));
+		assert!(
+			collect(
+				&mut calls,
+				"STREAM_DELETE",
+				json!({"stream_key":"x".repeat(129)}),
+				None
+			)
+			.is_empty()
+		);
+	}
+
 	#[test]
 	fn optional_login_users_are_bounded_without_rejecting_the_session() {
 		{
@@ -1264,1284 +821,5 @@ mod tests {
 			);
 			assert_eq!(retained.len(), 2);
 		}
-	}
-
-	#[test]
-	fn sync_discovers_only_admitted_dm_calls_without_joining() {
-		{
-			let mut calls = Calls::default();
-			calls.allowed.insert(Id(2), None);
-			calls.allowed.insert(Id(20), Some(Id(10)));
-			for channel in [Id(9), Id(20)] {
-				assert!(calls.packet(Command::Sync { channel }).unwrap().is_none());
-			}
-			let Some(Frame::Text(packet)) = calls.packet(Command::Sync { channel: Id(2) }).unwrap()
-			else {
-				panic!("expected call discovery packet");
-			};
-			assert_eq!(
-				serde_json::from_str::<serde_json::Value>(&packet).unwrap(),
-				json!({"op":13,"d":{"channel_id":"2"}})
-			);
-			assert!(calls.active.is_none());
-			assert!(calls.departing.is_none());
-			calls
-				.packet(Command::Join {
-					channel: Id(20),
-					request: 7,
-					ring: false,
-					mute: false,
-					deaf: false,
-				})
-				.unwrap();
-			calls.packet(Command::Sync { channel: Id(2) }).unwrap();
-			assert_eq!(calls.active, Some((Id(20), 7)));
-			assert_eq!(calls.active_guild, Some(Id(10)));
-			calls.invalidate(Id(2));
-			assert!(
-				calls
-					.packet(Command::Sync { channel: Id(2) })
-					.unwrap()
-					.is_none()
-			);
-		}
-		{
-			let mut calls = Calls::default();
-			calls.allowed.insert(Id(2), None);
-			let events = Mutex::new(Vec::new());
-			let emit = |event| {
-				events.lock().unwrap().push(event);
-				Ok(())
-			};
-			calls
-				.dispatch(
-					"CALL_CREATE",
-					br#"{"channel_id":"2","ringing":["1"],"voice_states":[]}"#,
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert!(calls.active.is_none());
-			assert!(
-				calls
-					.packet(Command::Join {
-						channel: Id(9),
-						request: 1,
-						ring: true,
-						mute: false,
-						deaf: false,
-					})
-					.is_err()
-			);
-			let Frame::Text(text) = calls
-				.packet(Command::Join {
-					channel: Id(2),
-					request: 7,
-					ring: false,
-					mute: false,
-					deaf: false,
-				})
-				.unwrap()
-				.unwrap()
-			else {
-				panic!("expected control")
-			};
-			let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-			assert_eq!(value["op"], 4);
-			assert!(value["d"]["guild_id"].is_null());
-			assert_eq!(value["d"]["channel_id"], "2");
-			calls.dispatch("VOICE_SERVER_UPDATE",br#"{"channel_id":"9","token":"synthetic-token","endpoint":"voice.discord.media:443"}"#,Some(Id(1)),&emit).unwrap();
-			calls
-				.dispatch(
-					"VOICE_SERVER_UPDATE",
-					br#"{"token":"synthetic-token","endpoint":"voice.discord.media:443"}"#,
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert_eq!(events.lock().unwrap().len(), 1);
-			calls
-				.dispatch(
-					"VOICE_STATE_UPDATE",
-					br#"{"user_id":"1","channel_id":"2","session_id":"synthetic-session"}"#,
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			calls.dispatch("VOICE_SERVER_UPDATE",br#"{"channel_id":"2","token":"synthetic-token","endpoint":"voice.discord.media:443"}"#,Some(Id(1)),&emit).unwrap();
-			assert!(
-				matches!(&events.lock().unwrap()[1],Event::Voice(voice::Event::State{request:Some(7),session:Some(secret),..}) if secret.expose()=="synthetic-session")
-			);
-			assert!(
-				matches!(&events.lock().unwrap()[2],Event::Voice(voice::Event::Server{request:7,token:Some(secret),..}) if secret.expose()=="synthetic-token")
-			);
-			assert!(
-				calls
-					.packet(Command::Leave {
-						channel: Id(2),
-						request: 6
-					})
-					.unwrap()
-					.is_none()
-			);
-			assert!(calls.active.is_some());
-			let Frame::Text(text) = calls
-				.packet(Command::Leave {
-					channel: Id(2),
-					request: 7,
-				})
-				.unwrap()
-				.unwrap()
-			else {
-				panic!("expected leave")
-			};
-			let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-			assert!(value["d"]["channel_id"].is_null());
-			calls.dispatch("VOICE_SERVER_UPDATE",br#"{"channel_id":"2","token":"synthetic-token","endpoint":"voice.discord.media:443"}"#,Some(Id(1)),&emit).unwrap();
-			assert_eq!(events.lock().unwrap().len(), 3);
-			assert!(
-				calls
-					.packet(Command::Join {
-						channel: Id(2),
-						request: 8,
-						ring: false,
-						mute: false,
-						deaf: false,
-					})
-					.is_err()
-			);
-			assert!(calls.departure_expired().is_some());
-			assert!(
-				calls
-					.packet(Command::Join {
-						channel: Id(2),
-						request: 8,
-						ring: false,
-						mute: false,
-						deaf: false,
-					})
-					.is_err()
-			);
-			calls
-				.dispatch(
-					"VOICE_STATE_UPDATE",
-					br#"{"channel_id":null,"user_id":"1","session_id":"synthetic-old-session"}"#,
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert!(calls.departing.is_none());
-			assert_eq!(events.lock().unwrap().len(), 4);
-			assert!(matches!(
-				events.lock().unwrap().last(),
-				Some(Event::Voice(voice::Event::Departed {
-					channel: Id(2),
-					request: 7
-				}))
-			)); // never retagged to request 8
-			calls
-				.packet(Command::Join {
-					channel: Id(2),
-					request: 8,
-					ring: false,
-					mute: false,
-					deaf: false,
-				})
-				.unwrap();
-			calls.dispatch("VOICE_STATE_UPDATE",br#"{"guild_id":"9","channel_id":"10","user_id":"1","session_id":"synthetic-session"}"#,Some(Id(1)),&emit).unwrap();
-			assert!(calls.active.is_none());
-		}
-	}
-	#[test]
-	fn camera_controls_preserve_mute_and_reject_stale_or_revoked_enable() {
-		let mut calls = Calls::default();
-		let channel = Id(20);
-		calls.allowed.insert(channel, Some(Id(10)));
-		calls
-			.packet(Command::Join {
-				channel,
-				request: 1,
-				ring: false,
-				mute: false,
-				deaf: false,
-			})
-			.unwrap();
-		calls
-			.packet(Command::SetMute {
-				channel,
-				request: 1,
-				mute: true,
-				deaf: true,
-			})
-			.unwrap();
-		let Frame::Text(frame) = calls
-			.packet(Command::SetCamera {
-				channel,
-				request: 1,
-				enabled: true,
-			})
-			.unwrap()
-			.unwrap()
-		else {
-			panic!("voice state")
-		};
-		let value: serde_json::Value = serde_json::from_str(&frame).unwrap();
-		assert_eq!(value["d"]["self_video"], true);
-		assert_eq!(value["d"]["self_mute"], true);
-		assert_eq!(value["d"]["self_deaf"], true);
-		// The camera update already carried the coalesced mute; repeating it sends nothing.
-		assert!(calls.state_deadline.is_none());
-		assert!(
-			calls
-				.packet(Command::SetMute {
-					channel,
-					request: 1,
-					mute: true,
-					deaf: true,
-				})
-				.unwrap()
-				.is_none()
-		);
-		assert!(
-			calls
-				.packet(Command::SetCamera {
-					channel,
-					request: 2,
-					enabled: false
-				})
-				.unwrap()
-				.is_none()
-		);
-		assert!(calls.camera);
-		calls.allowed.clear();
-		assert!(matches!(
-			calls.packet(Command::SetCamera {
-				channel,
-				request: 1,
-				enabled: true
-			}),
-			Err(Failure::Forbidden)
-		));
-		assert!(
-			calls
-				.packet(Command::SetCamera {
-					channel,
-					request: 1,
-					enabled: false
-				})
-				.unwrap()
-				.is_some()
-		);
-		assert!(!calls.camera);
-	}
-	#[test]
-	fn rapid_mute_toggles_coalesce_into_the_newest_voice_state() {
-		let mut calls = Calls::default();
-		let channel = Id(20);
-		calls.allowed.insert(channel, Some(Id(10)));
-		assert!(
-			calls
-				.packet(Command::Join {
-					channel,
-					request: 1,
-					ring: false,
-					mute: false,
-					deaf: false,
-				})
-				.unwrap()
-				.is_some()
-		);
-		let set = |calls: &mut Calls, mute: bool, deaf: bool| {
-			calls
-				.packet(Command::SetMute {
-					channel,
-					request: 1,
-					mute,
-					deaf,
-				})
-				.unwrap()
-		};
-		// Toggling back inside the window cancels the pending update entirely.
-		assert!(set(&mut calls, true, false).is_none());
-		assert!(calls.state_deadline.is_some());
-		assert!(set(&mut calls, false, false).is_none());
-		assert!(calls.state_deadline.is_none());
-		assert!(calls.flush_state().is_none());
-		// A burst ending deafened sends one update with the newest state.
-		for (mute, deaf) in [(true, false), (false, true), (true, true), (false, true)] {
-			assert!(set(&mut calls, mute, deaf).is_none());
-		}
-		let Some(Frame::Text(frame)) = calls.flush_state() else {
-			panic!("coalesced voice state")
-		};
-		let value: serde_json::Value = serde_json::from_str(&frame).unwrap();
-		assert_eq!(value["d"]["self_mute"], true);
-		assert_eq!(value["d"]["self_deaf"], true);
-		assert!(calls.flush_state().is_none());
-		// After the window, a single toggle goes out immediately.
-		calls.sent_state = Some(((true, true, false), Instant::now() - STATE_COALESCE));
-		let Some(Frame::Text(frame)) = set(&mut calls, false, false) else {
-			panic!("immediate voice state")
-		};
-		let value: serde_json::Value = serde_json::from_str(&frame).unwrap();
-		assert_eq!(value["d"]["self_mute"], false);
-		assert_eq!(value["d"]["self_deaf"], false);
-		// Leaving drops a pending update instead of re-sending it after the hangup.
-		assert!(set(&mut calls, true, false).is_none());
-		assert!(
-			calls
-				.packet(Command::Leave {
-					channel,
-					request: 1
-				})
-				.unwrap()
-				.is_some()
-		);
-		assert!(calls.state_deadline.is_none() && calls.flush_state().is_none());
-	}
-	fn confirm_transport(calls: &mut Calls, emit: &impl Fn(Event) -> Result<(), Failure>) {
-		let (channel, request) = calls.active.unwrap();
-		let server = serde_json::to_vec(&json!({ "guild_id":calls.active_guild, "channel_id":channel, "token":"synthetic-token", "endpoint":"synthetic.discord.media" })).unwrap();
-		calls
-			.dispatch("VOICE_SERVER_UPDATE", &server, Some(Id(1)), emit)
-			.unwrap();
-		assert!(
-			calls
-				.confirm_session(channel, request, calls.negotiation_revision)
-				.is_some()
-		);
-	}
-	#[test]
-	fn join_candidates_remain_replaceable_until_the_exact_local_transport_is_confirmed() {
-		for guild in [None, Some(Id(10))] {
-			for server_first in [false, true] {
-				let mut calls = Calls::default();
-				calls.allowed.insert(Id(20), guild);
-				let events = Mutex::new(Vec::new());
-				let emit = |event| {
-					events.lock().unwrap().push(event);
-					Ok(())
-				};
-				calls
-					.packet(Command::Join {
-						channel: Id(20),
-						request: 5,
-						ring: true,
-						mute: false,
-						deaf: false,
-					})
-					.unwrap();
-				assert!(calls.confirm_session(Id(20), 5, 0).is_none());
-				let state = |session| {
-					serde_json::to_vec(
-						&json!({ "guild_id":guild, "channel_id":Id(20), "user_id":Id(1), "session_id":session }),
-					)
-					.unwrap()
-				};
-				let server = serde_json::to_vec(&json!({ "guild_id":guild, "channel_id":Id(20), "token":"synthetic-token", "endpoint":"synthetic.discord.media" })).unwrap();
-				if server_first {
-					calls
-						.dispatch("VOICE_SERVER_UPDATE", &server, Some(Id(1)), &emit)
-						.unwrap();
-				}
-				// The other client's existing state can arrive before this device's Join acknowledgement.
-				calls
-					.dispatch(
-						"VOICE_STATE_UPDATE",
-						&state("existing-client"),
-						Some(Id(1)),
-						&emit,
-					)
-					.unwrap();
-				let old_revision = calls.negotiation_revision;
-				if !server_first {
-					calls
-						.dispatch("VOICE_SERVER_UPDATE", &server, Some(Id(1)), &emit)
-						.unwrap();
-				}
-				calls
-					.dispatch(
-						"VOICE_STATE_UPDATE",
-						&state("this-local-candidate"),
-						Some(Id(1)),
-						&emit,
-					)
-					.unwrap();
-				let revision = calls.negotiation_revision;
-				assert_ne!(old_revision, revision);
-				assert_eq!(calls.active, Some((Id(20), 5))); // Never mistake Join acknowledgement for takeover.
-				assert!(!calls.session_confirmed);
-				assert!(
-					!events
-						.lock()
-						.unwrap()
-						.iter()
-						.any(|event| matches!(event, Event::Voice(voice::Event::TakenOver { .. })))
-				);
-				// Late TransportReady/confirmation from the superseded candidate cannot establish ownership.
-				assert!(calls.confirm_session(Id(20), 5, old_revision).is_none());
-				assert!(calls.confirm_session(Id(20), 4, revision).is_none());
-				assert!(calls.confirm_session(Id(21), 5, revision).is_none());
-				assert!(!calls.session_confirmed);
-				assert!(
-					matches!(calls.confirm_session(Id(20), 5, revision), Some(Event::Voice(voice::Event::SessionConfirmed { channel:Id(20), request:5, revision: confirmed })) if confirmed == revision)
-				);
-				assert!(calls.session_confirmed);
-				calls
-					.dispatch(
-						"VOICE_STATE_UPDATE",
-						&state("this-local-candidate"),
-						Some(Id(1)),
-						&emit,
-					)
-					.unwrap();
-				assert_eq!(calls.negotiation_revision, revision); // Duplicate state does not invalidate the handshake.
-				events.lock().unwrap().clear();
-				calls
-					.dispatch(
-						"VOICE_STATE_UPDATE",
-						&state("replacement-client"),
-						Some(Id(1)),
-						&emit,
-					)
-					.unwrap();
-				assert!(matches!(
-					events.lock().unwrap()[0],
-					Event::Voice(voice::Event::TakenOver {
-						channel: Id(20),
-						request: 5
-					})
-				));
-				assert!(calls.confirm_session(Id(20), 5, revision).is_none());
-				assert!(
-					calls
-						.packet(Command::Leave {
-							channel: Id(20),
-							request: 5
-						})
-						.unwrap()
-						.is_none()
-				);
-				assert!(calls.departing.is_none());
-			}
-		}
-	}
-	#[test]
-	fn current_server_credentials_are_part_of_confirmation_and_abandon_sends_no_hangup() {
-		let mut calls = Calls::default();
-		calls.allowed.insert(Id(20), None);
-		let events = Mutex::new(Vec::new());
-		let emit = |event| {
-			events.lock().unwrap().push(event);
-			Ok(())
-		};
-		let join = |request| Command::Join {
-			channel: Id(20),
-			request,
-			ring: false,
-			mute: false,
-			deaf: false,
-		};
-		calls.packet(join(5)).unwrap();
-		calls
-			.dispatch(
-				"VOICE_STATE_UPDATE",
-				br#"{"channel_id":"20","user_id":"1","session_id":"synthetic-session"}"#,
-				Some(Id(1)),
-				&emit,
-			)
-			.unwrap();
-		assert!(
-			calls
-				.confirm_session(Id(20), 5, calls.negotiation_revision)
-				.is_none()
-		);
-		let server = |token, endpoint| {
-			serde_json::to_vec(&json!({ "channel_id":Id(20), "token":token, "endpoint":endpoint }))
-				.unwrap()
-		};
-		let mut previous = calls.negotiation_revision;
-		for (token, endpoint) in [
-			("token-1", Some("a.discord.media")),
-			("token-2", Some("a.discord.media")),
-			("token-2", Some("b.discord.media")),
-			("token-2", None),
-		] {
-			calls
-				.dispatch(
-					"VOICE_SERVER_UPDATE",
-					&server(token, endpoint),
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			let current = calls.negotiation_revision;
-			assert_ne!(previous, current);
-			assert!(calls.confirm_session(Id(20), 5, previous).is_none());
-			calls
-				.dispatch(
-					"VOICE_SERVER_UPDATE",
-					&server(token, endpoint),
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert_eq!(calls.negotiation_revision, current); // Identical credentials are deduplicated.
-			if endpoint.is_none() {
-				assert!(calls.confirm_session(Id(20), 5, current).is_none());
-			}
-			previous = current;
-		}
-		assert!(
-			calls
-				.packet(Command::AbandonSession {
-					channel: Id(20),
-					request: 4
-				})
-				.unwrap()
-				.is_none()
-		);
-		assert_eq!(calls.active, Some((Id(20), 5))); // Stale local cancellation cannot clear a newer attempt.
-		assert!(
-			calls
-				.packet(Command::AbandonSession {
-					channel: Id(20),
-					request: 5
-				})
-				.unwrap()
-				.is_none()
-		);
-		assert!(
-			!calls.has_call()
-				&& calls.active_session.is_none()
-				&& calls.negotiation_server.is_none()
-		);
-		assert!(calls.departing.is_none() && calls.departure_deadline.is_none());
-		events.lock().unwrap().clear();
-		calls
-			.dispatch(
-				"VOICE_STATE_UPDATE",
-				br#"{"channel_id":"20","user_id":"1","session_id":"late-session"}"#,
-				Some(Id(1)),
-				&emit,
-			)
-			.unwrap();
-		assert!(matches!(
-			events.lock().unwrap()[0],
-			Event::Voice(voice::Event::State {
-				request: None,
-				session: None,
-				..
-			})
-		));
-		assert!(calls.confirm_session(Id(20), 5, previous).is_none());
-		assert!(calls.packet(join(6)).unwrap().is_some());
-	}
-	#[test]
-	fn another_client_takes_over_without_a_hangup_or_stale_departure_barrier() {
-		for guild in [None, Some(Id(10))] {
-			let mut calls = Calls::default();
-			calls.allowed.insert(Id(20), guild);
-			let events = Mutex::new(Vec::new());
-			let emit = |event| {
-				events.lock().unwrap().push(event);
-				Ok(())
-			};
-			let join = |request| Command::Join {
-				channel: Id(20),
-				request,
-				ring: false,
-				mute: false,
-				deaf: false,
-			};
-			calls.packet(join(5)).unwrap();
-			let state = |user, session: Option<&str>| {
-				serde_json::to_vec(&json!({
-					"guild_id": guild, "channel_id": Id(20), "user_id": Id(user), "session_id": session
-				}))
-				.unwrap()
-			};
-			for (user, session) in [
-				(1, Some("this-device")),
-				(1, Some("this-device")),
-				(2, Some("peer-device")),
-				(1, None),
-			] {
-				calls
-					.dispatch(
-						"VOICE_STATE_UPDATE",
-						&state(user, session),
-						Some(Id(1)),
-						&emit,
-					)
-					.unwrap();
-				assert_eq!(calls.active, Some((Id(20), 5)));
-			}
-			confirm_transport(&mut calls, &emit);
-			assert_eq!(
-				format!("{:?}", calls.active_session.as_ref().unwrap()),
-				"VoiceSecret([REDACTED])"
-			);
-			assert!(
-				!events
-					.lock()
-					.unwrap()
-					.iter()
-					.any(|event| matches!(event, Event::Voice(voice::Event::TakenOver { .. })))
-			);
-			events.lock().unwrap().clear();
-			calls
-				.dispatch(
-					"VOICE_STATE_UPDATE",
-					&state(1, Some("other-client")),
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert!(matches!(
-				events.lock().unwrap()[0],
-				Event::Voice(voice::Event::TakenOver {
-					channel: Id(20),
-					request: 5
-				})
-			));
-			assert!(matches!(
-				events.lock().unwrap()[1],
-				Event::Voice(voice::Event::State {
-					request: None,
-					session: None,
-					..
-				})
-			));
-			assert!(calls.active_session.is_none() && !calls.has_call());
-			assert!(
-				calls
-					.packet(Command::Leave {
-						channel: Id(20),
-						request: 5
-					})
-					.unwrap()
-					.is_none()
-			);
-			assert!(calls.departing.is_none() && calls.departure_deadline.is_none());
-			// Explicitly taking the call back is an ordinary Join; no null voice-state ack needed.
-			assert!(calls.packet(join(6)).unwrap().is_some());
-			calls
-				.dispatch(
-					"VOICE_STATE_UPDATE",
-					&state(1, Some("new-local-session")),
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert_eq!(calls.active, Some((Id(20), 6)));
-			assert!(
-				calls
-					.packet(Command::Leave {
-						channel: Id(20),
-						request: 5
-					})
-					.unwrap()
-					.is_none()
-			);
-			assert_eq!(calls.active, Some((Id(20), 6)));
-			calls.disconnected();
-			assert!(
-				calls.active_session.is_some(),
-				"Resume preserves the active session identity"
-			);
-			calls.session_reset();
-			assert!(calls.active_session.is_none() && !calls.has_call());
-		}
-	}
-	#[test]
-	fn a_changed_session_acknowledges_an_old_manual_departure_without_a_null_state() {
-		for guild in [None, Some(Id(10))] {
-			let mut calls = Calls::default();
-			calls.allowed.insert(Id(20), guild);
-			let events = Mutex::new(Vec::new());
-			let emit = |event| {
-				events.lock().unwrap().push(event);
-				Ok(())
-			};
-			let update = |session: &str| {
-				serde_json::to_vec(
-					&json!({ "guild_id": guild, "channel_id": Id(20), "user_id": Id(1), "session_id": session }),
-				)
-				.unwrap()
-			};
-			calls
-				.packet(Command::Join {
-					channel: Id(20),
-					request: 5,
-					ring: false,
-					mute: false,
-					deaf: false,
-				})
-				.unwrap();
-			calls
-				.dispatch(
-					"VOICE_STATE_UPDATE",
-					&update("old-local"),
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			confirm_transport(&mut calls, &emit);
-			calls
-				.packet(Command::Leave {
-					channel: Id(20),
-					request: 5,
-				})
-				.unwrap();
-			calls
-				.dispatch(
-					"VOICE_STATE_UPDATE",
-					&update("old-local"),
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert!(calls.departing.is_some());
-			events.lock().unwrap().clear();
-			calls
-				.dispatch(
-					"VOICE_STATE_UPDATE",
-					&update("other-client"),
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert!(!calls.has_call());
-			assert!(calls.departing_session.is_none() && calls.departure_deadline.is_none());
-			assert!(matches!(
-				events.lock().unwrap()[0],
-				Event::Voice(voice::Event::Departed {
-					channel: Id(20),
-					request: 5
-				})
-			));
-			assert!(
-				calls
-					.packet(Command::Join {
-						channel: Id(20),
-						request: 6,
-						ring: false,
-						mute: false,
-						deaf: false
-					})
-					.unwrap()
-					.is_some()
-			);
-		}
-	}
-
-	#[test]
-	fn an_owner_move_to_another_channel_releases_the_original_intent_and_identity() {
-		for (old_guild, new_guild) in [
-			(None, None),
-			(Some(Id(10)), Some(Id(10))),
-			(Some(Id(10)), Some(Id(11))),
-			(None, Some(Id(11))),
-			(Some(Id(10)), None),
-		] {
-			let mut calls = Calls::default();
-			calls.allowed.insert(Id(20), old_guild);
-			calls.allowed.insert(Id(21), new_guild);
-			let events = Mutex::new(Vec::new());
-			let emit = |event| {
-				events.lock().unwrap().push(event);
-				Ok(())
-			};
-			let join = |channel, request| Command::Join {
-				channel,
-				request,
-				ring: false,
-				mute: false,
-				deaf: false,
-			};
-			let update = |guild, channel, session| {
-				serde_json::to_vec(
-					&json!({"guild_id":guild,"channel_id":channel,"user_id":Id(1),"session_id":session}),
-				)
-				.unwrap()
-			};
-			calls.packet(join(Id(20), 5)).unwrap();
-			calls
-				.dispatch(
-					"VOICE_STATE_UPDATE",
-					&update(old_guild, Id(20), "old-local"),
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			confirm_transport(&mut calls, &emit);
-			events.lock().unwrap().clear();
-			calls
-				.dispatch(
-					"VOICE_STATE_UPDATE",
-					&update(new_guild, Id(21), "other-client"),
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert!(!calls.has_call() && calls.active_session.is_none());
-			assert!(matches!(
-				events.lock().unwrap()[0],
-				Event::Voice(voice::Event::TakenOver {
-					channel: Id(20),
-					request: 5
-				})
-			));
-			assert!(matches!(
-				events.lock().unwrap()[1],
-				Event::Voice(voice::Event::State {
-					channel: Some(Id(21)),
-					request: None,
-					session: None,
-					..
-				})
-			));
-			assert!(
-				calls
-					.packet(Command::Leave {
-						channel: Id(20),
-						request: 5
-					})
-					.unwrap()
-					.is_none()
-			);
-			assert!(calls.departing.is_none());
-			assert!(calls.packet(join(Id(21), 6)).unwrap().is_some());
-			events.lock().unwrap().clear();
-			// An older channel frame arriving before the new handshake stays outside its scope.
-			calls
-				.dispatch(
-					"VOICE_STATE_UPDATE",
-					&update(old_guild, Id(20), "old-local"),
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert_eq!(calls.active, Some((Id(21), 6)));
-			assert!(events.lock().unwrap().is_empty());
-			calls
-				.dispatch(
-					"VOICE_STATE_UPDATE",
-					&update(new_guild, Id(21), "new-local"),
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert_eq!(calls.active, Some((Id(21), 6)));
-			assert_eq!(calls.active_session.as_ref().unwrap().expose(), "new-local");
-			assert!(
-				!events
-					.lock()
-					.unwrap()
-					.iter()
-					.any(|event| matches!(event, Event::Voice(voice::Event::TakenOver { .. })))
-			);
-			assert!(
-				calls
-					.packet(Command::Leave {
-						channel: Id(20),
-						request: 5
-					})
-					.unwrap()
-					.is_none()
-			);
-			assert_eq!(calls.active, Some((Id(21), 6)));
-		}
-	}
-
-	#[test]
-	fn guild_join_roster_and_departure_are_scoped_and_bounded() {
-		{
-			let mut calls = Calls::default();
-			calls.allowed.insert(Id(20), Some(Id(10)));
-			calls.allowed.insert(Id(21), Some(Id(10)));
-			let events = Mutex::new(Vec::new());
-			let emit = |event| {
-				events.lock().unwrap().push(event);
-				Ok(())
-			};
-			let mut guild: GuildDto = decode(br#"{"id":"10","voice_states":[{"channel_id":"20","user_id":"2","mute":true,"deaf":true}],"members":[{"user":{"id":"2","username":"Synthetic","avatar":"0123456789abcdef0123456789abcdef"},"nick":"Room member"}]}"#).unwrap();
-			let Event::Voice(voice::Event::Snapshot { participants, .. }) =
-				calls.snapshot(&mut guild, false).unwrap()
-			else {
-				panic!("roster");
-			};
-			assert_eq!(
-				participants[0].member.as_ref().unwrap().nick.as_deref(),
-				Some("Room member")
-			);
-			assert!(participants[0].participant.muted && participants[0].participant.deafened);
-			assert!(
-				participants[0].participant.server_muted
-					&& participants[0].participant.server_deafened
-			);
-			assert!(calls.active.is_none());
-			let Frame::Text(join) = calls
-				.packet(Command::Join {
-					channel: Id(20),
-					request: 5,
-					ring: false,
-					mute: true,
-					deaf: true,
-				})
-				.unwrap()
-				.unwrap()
-			else {
-				panic!("join");
-			};
-			let join: serde_json::Value = serde_json::from_str(&join).unwrap();
-			assert_eq!(join["d"]["guild_id"], "10");
-			assert_eq!(join["d"]["self_mute"], true);
-			assert_eq!(join["d"]["self_deaf"], true);
-			let Frame::Text(info) = calls.channel_info_packet(Id(20)).unwrap() else {
-				panic!("channel info");
-			};
-			let info: serde_json::Value = serde_json::from_str(&info).unwrap();
-			assert_eq!(
-				info,
-				json!({"op":43,"d":{"guild_id":"10","fields":["voice_start_time"]}})
-			);
-			calls
-				.dispatch(
-					"CHANNEL_INFO",
-					br#"{"guild_id":"10","channels":[{"id":"20","voice_start_time":1700000000}]}"#,
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert!(matches!(
-				events.lock().unwrap()[0],
-				Event::Voice(voice::Event::ChannelStarted {
-					guild: Id(10),
-					channel: Id(20),
-					unix_seconds: Some(1_700_000_000)
-				})
-			));
-			calls
-				.dispatch(
-					"VOICE_SERVER_UPDATE",
-					br#"{"guild_id":"99","token":"synthetic","endpoint":"voice.discord.media:443"}"#,
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert_eq!(events.lock().unwrap().len(), 1);
-			calls
-				.dispatch(
-					"VOICE_SERVER_UPDATE",
-					br#"{"guild_id":"10","token":"synthetic","endpoint":"voice.discord.media:443"}"#,
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert!(matches!(
-				events.lock().unwrap()[1],
-				Event::Voice(voice::Event::Server {
-					channel: Id(20),
-					request: 5,
-					..
-				})
-			));
-			calls.dispatch("VOICE_STATE_UPDATE", br#"{"guild_id":"10","channel_id":"20","user_id":"1","session_id":"synthetic-session","suppress":true}"#, Some(Id(1)), &emit).unwrap();
-			assert!(matches!(
-				events.lock().unwrap()[2],
-				Event::Voice(voice::Event::State {
-					request: Some(5),
-					server_muted: true,
-					muted: true,
-					..
-				})
-			));
-			let Frame::Text(leave) = calls
-				.packet(Command::Leave {
-					channel: Id(20),
-					request: 5,
-				})
-				.unwrap()
-				.unwrap()
-			else {
-				panic!("leave");
-			};
-			let leave: serde_json::Value = serde_json::from_str(&leave).unwrap();
-			assert_eq!(leave["d"]["guild_id"], "10");
-			assert!(leave["d"]["channel_id"].is_null());
-			calls
-				.dispatch(
-					"VOICE_STATE_UPDATE",
-					br#"{"guild_id":"99","channel_id":null,"user_id":"1"}"#,
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert!(calls.departing.is_some());
-			calls
-				.dispatch(
-					"VOICE_STATE_UPDATE",
-					br#"{"guild_id":"10","channel_id":null,"user_id":"1"}"#,
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert!(calls.departing.is_none());
-			calls
-				.packet(Command::Join {
-					channel: Id(21),
-					request: 6,
-					ring: false,
-					mute: false,
-					deaf: false,
-				})
-				.unwrap();
-			calls
-				.passive(
-					decode(br#"{"guild_id":"10","removed_voice_states":["1"]}"#).unwrap(),
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert!(calls.active.is_none());
-			assert!(matches!(
-				events.lock().unwrap().last(),
-				Some(Event::Voice(voice::Event::State {
-					request: Some(6),
-					channel: None,
-					..
-				}))
-			));
-			guild.voice_states = (0..=voice::MAX_ROSTER)
-				.map(|_| decode(br#"{"channel_id":"20","user_id":"2"}"#).unwrap())
-				.collect();
-			assert!(matches!(
-				calls.snapshot(&mut guild, false),
-				Err(Failure::CapacityAt(
-					"Voice roster participant limit exceeded"
-				))
-			));
-		}
-		{
-			let mut calls = Calls::default();
-			calls.allowed.insert(Id(20), Some(Id(10)));
-			calls
-				.packet(Command::Join {
-					channel: Id(20),
-					request: 1,
-					ring: false,
-					mute: false,
-					deaf: false,
-				})
-				.unwrap();
-			calls.allowed.remove(&Id(20));
-			assert!(matches!(
-				calls.packet(Command::SetMute {
-					channel: Id(20),
-					request: 1,
-					mute: false,
-					deaf: false
-				}),
-				Err(Failure::Forbidden)
-			));
-			let events = Mutex::new(Vec::new());
-			let emit = |event| {
-				events.lock().unwrap().push(event);
-				Ok(())
-			};
-			calls.dispatch("VOICE_SERVER_UPDATE", br#"{"guild_id":"10","token":"synthetic-revoked-secret","endpoint":"voice.discord.media:443"}"#, Some(Id(1)), &emit).unwrap();
-			assert!(events.lock().unwrap().is_empty());
-			assert!(
-				calls
-					.packet(Command::Leave {
-						channel: Id(20),
-						request: 1
-					})
-					.unwrap()
-					.is_some()
-			);
-			calls
-				.dispatch(
-					"VOICE_STATE_UPDATE",
-					br#"{"guild_id":"10","channel_id":null,"user_id":"1"}"#,
-					Some(Id(1)),
-					&emit,
-				)
-				.unwrap();
-			assert!(calls.active.is_none());
-			assert!(calls.departing.is_none());
-			calls.allowed.insert(Id(20), Some(Id(10)));
-			calls
-				.packet(Command::Join {
-					channel: Id(20),
-					request: 2,
-					ring: false,
-					mute: false,
-					deaf: false,
-				})
-				.unwrap();
-			calls.allowed.remove(&Id(20));
-			calls.dispatch("VOICE_STATE_UPDATE", br#"{"guild_id":"10","channel_id":"20","user_id":"1","session_id":"synthetic-revoked-session"}"#, Some(Id(1)), &emit).unwrap();
-			assert!(calls.active.is_none());
-			assert!(matches!(
-				events.lock().unwrap().last(),
-				Some(Event::Voice(voice::Event::State {
-					channel: None,
-					session: None,
-					request: Some(2),
-					..
-				}))
-			));
-		}
-	}
-
-	#[test]
-	fn screen_stream_matches_one_call_attempt_until_delete() {
-		let mut calls = Calls::default();
-		calls.allowed.insert(Id(20), Some(Id(10)));
-		calls
-			.packet(Command::Join {
-				channel: Id(20),
-				request: 7,
-				ring: false,
-				mute: false,
-				deaf: false,
-			})
-			.unwrap();
-		let Frame::Text(create) = calls
-			.stream_packet(
-				Command::StartStream {
-					channel: Id(20),
-					request: 7,
-					stream_request: 8,
-				},
-				Some(Id(1)),
-			)
-			.unwrap()
-			.unwrap()
-		else {
-			panic!("expected stream create");
-		};
-		let packet: serde_json::Value = serde_json::from_str(&create).unwrap();
-		assert_eq!(packet["op"], 18);
-		assert_eq!(packet["d"]["type"], "guild");
-		assert_eq!(packet["d"]["guild_id"], "10");
-		assert!(packet["d"]["preferred_region"].is_null());
-
-		let events = Mutex::new(Vec::new());
-		let emit = |event| {
-			events.lock().unwrap().push(event);
-			Ok(())
-		};
-		calls
-			.dispatch(
-				"STREAM_CREATE",
-				br#"{"stream_key":"guild:10:20:2","rtc_server_id":"30","rtc_channel_id":"31"}"#,
-				Some(Id(1)),
-				&emit,
-			)
-			.unwrap();
-		calls
-			.dispatch(
-				"STREAM_CREATE",
-				br#"{"stream_key":"guild:10:20:1","rtc_server_id":"30","rtc_channel_id":"31"}"#,
-				Some(Id(1)),
-				&emit,
-			)
-			.unwrap();
-		calls.dispatch(
-			"STREAM_SERVER_UPDATE",
-			br#"{"stream_key":"guild:10:20:1","token":"synthetic-stream-token","endpoint":null}"#,
-			Some(Id(1)),
-			&emit,
-		).unwrap();
-		calls
-			.dispatch(
-				"STREAM_CREATE",
-				br#"{"stream_key":"guild:10:20:1","rtc_server_id":"32","rtc_channel_id":"33"}"#,
-				Some(Id(1)),
-				&emit,
-			)
-			.unwrap();
-		assert!(matches!(
-			&events.lock().unwrap()[0],
-			Event::Voice(voice::Event::Stream {
-				channel: Id(20),
-				request: 7,
-				stream_request: 8,
-				event: screen::Event::Created {
-					rtc_server: Id(30),
-					rtc_channel: Id(31)
-				}
-			})
-		));
-		assert!(matches!(
-			&events.lock().unwrap()[1],
-			Event::Voice(voice::Event::Stream {
-				event: screen::Event::Server { token: Some(token), endpoint: None }, ..
-			}) if token.expose() == "synthetic-stream-token"
-		));
-		assert!(matches!(
-			&events.lock().unwrap()[2],
-			Event::Voice(voice::Event::Stream {
-				event: screen::Event::Failed("Discord changed screen-share connection identity"),
-				..
-			})
-		));
-
-		let Frame::Text(delete) = calls
-			.stream_packet(
-				Command::StopStream {
-					channel: Id(20),
-					request: 7,
-					stream_request: 8,
-				},
-				Some(Id(1)),
-			)
-			.unwrap()
-			.unwrap()
-		else {
-			panic!("expected stream delete");
-		};
-		assert_eq!(
-			serde_json::from_str::<serde_json::Value>(&delete).unwrap()["op"],
-			19
-		);
-		assert!(
-			calls
-				.stream_packet(
-					Command::StartStream {
-						channel: Id(20),
-						request: 7,
-						stream_request: 9
-					},
-					Some(Id(1)),
-				)
-				.is_err()
-		);
-		calls
-			.dispatch(
-				"STREAM_DELETE",
-				br#"{"stream_key":"guild:10:20:1"}"#,
-				Some(Id(1)),
-				&emit,
-			)
-			.unwrap();
-		assert!(matches!(
-			&events.lock().unwrap()[3],
-			Event::Voice(voice::Event::Stream {
-				event: screen::Event::Deleted { reason: None },
-				..
-			})
-		));
-		calls.dispatch(
-			"STREAM_SERVER_UPDATE",
-			br#"{"stream_key":"guild:10:20:1","token":"stale-token","endpoint":"stale.invalid"}"#,
-			Some(Id(1)),
-			&emit,
-		).unwrap();
-		assert_eq!(events.lock().unwrap().len(), 4);
 	}
 }

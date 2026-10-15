@@ -112,12 +112,21 @@ impl World {
 			.count()
 	}
 	fn connected_to(&self, channel: Id) -> bool {
-		self.state.voice.active.as_ref().is_some_and(|call| {
-			call.channel == channel && call.phase.connected()
-		}) && self.state.voice.media_plan().is_some_and(|plan| plan.channel == channel)
-			&& self.discord.truth.voice.is_some_and(|voice| {
-				voice.holder == Holder::Ours && voice.channel == channel
-			})
+		self.state
+			.voice
+			.active
+			.as_ref()
+			.is_some_and(|call| call.channel == channel && call.phase.connected())
+			&& self
+				.state
+				.voice
+				.media_plan()
+				.is_some_and(|plan| plan.channel == channel)
+			&& self
+				.discord
+				.truth
+				.voice
+				.is_some_and(|voice| voice.holder == Holder::Ours && voice.channel == channel)
 	}
 	fn idle(&self) -> bool {
 		self.state.voice.active.is_none()
@@ -156,7 +165,10 @@ fn leaving_and_joining_again_at_once_connects_without_an_error() {
 	world.settle();
 	assert!(world.connected_to(DM));
 	world.state.leave_call();
-	assert!(world.state.start_call(DM, false), "rejoin is accepted at once");
+	assert!(
+		world.state.start_call(DM, false),
+		"rejoin is accepted at once"
+	);
 	world.settle();
 	assert!(world.connected_to(DM));
 	assert_eq!(world.state.status, "");
@@ -180,8 +192,15 @@ fn spamming_join_and_leave_ends_in_the_last_choice_with_paced_operations() {
 		world.settle();
 		assert_eq!(world.connected_to(DM), last_join);
 		assert_eq!(world.idle(), !last_join);
-		assert_eq!(world.discord.overlapping, 0, "one voice state in flight at a time");
-		assert!(world.voice_states() < 40, "{} voice states for 40 rounds", world.voice_states());
+		assert_eq!(
+			world.discord.overlapping, 0,
+			"one voice state in flight at a time"
+		);
+		assert!(
+			world.voice_states() < 40,
+			"{} voice states for 40 rounds",
+			world.voice_states()
+		);
 		assert_eq!(world.discord.rejected, 0);
 	}
 }
@@ -198,7 +217,10 @@ fn leaving_while_sharing_leaves_no_stream_and_sharing_again_works() {
 
 	world.state.leave_call();
 	assert_eq!(world.state.voice.share_state(), ShareState::Stopping);
-	assert!(world.state.voice.share_plan().is_none(), "capture stops at once");
+	assert!(
+		world.state.voice.share_plan().is_none(),
+		"capture stops at once"
+	);
 	world.settle();
 	assert!(world.idle());
 	assert_eq!(world.own_streams(), 0);
@@ -256,13 +278,22 @@ fn another_device_taking_the_call_ends_it_here_without_a_hangup() {
 	world.state.start_call(DM, false);
 	world.settle();
 	let before = world.voice_states();
-	world.discord.other_device_joins(&world.state, world.now, DM);
+	world
+		.discord
+		.other_device_joins(&world.state, world.now, DM);
 	world.settle();
 	assert!(world.state.voice.active.is_none());
 	assert_eq!(world.state.status, "Call continued on another device");
-	assert_eq!(world.voice_states(), before, "the other device keeps the call");
+	assert_eq!(
+		world.voice_states(),
+		before,
+		"the other device keeps the call"
+	);
 	assert_eq!(world.discord.truth.voice.unwrap().holder, Holder::Elsewhere);
-	assert!(world.state.start_call(DM, false), "taking it back is a normal join");
+	assert!(
+		world.state.start_call(DM, false),
+		"taking it back is a normal join"
+	);
 	world.settle();
 	assert!(world.connected_to(DM));
 }
@@ -276,7 +307,11 @@ fn a_kick_ends_the_call_and_a_server_move_keeps_it() {
 	world.discord.migrate(world.now);
 	world.settle();
 	assert!(world.connected_to(ROOM));
-	assert_ne!(world.state.voice.media_plan().unwrap().id, first, "media reconnected");
+	assert_ne!(
+		world.state.voice.media_plan().unwrap().id,
+		first,
+		"media reconnected"
+	);
 	world.discord.kick(&world.state, world.now);
 	world.settle();
 	assert!(world.idle());
@@ -295,7 +330,10 @@ fn a_fresh_session_rejoins_the_wanted_call_and_a_resume_keeps_it() {
 	assert!(world.connected_to(DM));
 	world.discord.new_session(&mut world.state, world.now);
 	world.settle();
-	assert!(world.connected_to(DM), "the call comes back after a fresh READY");
+	assert!(
+		world.connected_to(DM),
+		"the call comes back after a fresh READY"
+	);
 	assert_eq!(world.discord.overlapping, 0);
 }
 
@@ -360,7 +398,9 @@ fn new_private_calls_ring_once_and_hanging_up_stops_the_ringing() {
 
 	// Joining a call someone is already in rings nobody.
 	let mut world = World::quiet();
-	world.discord.other_state(&world.state, world.now, PEER, Some(DM), false);
+	world
+		.discord
+		.other_state(&world.state, world.now, PEER, Some(DM), false);
 	world.state.apply_voice_at(
 		Event::Call {
 			channel: DM,
@@ -381,15 +421,28 @@ fn watching_follows_the_streamer_and_ends_when_they_stop() {
 	let mut world = World::quiet();
 	world.state.start_call(ROOM, false);
 	world.settle();
-	world.discord.other_state(&world.state, world.now, PEER, Some(ROOM), true);
+	world
+		.discord
+		.other_state(&world.state, world.now, PEER, Some(ROOM), true);
 	world.settle();
 	assert!(world.state.watch_stream(PEER));
 	world.settle();
 	assert!(world.state.voice.watch_live());
-	world.discord.other_state(&world.state, world.now, PEER, Some(ROOM), false);
+	world
+		.discord
+		.other_state(&world.state, world.now, PEER, Some(ROOM), false);
 	world.settle();
 	assert!(!world.state.voice.watch_live());
-	assert!(world.state.voice.active.as_ref().unwrap().watching.is_none());
+	assert!(
+		world
+			.state
+			.voice
+			.active
+			.as_ref()
+			.unwrap()
+			.watching
+			.is_none()
+	);
 	assert!(world.state.voice.watch_plan().is_none());
 }
 
@@ -421,6 +474,7 @@ fn run_session(seed: u64, chaos: bool, latency: (u64, u64)) {
 		media_failures: if chaos { 5 } else { 0 },
 		ring_failures: 10,
 		silent: 50,
+		answer: seed.is_multiple_of(3).then_some(Duration::from_millis(700)),
 	};
 	let mut world = World::new(seed, config);
 	let mut rng = Rng::new(seed ^ 0xA5A5);
@@ -438,12 +492,27 @@ fn run_session(seed: u64, chaos: bool, latency: (u64, u64)) {
 		}
 		let channel = channels[rng.below(3) as usize];
 		let roll = rng.below(100);
-		world.discord.trace(world.now, &format_args!("ACTION {roll} {channel:?} active={:?}", world.state.voice.active.as_ref().map(|c| (c.channel, c.phase))));
+		world.discord.trace(
+			world.now,
+			&format_args!(
+				"ACTION {roll} {channel:?} active={:?}",
+				world
+					.state
+					.voice
+					.active
+					.as_ref()
+					.map(|c| (c.channel, c.phase))
+			),
+		);
 		let state = &mut world.state;
 		match roll {
 			0..=24 => {
 				let expected = state.can_call(channel);
-				assert_eq!(state.start_call(channel, rng.chance(50)), expected, "join refused");
+				assert_eq!(
+					state.start_call(channel, rng.chance(50)),
+					expected,
+					"join refused"
+				);
 			}
 			25..=39 => {
 				state.leave_call();
@@ -471,7 +540,9 @@ fn run_session(seed: u64, chaos: bool, latency: (u64, u64)) {
 			67..=72 => state.stop_sharing(),
 			73..=78 => {
 				let room = channels[1 + rng.below(2) as usize];
-				let target = rng.chance(70).then_some(if rng.chance(50) { room } else { DM });
+				let target = rng
+					.chance(70)
+					.then_some(if rng.chance(50) { room } else { DM });
 				let streaming = rng.chance(50);
 				world
 					.discord
@@ -515,9 +586,15 @@ fn run_session(seed: u64, chaos: bool, latency: (u64, u64)) {
 /// Invariants that hold after every step.
 fn check(world: &World, relaxed: bool, seed: u64) {
 	let voice = &world.state.voice;
-	assert_eq!(world.discord.overlapping, 0, "seed {seed}: voice states overlapped");
+	assert_eq!(
+		world.discord.overlapping, 0,
+		"seed {seed}: voice states overlapped"
+	);
 	if !relaxed {
-		assert_eq!(world.discord.rejected, 0, "seed {seed}: media started with stale credentials");
+		assert_eq!(
+			world.discord.rejected, 0,
+			"seed {seed}: media started with stale credentials"
+		);
 	}
 	if let Some(plan) = voice.media_plan() {
 		assert_eq!(
@@ -527,7 +604,10 @@ fn check(world: &World, relaxed: bool, seed: u64) {
 		);
 	}
 	if voice.share_plan().is_some() || voice.watch_plan().is_some() {
-		assert!(voice.media_ready(), "stream media without connected call media");
+		assert!(
+			voice.media_ready(),
+			"stream media without connected call media"
+		);
 	}
 	assert!(voice.phone.outbox.is_empty(), "commands left unsent");
 }
@@ -538,7 +618,10 @@ fn converged(world: &World, seed: u64) {
 	let truth = &world.discord.truth;
 	match &voice.active {
 		Some(call) => {
-			assert!(world.connected_to(call.channel), "seed {seed}: not connected to the wanted call");
+			assert!(
+				world.connected_to(call.channel),
+				"seed {seed}: not connected to the wanted call"
+			);
 			let own = truth.voice.unwrap();
 			assert_eq!(
 				(own.mute, own.deaf, own.video),
@@ -546,28 +629,50 @@ fn converged(world: &World, seed: u64) {
 				"seed {seed}: voice flags differ"
 			);
 			let shares = voice.phone.share.want.is_some();
-			assert_eq!(world.own_streams(), usize::from(shares), "seed {seed}: own streams");
+			assert_eq!(
+				world.own_streams(),
+				usize::from(shares),
+				"seed {seed}: own streams"
+			);
 			assert_eq!(
 				voice.share_state(),
-				if shares { ShareState::Live } else { ShareState::Off },
+				if shares {
+					ShareState::Live
+				} else {
+					ShareState::Off
+				},
 				"seed {seed}: share state"
 			);
 			if let Some(streamer) = call.watching {
-				assert!(voice.watch_live(), "seed {seed}: watch of {streamer:?} not live");
+				assert!(
+					voice.watch_live(),
+					"seed {seed}: watch of {streamer:?} not live"
+				);
 			}
 		}
 		None => {
 			assert!(world.idle(), "seed {seed}: still in a call on Discord");
 			assert_eq!(world.own_streams(), 0, "seed {seed}: stream left behind");
-			assert_eq!(voice.share_state(), ShareState::Off, "seed {seed}: share state");
+			assert_eq!(
+				voice.share_state(),
+				ShareState::Off,
+				"seed {seed}: share state"
+			);
 		}
 	}
-	assert!(voice.phone.wire.pending.is_none(), "seed {seed}: operation pending");
+	assert!(
+		voice.phone.wire.pending.is_none(),
+		"seed {seed}: operation pending"
+	);
 }
 
 /// `SIM_SEED=n` replays one session; `SIM_RUNS=n` runs more than the default.
 fn seeds() -> std::ops::Range<u64> {
-	let var = |name| std::env::var(name).ok().and_then(|value| value.parse().ok());
+	let var = |name| {
+		std::env::var(name)
+			.ok()
+			.and_then(|value| value.parse().ok())
+	};
 	match (var("SIM_SEED"), var("SIM_RUNS")) {
 		(Some(seed), _) => seed..seed + 1,
 		(None, runs) => 0..runs.unwrap_or(1500),

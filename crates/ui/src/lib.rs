@@ -1963,7 +1963,7 @@ impl MessagingUi {
 					divider(ui);
 				}
 				if in_call {
-					self.voice_card_section(ui, state, commands);
+					self.voice_card_section(ui, state);
 					divider(ui);
 				}
 				egui::Frame::new()
@@ -2019,9 +2019,9 @@ impl MessagingUi {
 										self.settings.open = true;
 										egui::Popup::close_all(ui.ctx());
 									}
-									self.mute_toggle_with_settings(ui, state, commands, true);
+									self.mute_toggle_with_settings(ui, state, true);
 									ui.add_space(4.0);
-									self.mute_toggle_with_settings(ui, state, commands, false);
+									self.mute_toggle_with_settings(ui, state, false);
 									ui.with_layout(
 										egui::Layout::left_to_right(egui::Align::Center),
 										|ui| {
@@ -5467,8 +5467,8 @@ impl MessagingUi {
 				None => {}
 			}
 		}
-		self.show_call_switch(&ctx, state, &mut commands);
-		self.apply_ring_request(state, &mut commands);
+		self.show_call_switch(&ctx, state);
+		self.apply_ring_request(state);
 		if let Some((guild, channel, user, change)) = self.voice_moderation.take()
 			&& let Some(command) = state.request_server_admin(
 				guild,

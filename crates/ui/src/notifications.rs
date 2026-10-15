@@ -656,13 +656,13 @@ mod tests {
 			// Exercise the local command preparation gate; no command is dispatched by this test.
 			state.demo = false;
 			let revision = state.revision;
-			assert!(state.start_call(Id(22), false).is_some());
+			assert!(state.start_call(Id(22), false));
 			assert_eq!(state.revision, revision);
 			assert!(cache.sync(&state));
 			assert_eq!(cache.direct.len(), 15);
 			assert_eq!(cache.direct[0], Id(22));
 			assert_eq!(cache.direct[14], Id(102));
-			assert!(state.leave_call().is_some());
+			assert!(state.leave_call());
 			assert_eq!(state.revision, revision);
 			assert!(cache.sync(&state));
 			assert_eq!(cache.direct[0], Id(115));

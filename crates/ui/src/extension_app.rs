@@ -795,12 +795,8 @@ impl MessagingUi {
 							return Err("Camera capture is unavailable".into());
 						}
 						let call = state.voice.active.as_ref().ok_or("No active call")?;
-						if call.camera != enabled {
-							commands.push(
-								state
-									.set_call_camera(enabled)
-									.ok_or("Camera controls are unavailable")?,
-							);
+						if call.camera != enabled && !state.set_call_camera(enabled) {
+							return Err("Camera controls are unavailable".into());
 						}
 					}
 					action => self.apply_extension_app_action(state, action, commands)?,
@@ -906,18 +902,17 @@ impl MessagingUi {
 				{
 					return Err("Speaking is unavailable in this call".into());
 				}
-				let command = state
-					.set_call_mute(muted, deafened)
-					.ok_or("Call controls are unavailable")?;
+				if !state.set_call_mute(muted, deafened) {
+					return Err("Call controls are unavailable".into());
+				}
 				if let Some(call) = &state.voice.active {
 					self.voice_muted = call.muted;
 					self.voice_deafened = call.deafened;
 				}
-				commands.push(command);
 			}
 			HostEffect::LeaveVoice => {
 				self.extension_voice_current(state, confirmed.context.voice_request)?;
-				commands.extend(state.leave_call());
+				state.leave_call();
 			}
 			HostEffect::SetLocalSettings { settings } => {
 				let mut value = self.reading_preferences;
@@ -1361,21 +1356,11 @@ mod tests {
 		);
 		view.apply_extension_effect(&ctx, &mut state, effect, &mut commands)
 			.unwrap();
-		assert!(matches!(
-			commands.pop(),
-			Some(Command::Voice(client_core::voice::Command::SetMute {
-				mute: true,
-				deaf: true,
-				..
-			}))
-		));
+		let call = state.voice.active.as_ref().unwrap();
+		assert!(call.muted && call.deafened);
 		let effect = proposal(&state, HostEffect::LeaveVoice);
 		view.apply_extension_effect(&ctx, &mut state, effect, &mut commands)
 			.unwrap();
-		assert!(matches!(
-			commands.pop(),
-			Some(Command::Voice(client_core::voice::Command::Leave { .. }))
-		));
 		assert!(state.voice.active.is_none());
 	}
 
