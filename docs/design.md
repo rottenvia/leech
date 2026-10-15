@@ -117,9 +117,10 @@ an unanswered call never shows the person rung as if they had joined. Rings and 
 call colour (Appearance, Accent): the theme accent lifted until it stands out on the dark stage,
 or the owner's pick. Halos spread up to 14 points but never past the stage, so they are never
 cut. Go Live uses the same motion on its button: while the share starts, the plate waits small
-and faint with a loading ring; once Discord carries the share, the ring closes, the plate fills
-and springs to full size with Discord's stream sound, and only then does LIVE pop in under the
-avatar. Stopping clears the button and LIVE on the click. The call options menu matches
+and faint while a loading line runs round its rounded edge; once the share's tile is on the
+stage or Discord carries the share, whichever is first, the line closes round the plate, the
+plate fills and springs to full size with Discord's stream sound, and only then does LIVE pop in
+under the avatar. Stopping clears the button and LIVE on the click. The call options menu matches
 Discord's: Grid View, Show My Own Camera, Show Non-Video Participants, Voice & Video Settings
 and, for private calls, Region. Call animations repaint every frame while they run, like egui's own animations; a timer
 would round to every other vsync and look laggy. The voice-only stage is never shorter than its
