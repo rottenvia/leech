@@ -88,7 +88,10 @@ impl Screen {
 		let share = state.voice.share_state();
 		// Stopping already reads as off: the button and LIVE clear on the click.
 		ui.screen.busy = matches!(share, ShareState::Starting | ShareState::Live);
-		ui.screen.live = share == ShareState::Live;
+		// Live once Discord carries it or its tile is on the stage, whichever is first: the
+		// capture preview can show well before the stream transport settles.
+		ui.screen.live = share == ShareState::Live
+			|| (share == ShareState::Starting && ui.screen.preview.is_some());
 		if ui.screen.live && !self.was_live && ui.notification_options.allows(Sound::ScreenShareOn)
 		{
 			ui.notification_preview = Some(Sound::ScreenShareOn);

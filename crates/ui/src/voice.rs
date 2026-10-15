@@ -3579,9 +3579,9 @@ impl MessagingUi {
 		});
 	}
 
-	/// Go Live, following the call's own motion: the plate waits small and faint with a
-	/// loading ring while the share starts, then, once Discord carries it, the ring closes,
-	/// the plate fills and springs to full size, and LIVE appears after it.
+	/// Go Live, following the call's own motion: the plate waits small and faint while a
+	/// loading line runs round its edge, then, once the share is up, the line closes round the
+	/// plate, the plate fills and springs to full size, and LIVE appears after it.
 	fn screen_share_control(&mut self, ui: &mut egui::Ui, state: &State) {
 		let enabled = self.screen.busy
 			|| state.offline_preview()
@@ -3629,22 +3629,21 @@ impl MessagingUi {
 				.accent
 				.lerp_to_gamma(colors.accent.gamma_multiply(1.15), hover);
 			let scale = live.map_or(WAITING_SCALE, arrival_scale);
+			let shape = egui::Rect::from_center_size(rect.center(), rect.size() * scale);
 			ui.painter().set(
 				plate,
-				egui::Shape::rect_filled(
-					egui::Rect::from_center_size(rect.center(), rect.size() * scale),
-					8,
-					faint.lerp_to_gamma(solid, fill),
-				),
+				egui::Shape::rect_filled(shape, 8, faint.lerp_to_gamma(solid, fill)),
 			);
-			let ring =
-				egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(rect.height() - 6.0));
+			// The line runs on the plate's own rounded edge.
+			let edge = shape.shrink(SHARE_RING * 0.5);
+			let corner = 8.0 - SHARE_RING * 0.5;
+			let outline = |lap| rounded_outline(edge, corner, lap);
 			let glow = self.call_glow(ui);
 			match live {
-				None => connecting_comet(ui, ring, glow, 0.0, SHARE_RING),
-				Some(live) if live < close => connecting_comet(
+				None => comet(ui, outline, glow, 0.0, SHARE_RING),
+				Some(live) if live < close => comet(
 					ui,
-					ring,
+					outline,
 					glow,
 					egui::emath::easing::cubic_in_out(live / close),
 					SHARE_RING,
@@ -3652,14 +3651,15 @@ impl MessagingUi {
 				Some(live) => {
 					let fade = 1.0 - ((live - close) / 0.3).min(1.0);
 					if fade > 0.0 {
-						ui.painter().circle_stroke(
-							ring.center(),
-							ring.width() * 0.5 - SHARE_RING * 0.5,
+						ui.painter().rect_stroke(
+							edge,
+							corner,
 							egui::Stroke::new(
 								SHARE_RING,
 								design::mix(glow, egui::Color32::WHITE, 0.6 * fade)
 									.gamma_multiply(fade * fade),
 							),
+							egui::StrokeKind::Middle,
 						);
 					}
 					if live < ARRIVE_SECS {
@@ -5278,9 +5278,9 @@ fn halo(
 	painter.add(mesh);
 }
 
-/// Something connecting (the own avatar while its call connects, Go Live while the share
-/// starts): a comet with a fading tail circling just inside `avatar`'s edge over a faint
-/// track, `ring` points wide. `close` (0 to 1) grows the tail into an even, full ring.
+/// The own avatar while its call connects: a comet with a fading tail circling just inside
+/// `avatar`'s edge over a faint track, `ring` points wide. `close` (0 to 1) grows the tail
+/// into an even, full ring.
 fn connecting_comet(
 	ui: &egui::Ui,
 	avatar: egui::Rect,
@@ -5288,50 +5288,120 @@ fn connecting_comet(
 	close: f32,
 	ring: f32,
 ) {
-	const SEGMENTS: usize = 64;
-	const TAIL: f32 = 4.6;
-	let time = ui.input(|input| input.time);
-	let head = (time * 4.2 % std::f64::consts::TAU) as f32;
 	let center = avatar.center();
 	let radius = avatar.width() * 0.5 - ring * 0.5;
-	let point = |angle: f32| center + radius * egui::vec2(angle.cos(), angle.sin());
-	let painter = ui.painter();
-	painter.circle_stroke(
-		center,
-		radius,
-		egui::Stroke::new(ring, color.gamma_multiply(0.14 * (1.0 - close))),
+	comet(
+		ui,
+		|lap| center + radius * egui::Vec2::angled(lap * std::f32::consts::TAU),
+		color,
+		close,
+		ring,
 	);
+}
+
+/// A comet running clockwise round a closed outline over a faint track, `width` points wide.
+/// `outline(lap)` is the point a fraction `lap` of the way round, for any real `lap`.
+/// `close` (0 to 1) grows the tail into the whole, even outline.
+fn comet(
+	ui: &egui::Ui,
+	outline: impl Fn(f32) -> egui::Pos2,
+	color: egui::Color32,
+	close: f32,
+	width: f32,
+) {
+	const SEGMENTS: usize = 64;
+	// Laps per second, and the tail's share of a lap.
+	const SPEED: f64 = 0.67;
+	const TAIL: f32 = 0.73;
+	let time = ui.input(|input| input.time);
+	let head = (time * SPEED).fract() as f32;
+	let painter = ui.painter();
+	painter.add(egui::Shape::closed_line(
+		(0..SEGMENTS)
+			.map(|step| outline(step as f32 / SEGMENTS as f32))
+			.collect(),
+		egui::Stroke::new(width, color.gamma_multiply(0.14 * (1.0 - close))),
+	));
 	// One gradient stroke: the tail warms toward a lighter tip and fades out behind it.
 	let tip = design::mix(color, egui::Color32::WHITE, 0.45);
-	let length = TAIL + (std::f32::consts::TAU - 0.01 - TAIL) * close;
-	let tail = head - length;
-	let points = (0..=SEGMENTS)
-		.map(|step| point(tail + length * step as f32 / SEGMENTS as f32))
+	let length = TAIL + (0.998 - TAIL) * close;
+	let points: Vec<egui::Pos2> = (0..=SEGMENTS)
+		.map(|step| outline(head - length + length * step as f32 / SEGMENTS as f32))
 		.collect();
+	let samples = points.clone();
 	painter.add(egui::Shape::line(
 		points,
-		egui::epaint::PathStroke::new_uv(ring, move |_, pos| {
-			let angle = (pos.y - center.y).atan2(pos.x - center.x);
-			// Just before the tail's start wraps to a full turn; that end stays dark.
-			let swept = (angle - tail).rem_euclid(std::f32::consts::TAU);
-			let along = if swept > length + 0.3 {
-				0.0
-			} else {
-				(swept / length).min(1.0)
-			};
+		egui::epaint::PathStroke::new_uv(width, move |_, pos| {
+			// The stroke's vertices sit on the samples, so the nearest one says how far along.
+			let nearest = (0..=SEGMENTS)
+				.min_by(|&a, &b| {
+					samples[a]
+						.distance_sq(pos)
+						.total_cmp(&samples[b].distance_sq(pos))
+				})
+				.unwrap_or(0);
+			let along = nearest as f32 / SEGMENTS as f32;
 			color
 				.lerp_to_gamma(tip, along * along * (1.0 - close))
 				.gamma_multiply(along.powf(1.6) * (1.0 - close) + close)
 		}),
 	));
 	// A soft glow and a bright core at the head.
-	let head = point(head);
+	let head = outline(head);
 	let lit = 1.0 - close;
-	painter.circle_filled(head, ring * 2.0, color.gamma_multiply(0.18 * lit));
-	painter.circle_filled(head, ring * 1.3, color.gamma_multiply(0.45 * lit));
-	painter.circle_filled(head, ring * 0.8, tip.gamma_multiply(lit));
+	painter.circle_filled(head, width * 2.0, color.gamma_multiply(0.18 * lit));
+	painter.circle_filled(head, width * 1.3, color.gamma_multiply(0.45 * lit));
+	painter.circle_filled(head, width * 0.8, tip.gamma_multiply(lit));
 	// Every frame, like egui's own animations: a timer would round to every other vsync.
 	ui.ctx().request_repaint();
+}
+
+/// The point a fraction `lap` of the way clockwise round `rect`'s outline with rounded
+/// corners, starting at the left end of the top edge.
+fn rounded_outline(rect: egui::Rect, corner: f32, lap: f32) -> egui::Pos2 {
+	use std::f32::consts::FRAC_PI_2;
+	let c = corner;
+	let (wide, tall) = (rect.width() - 2.0 * c, rect.height() - 2.0 * c);
+	let arc = FRAC_PI_2 * c;
+	let mut along = lap.rem_euclid(1.0) * 2.0 * (wide + tall + 2.0 * arc);
+	// Each side's start, direction and length, then the centre of the corner after it.
+	let sides = [
+		(
+			rect.left_top() + egui::vec2(c, 0.0),
+			egui::Vec2::X,
+			wide,
+			rect.right_top() + egui::vec2(-c, c),
+		),
+		(
+			rect.right_top() + egui::vec2(0.0, c),
+			egui::Vec2::Y,
+			tall,
+			rect.right_bottom() - egui::vec2(c, c),
+		),
+		(
+			rect.right_bottom() - egui::vec2(c, 0.0),
+			-egui::Vec2::X,
+			wide,
+			rect.left_bottom() + egui::vec2(c, -c),
+		),
+		(
+			rect.left_bottom() - egui::vec2(0.0, c),
+			-egui::Vec2::Y,
+			tall,
+			rect.left_top() + egui::vec2(c, c),
+		),
+	];
+	for (side, &(start, direction, length, center)) in sides.iter().enumerate() {
+		if along < length {
+			return start + direction * along;
+		}
+		along -= length;
+		if along < arc {
+			return center + c * egui::Vec2::angled((side as f32 - 1.0) * FRAC_PI_2 + along / c);
+		}
+		along -= arc;
+	}
+	sides[0].0
 }
 
 /// A seat arriving (`elapsed` seconds ago). The own seat's comet closes into a ring on the
@@ -7542,6 +7612,25 @@ mod tests {
 		);
 		messaging.voice_available = true;
 		assert!(messaging.call_unavailable(&state, Id(1)).is_none());
+	}
+
+	#[test]
+	fn the_go_live_line_runs_round_the_rounded_edge_and_wraps() {
+		let rect = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(40.0, 30.0));
+		let inner = rect.shrink(7.0);
+		let start = rounded_outline(rect, 7.0, 0.0);
+		assert_eq!(start, egui::pos2(17.0, 20.0));
+		assert!(rounded_outline(rect, 7.0, -1.0).distance(start) < 1e-3);
+		let mut last = start;
+		for step in 1..=400 {
+			let point = rounded_outline(rect, 7.0, step as f32 / 400.0);
+			assert!(
+				(inner.distance_to_pos(point) - 7.0).abs() < 1e-3,
+				"{point:?}"
+			);
+			assert!(point.distance(last) < 0.5, "{point:?} jumps from {last:?}");
+			last = point;
+		}
 	}
 
 	#[test]
