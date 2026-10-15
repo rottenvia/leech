@@ -281,7 +281,6 @@ impl Voice {
 		ctx: &egui::Context,
 	) {
 		self.reap();
-		ui.voice_switch_ready = true;
 		self.poll_mic_preview(state, ui, ctx);
 		self.poll_camera_test(state, ui, ctx);
 		ui.voice_speaking.clear();

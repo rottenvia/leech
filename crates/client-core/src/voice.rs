@@ -17,7 +17,8 @@ mod phone;
 pub mod sim;
 
 pub use phone::{
-	ACK_TIMEOUT, MAX_RETRIES, MediaPlan, STREAM_TIMEOUT, SharePlan, ShareState, WatchPlan,
+	ACK_TIMEOUT, LINK_TIMEOUT, MAX_RETRIES, MediaPlan, STREAM_TIMEOUT, SharePlan, ShareState,
+	WatchPlan,
 };
 
 pub const MAX_PARTICIPANTS: usize = 64;
@@ -937,7 +938,14 @@ impl ClientState {
 						call.server_muted = server_muted;
 						call.server_deafened = server_deafened;
 					}
-					self.own_voice_state(ours, session, guild, channel, now);
+					let state = phone::Target {
+						guild,
+						channel,
+						mute: muted,
+						deaf: deafened,
+						video,
+					};
+					self.own_voice_state(ours, session, state, now);
 				} else {
 					self.pump(now);
 				}

@@ -91,6 +91,8 @@ pub struct Config {
 	/// Own voice states name the Gateway session. Discord does not document this, so the
 	/// controller must also work when they never do.
 	pub sessions_match: bool,
+	/// Percent of voice states Discord loses entirely: no change and no answer.
+	pub dropped: u64,
 }
 impl Default for Config {
 	fn default() -> Self {
@@ -101,6 +103,7 @@ impl Default for Config {
 			silent: 100,
 			answer: None,
 			sessions_match: true,
+			dropped: 0,
 		}
 	}
 }
@@ -357,6 +360,10 @@ impl Discord {
 					self.overlapping += 1;
 				}
 				self.sent = Some((now, false));
+				if self.rng.chance(self.config.dropped) {
+					self.trace(now, &"DROPPED");
+					return;
+				}
 				let current = self.truth.voice;
 				match channel {
 					None => match current {
