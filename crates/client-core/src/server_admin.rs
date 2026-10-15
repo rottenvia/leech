@@ -872,6 +872,7 @@ impl State {
 			Outcome::VoiceUpdated(user) => {
 				self.status = "Voice moderation request accepted";
 				if self.demo
+					&& self.owner() != Some(user)
 					&& let Some(Action::Voice {
 						channel, change, ..
 					}) = action.as_ref()
@@ -904,9 +905,8 @@ impl State {
 						video: participant.video,
 						streaming: participant.streaming,
 						member: entry.member.map(Box::new),
-						request: None,
+						ours: false,
 						session: None,
-						negotiation_revision: None,
 					});
 				}
 			}
