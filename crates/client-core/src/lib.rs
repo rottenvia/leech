@@ -2248,41 +2248,7 @@ impl State {
 		}
 
 		if let Command::Voice(control) = command {
-			match control {
-				voice::Command::RingRecipient {
-					channel, request, ..
-				} => self.apply_voice(voice::Event::RingFailed {
-					channel,
-					request,
-					message: "Recipient ringing was not sent; the work queue is full",
-				}),
-				voice::Command::Sync { .. } => {
-					self.status = "Call status could not refresh; reopen the DM to retry"
-				}
-				voice::Command::Join {
-					channel, request, ..
-				}
-				| voice::Command::ConfirmSession {
-					channel, request, ..
-				}
-				| voice::Command::Ring { channel, request } => self.apply_voice(voice::Event::Failed {
-					channel,
-					request,
-					message: "Call action was not sent; the work queue is full",
-				}),
-				voice::Command::SetCamera {
-					channel, request, ..
-				} => {
-					if let Some(call) = &mut self.voice.active
-						&& call.channel == channel
-						&& call.request == request
-					{
-						call.camera = false;
-						self.status = "Camera control was not sent; camera is off locally";
-					}
-				}
-				_ => self.status = "Call control was not sent; local mute/hangup still applies",
-			}
+			self.voice_command_rejected(control);
 			return;
 		}
 		if matches!(&command, Command::Members { .. }) {
@@ -3107,7 +3073,7 @@ impl State {
 					{
 						call.participants.retain(|p| p.user != user);
 						if call.watching == Some(user) {
-							call.watching = None;
+							self.stop_watching();
 						}
 					}
 					if self.selected == Some(channel) && self.members.is_some() {
@@ -3655,6 +3621,7 @@ impl State {
 				// The voice socket is independent and a RESUME replays roster changes, so the call,
 				// roster and known DM calls all stay. Only a fresh READY invalidates the voice state.
 				self.voice.incoming = None;
+				self.voice_disconnected(std::time::Instant::now());
 				if std::mem::replace(&mut self.gateway_connected, false) {
 					self.cancel_history();
 					self.freshness = Freshness::Stale;
@@ -3672,6 +3639,7 @@ impl State {
 				Ok(())
 			}
 			Event::Resync | Event::PermissionsChanged => {
+				let resync = matches!(envelope.event, Event::Resync);
 				self.cancel_message_actions();
 				self.cancel_user_action();
 				self.cancel_server_action();
@@ -3687,9 +3655,19 @@ impl State {
 				self.read_state.cancel();
 				self.clear_profile();
 				self.profile_cache.clear();
-				self.disconnect_voice(
-					"Discord session or permissions changed; rejoin after refreshing",
-				);
+				// Rosters return with the new snapshot. A wanted call stays: a fresh session
+				// joins it again, and a permission change ends it only once access is denied.
+				self.voice.roster.clear();
+				self.voice.preview = None;
+				if resync {
+					self.voice.dm_calls.clear();
+					self.voice.dm_participants.clear();
+					self.voice.dm_ringing.clear();
+					self.voice.incoming = None;
+					self.voice_session_reset(std::time::Instant::now());
+				} else {
+					self.voice_tick(std::time::Instant::now());
+				}
 				self.member_search = Default::default();
 				self.members = None;
 				self.timeline.clear();
@@ -5807,7 +5785,7 @@ mod tests {
 			..State::default()
 		};
 		grant_permissions(&mut state);
-		assert!(state.start_call(Id(1), false).is_some());
+		assert!(state.start_call(Id(1), false));
 		let permissions = model::permissions::Snapshot {
 			guilds: state.permissions.guilds.values().cloned().collect(),
 			channels: state.permissions.channels.values().cloned().collect(),
@@ -5861,7 +5839,7 @@ mod tests {
 		);
 		assert_eq!(state.selected, Some(Id(1)));
 		assert!(state.history_pending);
-		assert!(state.start_call(Id(1), false).is_some());
+		assert!(state.start_call(Id(1), false));
 	}
 
 	#[test]
