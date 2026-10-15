@@ -177,6 +177,40 @@ fn leaving_and_joining_again_at_once_connects_without_an_error() {
 }
 
 #[test]
+fn a_lost_leave_neither_strands_the_rejoin_nor_leaves_a_ghost_call() {
+	for rejoin in [true, false] {
+		let mut world = World::quiet();
+		assert!(world.state.start_call(DM, false));
+		world.settle();
+		// Discord loses the leave and keeps this account in the call.
+		world.discord.config.dropped = 100;
+		world.state.leave_call();
+		world.step();
+		world.discord.config.dropped = 0;
+		if rejoin {
+			// A join for the channel Discord still holds would bring no voice server.
+			assert!(world.state.start_call(DM, false));
+		}
+		world.run(Duration::from_secs(6));
+		assert_eq!(world.connected_to(DM), rejoin, "recovered within 6 s");
+		assert_eq!(world.idle(), !rejoin, "no ghost call on Discord");
+		assert_eq!(world.discord.overlapping, 0);
+	}
+}
+
+#[test]
+fn a_join_without_voice_server_details_reconnects() {
+	let mut world = World::quiet();
+	assert!(world.state.start_call(DM, false));
+	world.settle();
+	// Discord answers the voice state but never sends a voice server.
+	world.state.voice.phone.link.server = None;
+	world.state.voice_tick(world.now);
+	world.run(LINK_TIMEOUT + Duration::from_secs(4));
+	assert!(world.connected_to(DM));
+}
+
+#[test]
 fn spamming_join_and_leave_ends_in_the_last_choice_with_paced_operations() {
 	for last_join in [false, true] {
 		let mut world = World::quiet();
@@ -480,6 +514,7 @@ fn run_session(seed: u64, chaos: bool, latency: (u64, u64)) {
 		ring_failures: 10,
 		silent: 50,
 		answer: seed.is_multiple_of(3).then_some(Duration::from_millis(700)),
+		dropped: if chaos { 3 } else { 0 },
 	};
 	let mut world = World::new(seed, config);
 	let mut rng = Rng::new(seed ^ 0xA5A5);
@@ -584,6 +619,7 @@ fn run_session(seed: u64, chaos: bool, latency: (u64, u64)) {
 		world.discord.resume(&mut world.state, world.now);
 	}
 	world.discord.config.media_failures = 0;
+	world.discord.config.dropped = 0;
 	world.run(Duration::from_secs(if slow { 90 } else { 40 }));
 	converged(&world, seed);
 }

@@ -82,7 +82,12 @@ desktop media workers and the interface only carry its inputs and actions.
 - **Recovery.** A resumed main Gateway keeps the call and resends an operation that was
   still unanswered. A fresh session joins the wanted call again. A voice server move, or a
   dropped media connection, reconnects with fresh credentials (backoff 1, 2 and 4 seconds;
-  the call ends after a fourth failure). A moderator move is followed. Another device of the
+  the call ends after a fourth failure). The same happens when an answered join still has
+  no voice server after 8 seconds, or when the voice connection is not secured within
+  20 seconds. Own voice states show what Discord holds; when one shows that an operation
+  was lost, such as a leave dropped in a burst of joins and leaves, it is sent again (at
+  most three times), and a join for a channel Discord still holds leaves first so Discord
+  sends a new voice server. A moderator move is followed. Another device of the
   account joining a call ends it here without a hangup; joining again takes it back.
   A disconnect by Discord or a moderator ends the call with a notice.
 - **Ownership.** Discord does not document that a voice state's session is the main Gateway

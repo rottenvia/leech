@@ -815,8 +815,9 @@ impl MessagingUi {
 			state.status = "This stream is no longer live";
 			return;
 		}
-		// Like Discord, watching a stream in another channel moves the call there first; the
-		// watch follows once that call connects.
+		// Watching a stream elsewhere joins its channel first and watches once connected. An
+		// active call is never left silently: the switch is offered once, and watching after
+		// it is a new click.
 		match state.voice.active.as_ref().map(|call| call.channel) {
 			Some(active) if active == channel => {
 				if state.call_connected() {
@@ -829,13 +830,15 @@ impl MessagingUi {
 					}
 				}
 			}
-			_ => {
+			active => {
 				if self
 					.request_call_audio(state, channel, false, None, commands)
 					.is_err()
 				{
 					self.stream_preview_watch = None;
 					state.status = "Could not join this stream's voice channel";
+				} else if active.is_some() {
+					self.stream_preview_watch = None;
 				}
 			}
 		}

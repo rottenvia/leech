@@ -34,6 +34,11 @@ pub const STREAM_TIMEOUT: Duration = Duration::from_secs(10);
 pub const MAX_RETRIES: u8 = 3;
 /// Commands waiting for the desktop to send them; it drains them every frame.
 pub const MAX_OUTBOX: usize = 64;
+/// A joined call still without voice server details this long after Discord answered
+/// reconnects, like a media failure.
+pub const LINK_TIMEOUT: Duration = Duration::from_secs(8);
+/// Times one lost voice-state operation is repeated before the controller stops correcting.
+pub const MAX_DRIFT: u8 = 3;
 
 static IDS: AtomicU64 = AtomicU64::new(1);
 /// Ids are unique for the process, so a run started before a sign-out never matches a new one.
@@ -75,6 +80,11 @@ pub(crate) struct Wire {
 	pub resend: bool,
 	/// Leave and join again for fresh credentials after a media failure.
 	pub rejoin: bool,
+	/// What Discord last reported for this device. It differs from `told` when Discord lost
+	/// an operation, such as a leave dropped during a burst of joins and leaves.
+	pub held: Target,
+	/// Corrections sent since `told` and `held` last agreed.
+	pub drift: u8,
 }
 
 pub(crate) struct Server {
@@ -96,12 +106,15 @@ pub(crate) struct Link {
 	pub server: Option<Server>,
 	/// Changes whenever the session or the server does; a media run is bound to one revision.
 	pub revision: u64,
+	/// When an answered join that still lacks the session or the server reconnects.
+	pub deadline: Option<Instant>,
 }
 impl Link {
 	fn reset(&mut self) {
 		self.session = None;
 		self.server = None;
 		self.revision = next_id();
+		self.deadline = None;
 	}
 }
 
@@ -290,6 +303,7 @@ impl super::State {
 		let phone = &self.phone;
 		[
 			phone.wire.pending,
+			phone.link.deadline,
 			phone.share.stream.pending.map(|(_, at)| at),
 			phone.watch.stream.pending.map(|(_, at)| at),
 			phone.retry.at,
@@ -391,10 +405,10 @@ impl ClientState {
 		&mut self,
 		ours: bool,
 		session: Option<Secret>,
-		guild: Option<Id>,
-		channel: Option<Id>,
+		state: Target,
 		now: Instant,
 	) {
+		let Target { guild, channel, .. } = state;
 		let phone = &mut self.voice.phone;
 		let told = phone.wire.told;
 		let known = session.as_ref().is_some_and(|session| {
@@ -404,7 +418,8 @@ impl ClientState {
 				.any(|accepted| accepted.expose() == session.expose())
 		});
 		let answers = phone.wire.pending.is_some() && channel == told.channel;
-		phone.matched |= ours;
+		// Only a state that carries a session can show that sessions match.
+		phone.matched |= ours && session.is_some();
 		let mine = if phone.matched {
 			ours
 		} else {
@@ -421,6 +436,7 @@ impl ClientState {
 			{
 				// The other device's state is now Discord's; nothing of ours is in flight.
 				phone.wire.told = Target::default();
+				phone.wire.held = Target::default();
 				phone.wire.pending = None;
 				phone.link.reset();
 				phone.share.stream.doomed(now);
@@ -430,12 +446,11 @@ impl ClientState {
 			}
 			return;
 		}
+		phone.wire.held = state;
 		if channel == told.channel {
 			// Answered, possibly by a replay after the socket resumed.
 			phone.wire.pending = None;
 			phone.wire.resend = false;
-		}
-		if channel == told.channel {
 			if channel.is_some()
 				&& let Some(session) = session
 				&& phone
@@ -569,8 +584,25 @@ impl ClientState {
 		self.pump(now);
 	}
 
+	/// The call's connection failed: leave and join again for fresh credentials, with backoff,
+	/// or end the call after `MAX_RETRIES` attempts.
+	fn reconnect(&mut self, message: &'static str, now: Instant) {
+		let phone = &mut self.voice.phone;
+		phone.media = None;
+		phone.retry.count += 1;
+		if phone.retry.count > MAX_RETRIES {
+			self.end_call(Some(message));
+		} else {
+			phone.retry.at = Some(now + Duration::from_secs(1 << (phone.retry.count - 1)));
+			phone.wire.rejoin = true;
+			self.status = message;
+			self.voice.notice = Some("Call connection lost; reconnecting…");
+		}
+	}
+
 	pub(crate) fn media_report(&mut self, id: u64, report: Report, now: Instant) {
 		let phone = &mut self.voice.phone;
+		let mut failed = None;
 		if let Some(run) = phone.media.as_mut().filter(|run| run.id == id) {
 			match report {
 				Report::Progress(phase) => {
@@ -587,20 +619,8 @@ impl ClientState {
 					phone.retry = Retry::default();
 				}
 				Report::CameraAvailable(available) => run.camera = available,
-				Report::Failed(message) => {
-					phone.media = None;
-					phone.retry.count += 1;
-					if phone.retry.count > MAX_RETRIES {
-						self.end_call(Some(message));
-					} else {
-						// Fresh credentials too: the old ones may be what failed.
-						phone.retry.at =
-							Some(now + Duration::from_secs(1 << (phone.retry.count - 1)));
-						phone.wire.rejoin = true;
-						self.status = message;
-						self.voice.notice = Some("Call connection lost; reconnecting…");
-					}
-				}
+				// Fresh credentials too: the old ones may be what failed.
+				Report::Failed(message) => failed = Some(message),
 				Report::Status(_) | Report::Live => {}
 			}
 		} else if phone.share.want.is_some_and(|(want, _)| want == id) {
@@ -623,6 +643,9 @@ impl ClientState {
 				Report::Failed(message) => self.end_watch(Some(message)),
 				_ => {}
 			}
+		}
+		if let Some(message) = failed {
+			self.reconnect(message, now);
 		}
 		self.pump(now);
 	}
@@ -676,6 +699,13 @@ impl ClientState {
 		if lost[1] && self.voice.phone.watch.want.is_some() {
 			self.end_watch(Some("The stream did not start; try watching again"));
 		}
+		let link = &mut self.voice.phone.link;
+		if link.deadline.is_some_and(|at| now >= at) {
+			link.deadline = None;
+			if self.voice.active.is_some() {
+				self.reconnect("Discord did not connect the call", now);
+			}
+		}
 	}
 
 	fn desired(&self) -> Target {
@@ -701,13 +731,25 @@ impl ClientState {
 		}
 		let desired = self.desired();
 		let phone = &mut self.voice.phone;
-		let told = phone.wire.told;
+		let Wire { told, held, .. } = phone.wire;
 		if told.channel.is_none() {
 			phone.wire.rejoin = false;
 		}
-		if desired.same(&told) && !std::mem::take(&mut phone.wire.resend) {
+		if told.same(&held) {
+			phone.wire.drift = 0;
+		}
+		// Discord's own state differs from the last operation, which was therefore lost.
+		let lost = !told.same(&held) && phone.wire.drift < MAX_DRIFT;
+		let repeat = desired.same(&told);
+		if repeat && !std::mem::take(&mut phone.wire.resend) && !lost {
 			return;
 		}
+		// Discord still holds the channel to join because a leave was lost. A join for it
+		// would bring no new voice server, so leave first.
+		let stale = lost
+			&& desired.channel.is_some()
+			&& desired.channel != told.channel
+			&& held.channel == desired.channel;
 		// Switching channels is a full leave and a fresh join, so every event after the leave
 		// belongs to the new connection.
 		let target = if told.channel.is_some()
@@ -715,8 +757,15 @@ impl ClientState {
 			&& told.channel != desired.channel
 		{
 			Target::leave(told.guild)
+		} else if stale {
+			Target::leave(held.guild)
 		} else {
 			desired
+		};
+		phone.wire.drift = if repeat || stale {
+			phone.wire.drift + 1
+		} else {
+			0
 		};
 		if target.channel != told.channel {
 			phone.link.reset();
@@ -753,6 +802,19 @@ impl ClientState {
 				&& phone.link.server.is_some()
 				&& phone.retry.at.is_none()
 		});
+		let stalled = wanted.is_none()
+			&& phone.wire.pending.is_none()
+			&& phone.retry.at.is_none()
+			&& self
+				.voice
+				.active
+				.as_ref()
+				.is_some_and(|call| phone.wire.told.channel == Some(call.channel));
+		if !stalled {
+			phone.link.deadline = None;
+		} else if phone.link.deadline.is_none() {
+			phone.link.deadline = Some(now + LINK_TIMEOUT);
+		}
 		let current = phone.media.as_ref().is_some_and(|run| {
 			wanted.is_some_and(|call| run.channel == call.channel)
 				&& run.revision == phone.link.revision

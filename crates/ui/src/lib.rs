@@ -389,7 +389,6 @@ pub struct MessagingUi {
 	pending_upload: Option<pending::Upload>,
 	pub clear_cache_requested: bool,
 	pub voice_available: bool,
-	pub voice_switch_ready: bool,
 	voice_switch: Option<voice::CallSwitch>,
 	pub screen: screen::ScreenUi,
 	pub voice_camera_available: bool,
