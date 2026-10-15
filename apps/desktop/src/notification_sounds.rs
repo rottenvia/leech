@@ -11,9 +11,12 @@ use std::{
 	time::{Duration, Instant},
 };
 
-// Each complete ringtone plus a short gap; shared with the automatic call timers.
+// Each complete ringtone plus a short gap; shared with the automatic call timers. The call
+// stage pulses on the outgoing ring's three-second cycle.
 pub const RING_INTERVAL: Duration = Duration::from_secs(6);
 pub const OUTGOING_RING_INTERVAL: Duration = Duration::from_secs(3);
+/// The outgoing ring starts once the call connects, after the join chime has rung out.
+pub const OUTGOING_RING_DELAY: Duration = Duration::from_millis(700);
 
 #[derive(Default)]
 pub struct Sounds {

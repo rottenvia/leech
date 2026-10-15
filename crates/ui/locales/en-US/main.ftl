@@ -3465,6 +3465,12 @@ settings-appearance-settings-blur = Blur
 # Context: appearance_settings
 settings-appearance-settings-choose-primary-color = Choose primary color
 # Context: appearance_settings
+settings-appearance-settings-call-color = Call animation color
+# Context: appearance_settings
+settings-appearance-settings-call-color-description = Rings and halos around avatars in calls. By default a brighter shade of the accent, so it stands out on the dark call stage.
+# Context: appearance_settings
+settings-appearance-settings-choose-call-color = Choose call animation color
+# Context: appearance_settings
 # Context: appearance_settings
 settings-appearance-settings-primary-color = Primary color
 # Context: appearance_settings

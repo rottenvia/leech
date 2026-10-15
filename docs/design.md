@@ -89,16 +89,26 @@ Motion is short and shared. `design::hover_motion` fades hover plates and ink in
 and `design::press_motion` with `design::pressed_rect` dips a control by a few percent while
 it is held. Buttons, icon buttons, menu rows, segmented tabs, text actions, title bar
 captions, call controls and list rows all use them. Both run on egui's `animation_time`
-(1/12 s, like the server rail), so a zero turns all motion off. Joining a call has its own
-sequence: a soft synthesized tick on the click (under the "Call Joined" sound setting); while
-connecting, the own avatar rests slightly dimmed and breathing while an accent comet with a
-glowing head circles just inside its edge; once connected the comet closes into a ring that
-turns green and fades as the avatar brightens with a small lift, with Discord's join sound.
-All of it stays inside the avatar, so the tight voice-only stage never crops it; the ringing
-pulse is bounded by its tile for the same reason. The voice-only stage is never shorter than
-its avatars and bar. While connecting, the voice panel's status tile
-breathes and eases from amber to green. Message rows keep instant hover so reading stays
-fast.
+(1/12 s, like the server rail), so a zero turns all motion off. Switching conversations fades
+the new one in over 0.18 s from part-way, so the switch never flashes the bare background.
+
+Calls follow their sounds. A seat waits at 92% size and faded while its own call connects (a
+comet circles just inside the avatar edge) or while it is only being rung. It arrives in time
+with Discord's two-note join chime: the ring closes on the first note (the own comet closes on
+itself; someone picking up gets a ring drawn around them), the avatar springs to full size with
+a two-percent overshoot on the second note, and a soft halo spreads around it. The outgoing ring
+starts once the call connects, after the chime has rung out, and keeps a fixed three-second
+cadence; the ringing seat pulses on each burst of the ring sound. A seat whose person leaves
+fades out where it sat while the others glide to their places. The direct-message stage unfolds
+from the header when a call starts and folds back into it when the call ends, replaying its last
+frame as it fades. A call known to have nobody else in it shows no join stage, so hanging up on
+an unanswered call never shows the person rung as if they had joined. Rings and halos use the
+call colour (Appearance, Accent): the theme accent lifted until it stands out on the dark stage,
+or the owner's pick. Halos spread up to 14 points but never past the stage, so they are never
+cut. Call animations repaint every frame while they run, like egui's own animations; a timer
+would round to every other vsync and look laggy. The voice-only stage is never shorter than its
+avatars and bar. While connecting, the voice panel's status tile breathes and eases from amber
+to green. Message rows keep instant hover so reading stays fast.
 
 Scroll bars stay out of the picture: nothing at rest, a faint 3px thread while the pointer is
 over the area, a soft handle only when the bar itself is pointed at. Dialog sheets and the

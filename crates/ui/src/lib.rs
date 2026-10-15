@@ -423,6 +423,19 @@ pub struct MessagingUi {
 	voice_chrome_hidden: f32,
 	/// DM call joined with "Join with video": the camera starts once it connects.
 	voice_camera_on_join: Option<Id>,
+	/// Seats on call stages, remembered so arrivals glide and departures fade.
+	voice_seats: Vec<voice::Seat>,
+	/// Opening and closing of the direct-message call stage.
+	voice_stage: voice::StageMotion,
+	/// Clip for avatar halos while a stage draws its seats, so they spread past a tile's edge.
+	voice_halo_clip: Option<egui::Rect>,
+	/// Start of the outgoing ring cycle in egui time, set by the desktop's ring timer so the
+	/// ringing seat pulses with the sound.
+	pub voice_ring_epoch: Option<f64>,
+	/// Custom colour of call rings and halos; unset lifts the theme accent for the dark stage.
+	pub call_color: Option<[u8; 3]>,
+	/// The conversation shown and when the switch to it began, for the content fade.
+	conversation_fade: Option<(Option<Id>, f64)>,
 	/// Session-only visibility of the selected guild voice channel's chat.
 	pub voice_chat_open: bool,
 	/// Tile click to start (`Some(user)`) or stop (`None`) watching, applied by the stage.
@@ -493,6 +506,29 @@ pub struct MessagingUi {
 	pub transparency_blur: bool,
 	pub transparency: u8,
 	pub blur: u8,
+}
+
+/// Content opacity just after switching conversations: a short fade, so the new messages
+/// settle in instead of popping. It starts part-way, so a switch never flashes the bare
+/// background; the first conversation after startup just appears.
+fn conversation_fade(
+	ui: &egui::Ui,
+	shown: &mut Option<(Option<Id>, f64)>,
+	selected: Option<Id>,
+) -> f32 {
+	const SECS: f64 = 0.18;
+	let now = ui.input(|input| input.time);
+	let (conversation, since) = shown.get_or_insert((selected, now - SECS));
+	if *conversation != selected {
+		*conversation = selected;
+		*since = now;
+	}
+	let t = ((now - *since) / SECS) as f32;
+	if t >= 1.0 {
+		return 1.0;
+	}
+	ui.ctx().request_repaint();
+	0.3 + 0.7 * egui::emath::easing::cubic_out(t)
 }
 
 /// Context strip (reply/edit) drawn as the rounded top of the composer block.
@@ -4623,6 +4659,11 @@ impl MessagingUi {
 					}),
 			)
 			.show(ui, |ui| {
+				ui.set_opacity(conversation_fade(
+					ui,
+					&mut self.conversation_fade,
+					state.selected,
+				));
 				let message_surface =
 					design::section_surface(ui, background.chat, design::ImageSection::MessageList);
 				if design::has_section_background(ui)
@@ -4665,7 +4706,9 @@ impl MessagingUi {
 					return;
 				}
 				// In a DM call the header moves onto the call stage, shown while hovered.
-				let header_in_call = !search_open && self.dm_call_stage(state).is_some();
+				let header_in_call = !search_open
+					&& (self.dm_call_stage(state).is_some()
+						|| self.stage_closing(ui, state.selected));
 				if !search_open && !header_in_call {
 					self.channel_header(
 						ui,
