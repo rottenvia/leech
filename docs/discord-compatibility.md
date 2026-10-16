@@ -2,7 +2,7 @@
 
 ## Profile cosmetics — October 11, 2026
 
-Serein shows equipped avatar decorations, nameplates, profile effects and profile frames.
+Leech shows equipped avatar decorations, nameplates, profile effects and profile frames.
 All four are unofficial normal-client behavior: none appears in Discord's public bot
 documentation. Shapes come from the Userdoccers [user](https://docs.discord.food/resources/user#avatar-decoration-data-object),
 [collectibles](https://docs.discord.food/resources/collectibles) and
@@ -216,7 +216,7 @@ typed arguments. Root commands, subcommands and one subcommand-group level suppo
 integers, numbers, booleans, static choices and user/channel/role/mentionable IDs.
 Entity pickers use already loaded account data; they do not fetch a complete directory.
 Required fields, declared limits, choices, command context and channel access are checked
-before sending. Serein requires Send Messages (Send Messages in Threads for threads) for
+before sending. Leech requires Send Messages (Send Messages in Threads for threads) for
 all slash commands, plus Use Application Commands for guild application commands. The picker and
 submission path also check default member permission bits and received application/command
 overrides for the current user, roles and channel. User overrides precede role overrides;
@@ -306,7 +306,7 @@ remote nickname mention insertion, stale replies and response limits.
 ## Chat links — October 8, 2026
 
 Clicked message and embed links matching HTTPS `/channels/{guild|@me}/{channel}`
-with an optional message ID navigate inside Serein. Exact discord.com and legacy
+with an optional message ID navigate inside Leech. Exact discord.com and legacy
 discordapp.com hosts, including www, ptb and canary, are recognized, case-insensitively
 and with the default HTTPS port. Valid query/fragment suffixes do not change the
 target. Raw routing paths are validated before URL normalization; encoded paths,
@@ -631,7 +631,7 @@ low-bitrate large-keyframe latency still need owner-controlled evidence; see
 September 21 interoperability correction: camera and screen-share H.264 SPS metadata
 is normalized before DAVE encryption to specify no frame reordering and bounded
 decoder buffering. The [WebRTC receiver rewrites unsuitable SPS metadata](https://github.com/webrtc-mirror/webrtc/blob/main/modules/rtp_rtcp/source/video_rtp_depacketizer_h264.cc)
-before frame decryption; that changes DAVE-authenticated bytes, while Serein's
+before frame decryption; that changes DAVE-authenticated bytes, while Leech's
 receiver preserves them. The offline debug command
 `cargo run --locked -p discord-voice --example video_interop` exercises this
 authentication failure and normalized encryption/decryption/decoding with synthetic
@@ -715,7 +715,7 @@ stereo Opus and H.264, encrypted UDP forwarding, decoded audio and video. It ver
 local media handoff, not PulseAudio/WASAPI capture, speaker output, or Discord forwarding.
 Discord's [August 2025 patch notes](https://discord.com/blog/discord-patch-notes-august-4-2025)
 confirm Linux application-audio sharing; older articles saying Linux audio is unavailable
-are outdated. Unlike Discord's selected-application mode, Serein currently captures other
+are outdated. Unlike Discord's selected-application mode, Leech currently captures other
 eligible applications too, even when sharing one window, excluding its own playback.
 
 September 12 local-preview update: DM and guild call stages display the owner's
@@ -751,12 +751,12 @@ measured performance, packaging or live Discord interoperability.
 
 System audio extension (September 15, 2026): Linux PulseAudio/PipeWire application monitors
 and Windows process loopback feed the existing stereo Opus/DAVE stream audio sender.
-Both are opt-in and exclude Serein's playback, including received call and stream audio.
+Both are opt-in and exclude Leech's playback, including received call and stream audio.
 Other applications are included even for a single-window share. macOS ScreenCaptureKit
 continues excluding the current process. Windows requires build 20348+ and uses native
 process-tree exclusion; unsupported systems fail visibly without whole-output fallback.
 Linux uses `pa_stream_set_monitor_stream` before connecting each recording stream,
-rejects Serein/unknown application identities and disables recording-stream movement.
+rejects Leech/unknown application identities and disables recording-stream movement.
 Audio access is separate from portal-approved video, using the existing PulseAudio socket.
 See [audio behavior and owner test steps](voice.md#screen-sharing).
 
@@ -872,7 +872,7 @@ Old cached component markers acquire controls only after normal history refresh.
 Run the offline native component preview with:
 
 ```bash
-cargo run --locked -p serein --features demo -- --demo --demo-components
+cargo run --locked -p leech --features demo -- --demo --demo-components
 ```
 
 Choose a dropdown option or click **Open sample form** to inspect the synthetic controls.
@@ -891,11 +891,11 @@ resolution remain owner-unverified. The browser uses its own session and Discord
 
 Loaded threads (September 10): READY guild thread arrays follow the original [discord.py-self guild parser](https://github.com/dolfies/discord.py-self/blob/master/discord/guild.py); active create/update/delete, scoped sync, archive eviction and owner-removal handling are informed by its [dispatch implementation](https://github.com/dolfies/discord.py-self/blob/master/discord/state.py). Discord's [Gateway thread events](https://docs.discord.com/developers/events/gateway-events#thread-list-sync) document the guild/parent scope and membership fields. These primary sources establish wire evidence, not normal-account acceptance; no implementation blocks were copied. Active discovery is limited to service-supplied snapshots/events; explicit archive reads are described below, with existing subscriptions unchanged. A visible unresolved channel mention performs one bounded documented channel read and admits only a same-guild thread whose loaded parent remains viewable; resolved names are retained in a bounded session-only cache. Unknown updates do not otherwise hydrate a missing thread. See native navigation scope.
 
-Serein is unofficial and not endorsed by Discord. No normal-user live session has been tested. Technical compatibility does not imply approval. Discord forbids normal-account automation outside its OAuth2/bot API and warns of account termination ([policy](https://support.discord.com/hc/en-us/articles/115002192352-Automated-User-Accounts-Self-Bots)); its [terms](https://discord.com/terms) also apply.
+Leech is unofficial and not endorsed by Discord. No normal-user live session has been tested. Technical compatibility does not imply approval. Discord forbids normal-account automation outside its OAuth2/bot API and warns of account termination ([policy](https://support.discord.com/hc/en-us/articles/115002192352-Automated-User-Accounts-Self-Bots)); its [terms](https://discord.com/terms) also apply.
 
-Server identity tags (September 19): Discord's documented [User object](https://docs.discord.com/developers/resources/user#user-object) may include `primary_guild` with an enabled identity, guild ID, tag and badge hash. Serein retains a valid identity from ordinary user payloads for profile cards, server-channel and thread member rows, and one-to-one DM rows. Profile cards can therefore show it before the unofficial extended-profile request completes or when that request fails; a completed extended profile remains authoritative, including removal of a stale tag. The older duplicated `clan` shape is accepted only as a bounded fallback. Normal-account delivery remains live-unverified.
+Server identity tags (September 19): Discord's documented [User object](https://docs.discord.com/developers/resources/user#user-object) may include `primary_guild` with an enabled identity, guild ID, tag and badge hash. Leech retains a valid identity from ordinary user payloads for profile cards, server-channel and thread member rows, and one-to-one DM rows. Profile cards can therefore show it before the unofficial extended-profile request completes or when that request fails; a completed extended profile remains authoritative, including removal of a stale tag. The older duplicated `clan` shape is accepted only as a bounded fallback. Normal-account delivery remains live-unverified.
 
-| Capability | Credential / evidence | Classification | Serein status / fallback |
+| Capability | Credential / evidence | Classification | Leech status / fallback |
 |---|---|---|---|
 | Supported sign-in | OAuth2 access token; [scopes](https://docs.discord.com/developers/topics/oauth2) | Documented for limited scopes; RPC/other scopes restricted | No full replacement-client grant established. No invented OAuth login |
 | Token sign-in | Normal-user session credential intentionally entered by its owner; [Abaddon source](https://github.com/uowuo/abaddon/tree/master/src/discord) reviewed today | Unofficial, unstable, account risk | Available on the main sign-in screen in every build, saved like a normal login, no extraction from other software; actual service validation pending |
@@ -943,13 +943,13 @@ The handoff is original code in `crates/platform/src/login-handoff.js` and the L
 
 Navigation is limited to Discord’s HTTPS origin; new windows and downloads are blocked. Third-party challenge subframes are left to the platform engine; popup-dependent methods may fail. No spoofed official client user agent/properties are supplied. Resume URLs are restricted to recognized Discord gateway hosts.
 
-September 10 People/avatar continuation: the member subscription uses the opcode 14 shape found in the current original discord.py-self implementation. [Original lazy-guild research](https://arandomnewaccount.gitlab.io/discord-unofficial-docs/lazy_guilds.html) describes list positions including groups and ambiguous empty SYNC responses; it is unofficial evidence, not a service guarantee. A newer opcode 37 has also been [reported by Userdoccers](https://github.com/discord-userdoccers/discord-userdoccers/issues/191); Serein does not claim opcode 14 works for every account. Channel-specific list identities require the available everyone-role permissions and channel overwrites. The small noncryptographic Murmur3 identity calculation is implemented locally and checked against known vectors; no third-party client code blocks were copied. This identity selects a list; it grants no permissions. No complete member directory is fetched or persisted. Profile cards expose only available name, ID and avatar, not invented bios, roles or relationships. Server-specific custom avatars and full profile endpoints remain unsupported.
+September 10 People/avatar continuation: the member subscription uses the opcode 14 shape found in the current original discord.py-self implementation. [Original lazy-guild research](https://arandomnewaccount.gitlab.io/discord-unofficial-docs/lazy_guilds.html) describes list positions including groups and ambiguous empty SYNC responses; it is unofficial evidence, not a service guarantee. A newer opcode 37 has also been [reported by Userdoccers](https://github.com/discord-userdoccers/discord-userdoccers/issues/191); Leech does not claim opcode 14 works for every account. Channel-specific list identities require the available everyone-role permissions and channel overwrites. The small noncryptographic Murmur3 identity calculation is implemented locally and checked against known vectors; no third-party client code blocks were copied. This identity selects a list; it grants no permissions. No complete member directory is fetched or persisted. Profile cards expose only available name, ID and avatar, not invented bios, roles or relationships. Server-specific custom avatars and full profile endpoints remain unsupported.
 
 ## DM voice evidence — September 10
 
 Normal-user DM entry uses guild_id:null with main Gateway opcodes 13/4, based on the original [discord.py-self Gateway implementation](https://github.com/dolfies/discord.py-self/blob/master/discord/gateway.py). CALL_CREATE/UPDATE/DELETE and voice state/server shapes follow its [dispatch source](https://github.com/dolfies/discord.py-self/blob/master/discord/state.py) and [voice types](https://github.com/dolfies/discord.py-self/blob/master/discord/types/voice.py). Ring/stop-ringing use the [HTTP implementation](https://github.com/dolfies/discord.py-self/blob/master/discord/http.py); its [DM connect flow](https://github.com/dolfies/discord.py-self/blob/master/discord/channel.py) establishes voice before ringing. These are unofficial interoperability evidence, not approved normal-account APIs or a bot-token workaround. No source-code blocks were copied.
 
-Discord's documented voice transport and [DAVE protocol](https://daveprotocol.com/) supply encryption/protocol requirements. Serein uses Davey 0.1.4/OpenMLS, an unofficial implementation, rather than claiming to ship Discord's libdave or an independently audited engine. Real MLS, DAVE, RTP, Opus and loopback WebSocket/UDP tests exercise the adapter with synthetic participants. They do not verify current Discord acceptance, microphone permission, device quality or a remote official client. Existing group DMs, Stage channels and camera video remain unsupported; outgoing screen sharing is covered by the September 11 addendum. Guild voice is implemented separately below, with its live gate still unverified. See [voice scope and owner-operated gate](voice.md) and [adapter details](../crates/discord-voice/README.md).
+Discord's documented voice transport and [DAVE protocol](https://daveprotocol.com/) supply encryption/protocol requirements. Leech uses Davey 0.1.4/OpenMLS, an unofficial implementation, rather than claiming to ship Discord's libdave or an independently audited engine. Real MLS, DAVE, RTP, Opus and loopback WebSocket/UDP tests exercise the adapter with synthetic participants. They do not verify current Discord acceptance, microphone permission, device quality or a remote official client. Existing group DMs, Stage channels and camera video remain unsupported; outgoing screen sharing is covered by the September 11 addendum. Guild voice is implemented separately below, with its live gate still unverified. See [voice scope and owner-operated gate](voice.md) and [adapter details](../crates/discord-voice/README.md).
 
 Image attachments: documented wire metadata and spoiler bit 3 are implemented; additional sensitive flags and proxy PNG conversion rely on unofficial implementation evidence. Native viewing and bounded cache/patch behavior have offline coverage; actual account image delivery remains unverified. Scope and sources.
 
@@ -969,7 +969,7 @@ establish successful sign-in. The guard intentionally also blocks ASCII-only
 Flatpak setups that might otherwise happen to work. Native non-Flatpak webview admission
 is unchanged. See [Flatpak troubleshooting](../packaging/flatpak/README.md#loginverification-locale-troubleshooting).
 
-Login compatibility correction (September 10): READY read_state accepts both the legacy array and the versioned entries/version/partial object, under the same 4000-entry bound. Serein's Identify does not request the versioned_read_states capability; rejecting the legacy shape previously rejected the entire login payload. The capability's effect is described in the original [discord.py-self capability definitions](https://github.com/dolfies/discord.py-self/blob/master/discord/flags.py), rechecked September 10. Partial snapshots leave omitted channels unknown. Identify capabilities remain unchanged. Static error labels distinguish account verification, Gateway discovery, READY decoding and connection setup without exposing payloads, credentials or remote error text. Synthetic regression and loopback evidence do not establish actual account login success.
+Login compatibility correction (September 10): READY read_state accepts both the legacy array and the versioned entries/version/partial object, under the same 4000-entry bound. Leech's Identify does not request the versioned_read_states capability; rejecting the legacy shape previously rejected the entire login payload. The capability's effect is described in the original [discord.py-self capability definitions](https://github.com/dolfies/discord.py-self/blob/master/discord/flags.py), rechecked September 10. Partial snapshots leave omitted channels unknown. Identify capabilities remain unchanged. Static error labels distinguish account verification, Gateway discovery, READY decoding and connection setup without exposing payloads, credentials or remote error text. Synthetic regression and loopback evidence do not establish actual account login success.
 
 ## Reaction refresh and pinned messages - September 10
 
@@ -991,21 +991,21 @@ Pinned-message browsing uses GET /channels/{channel}/messages/pins?limit=25, fol
 
 ## Single-file uploads - September 10
 
-The selected file is uploaded only after Send. Serein requests a staging target with authenticated `POST /channels/{channel}/attachments`, using `files:[{id:"0",filename,file_size}]`; streams a credential-free PUT to its `upload_url`; then creates a message with `attachments:[{id:"0",filename,uploaded_filename}]`. Existing content, reply, explicit mention allowlists and nonce correlation are preserved, including attachment-only messages. This sequence follows the primary [HTTP implementation](https://github.com/dolfies/discord.py-self/blob/2ba64a9a997e151a9c259984e0a179b1fdf4aff4/discord/http.py#L1073), [route](https://github.com/dolfies/discord.py-self/blob/2ba64a9a997e151a9c259984e0a179b1fdf4aff4/discord/http.py#L1527) and [file serialization](https://github.com/dolfies/discord.py-self/blob/2ba64a9a997e151a9c259984e0a179b1fdf4aff4/discord/file.py#L197), inspected at commit `2ba64a9a997e151a9c259984e0a179b1fdf4aff4`. No implementation source was copied. Public bot multipart examples do not verify this normal-user path.
+The selected file is uploaded only after Send. Leech requests a staging target with authenticated `POST /channels/{channel}/attachments`, using `files:[{id:"0",filename,file_size}]`; streams a credential-free PUT to its `upload_url`; then creates a message with `attachments:[{id:"0",filename,uploaded_filename}]`. Existing content, reply, explicit mention allowlists and nonce correlation are preserved, including attachment-only messages. This sequence follows the primary [HTTP implementation](https://github.com/dolfies/discord.py-self/blob/2ba64a9a997e151a9c259984e0a179b1fdf4aff4/discord/http.py#L1073), [route](https://github.com/dolfies/discord.py-self/blob/2ba64a9a997e151a9c259984e0a179b1fdf4aff4/discord/http.py#L1527) and [file serialization](https://github.com/dolfies/discord.py-self/blob/2ba64a9a997e151a9c259984e0a179b1fdf4aff4/discord/file.py#L197), inspected at commit `2ba64a9a997e151a9c259984e0a179b1fdf4aff4`. No implementation source was copied. Public bot multipart examples do not verify this normal-user path.
 
 Only `https://discord-attachments-uploads-prd.storage.googleapis.com` on effective port 443 is accepted. This exact origin was independently observed in the public `Content-Security-Policy` returned by unauthenticated `curl.exe --silent --head https://discord.com/app` on September 10. Userinfo, fragments and redirects are rejected; signed path/query values remain opaque, bounded and unlogged. A separate HTTP client sends neither Discord authorization nor cookies to storage. Test-only loopback origins are absent from shipped builds.
 
-The local limit is **up to ten nonempty regular files totaling at most 500,000,000 bytes**, Discord's published Nitro maximum. Discord's [File Attachments FAQ](https://support.discord.com/hc/en-us/articles/25444343291031-File-Attachments-FAQ), updated August 13, 2026, states a 20 MB free limit, 50 MB Nitro Basic limit and 500 MB Nitro limit; server permissions, experiments and rejections remain authoritative. Serein does not infer the account tier or compress/rewrite files, so Discord may reject a selection below the local ceiling.
+The local limit is **up to ten nonempty regular files totaling at most 500,000,000 bytes**, Discord's published Nitro maximum. Discord's [File Attachments FAQ](https://support.discord.com/hc/en-us/articles/25444343291031-File-Attachments-FAQ), updated August 13, 2026, states a 20 MB free limit, 50 MB Nitro Basic limit and 500 MB Nitro limit; server permissions, experiments and rejections remain authoritative. Leech does not infer the account tier or compress/rewrite files, so Discord may reject a selection below the local ceiling.
 
 Application chunks are at most 64 KiB; negotiation and storage responses at most 64 KiB, signed URLs 4096 bytes, server upload names 1024 bytes, local paths 4096 encoded bytes and filenames 256 UTF-8 bytes. One upload job uses latest-value progress, not an expanding event queue. The PUT has a 300-second overall deadline, 10-second connection timeout and 30-second read timeout. Filesystem work stays outside rendering.
 
-Path and open-file size/modification metadata are checked before transfer and again before message creation. Missing or observably changed files fail explicitly. These checks are not an immutable snapshot or a defense against a writer restoring identical metadata; no hidden recovery copy is created. Cancellation before message creation prevents the message POST, but staged bytes already sent may remain remotely; Serein does not claim remote deletion or a retention deadline. Cancellation after message POST begins reports an unknown outcome. No transfer or message write is automatically retried. Signed upload targets and local source paths are session-only.
+Path and open-file size/modification metadata are checked before transfer and again before message creation. Missing or observably changed files fail explicitly. These checks are not an immutable snapshot or a defense against a writer restoring identical metadata; no hidden recovery copy is created. Cancellation before message creation prevents the message POST, but staged bytes already sent may remain remotely; Leech does not claim remote deletion or a retention deadline. Cancellation after message POST begins reports an unknown outcome. No transfer or message write is automatically retried. Signed upload targets and local source paths are session-only.
 
 Synthetic tests cover actual loopback HTTP, credential isolation, redirects, file bounds/changes, cancellation during PUT and cancellation during message creation. They do not establish normal-user interoperability: an owner-controlled developer-session test with an official-client recipient remains required. Multiple attachments, tier-dependent larger files and remote staging cleanup remain unimplemented.
 
-File selection also accepts one native file dropped into the active conversation window. The pinned egui 0.36.2 DroppedFileHandle exposes a path; Serein moves the event handles, accepts only one absolute path within the existing path limit, and never invokes their whole-file bytes API. Drops reuse the picker validation and cancellation slot. They cannot replace an existing selection or active operation and never start an upload themselves. Unsupported/multiple drops and unavailable conversation states report an error. A composer hover hint explains the limit and explicit Send behavior. Native OS drag/drop delivery remains unverified; synthetic handle admission and late-result isolation are tested.
+File selection also accepts one native file dropped into the active conversation window. The pinned egui 0.36.2 DroppedFileHandle exposes a path; Leech moves the event handles, accepts only one absolute path within the existing path limit, and never invokes their whole-file bytes API. Drops reuse the picker validation and cancellation slot. They cannot replace an existing selection or active operation and never start an upload themselves. Unsupported/multiple drops and unavailable conversation states report an error. A composer hover hint explains the limit and explicit Send behavior. Native OS drag/drop delivery remains unverified; synthetic handle admission and late-result isolation are tested.
 
-Archived-thread browsing (September 10): [Discord public/private/joined-private archive endpoints](https://docs.discord.com/developers/resources/channel#list-public-archived-threads) describe public and private pages ordered by archive timestamp with an ISO8601 before cursor; joined-private pages use descending thread IDs and a snowflake cursor. The primary normal-user implementation exposes the [same three HTTP routes](https://github.com/dolfies/discord.py-self/blob/master/discord/http.py) and [channel archive selection](https://github.com/dolfies/discord.py-self/blob/master/discord/channel.py). These sources supply wire evidence, not live account acceptance. Serein makes only explicit GET requests, limits each page to 25 entries, checks archived metadata, guild/parent/type, duplicates and cursor progress, and ignores member summaries. Public/private timestamps preserve nanoseconds. Private archive enumeration requires the service permissions described by Discord, including MANAGE_THREADS; joined-private is a separate choice. Open loads history without a join/reopen mutation. No live account was used to validate these routes.
+Archived-thread browsing (September 10): [Discord public/private/joined-private archive endpoints](https://docs.discord.com/developers/resources/channel#list-public-archived-threads) describe public and private pages ordered by archive timestamp with an ISO8601 before cursor; joined-private pages use descending thread IDs and a snowflake cursor. The primary normal-user implementation exposes the [same three HTTP routes](https://github.com/dolfies/discord.py-self/blob/master/discord/http.py) and [channel archive selection](https://github.com/dolfies/discord.py-self/blob/master/discord/channel.py). These sources supply wire evidence, not live account acceptance. Leech makes only explicit GET requests, limits each page to 25 entries, checks archived metadata, guild/parent/type, duplicates and cursor progress, and ignores member summaries. Public/private timestamps preserve nanoseconds. Private archive enumeration requires the service permissions described by Discord, including MANAGE_THREADS; joined-private is a separate choice. Open loads history without a join/reopen mutation. No live account was used to validate these routes.
 
 ### Unicode emoji artwork (September 10, 2026)
 
@@ -1079,7 +1079,7 @@ The member pane previously sent deprecated opcode 14 with `typing:false`. Curren
 [Gateway implementation](https://github.com/dolfies/discord.py-self/blob/master/discord/gateway.py)
 and [channel subscription prerequisites](https://github.com/dolfies/discord.py-self/blob/master/discord/state.py)
 show opcode 37 and a guild typing subscription before requesting channel member ranges.
-Serein now enables that subscription only for the active member pane and clears it with
+Leech now enables that subscription only for the active member pane and clears it with
 channel ranges when the pane closes or navigation changes. This receives typing events;
 it does not send typing notifications. Incoming typing for the selected conversation is
 handled as described below; other conversations' typing is discarded.
@@ -1187,7 +1187,7 @@ The open guild People pane consumes standalone PRESENCE_UPDATE for users in its 
 100-row subscription mirror. [Discord's presence event](https://docs.discord.com/developers/events/gateway-events#presence-update)
 documents partial user objects and online/idle/dnd/offline status. The pinned normal-user
 [dispatcher](https://github.com/dolfies/discord.py-self/blob/2ba64a9a997e151a9c259984e0a179b1fdf4aff4/discord/state.py#L2040)
-allows an optional guild scope. Serein ignores guildless updates and does not request a
+allows an optional guild scope. Leech ignores guildless updates and does not request a
 friends/global directory or additional subscription flags. These are primary wire references,
 not proof that a normal-user account receives these updates through this client's subscription.
 
@@ -1269,7 +1269,7 @@ and its repair, not acceptance by Discord; owner-operated live verification rema
 
 The original [Gateway wire types](https://github.com/dolfies/discord.py-self/blob/2ba64a9a997e151a9c259984e0a179b1fdf4aff4/discord/types/gateway.py)
 distinguish top-level group summaries (ID plus count) from group items inside SYNC ranges
-(ID only). Serein incorrectly required a count in every group item, rejecting the complete
+(ID only). Leech incorrectly required a count in every group item, rejecting the complete
 member update. It now reads only the group ID needed to recognize an index placeholder;
 counts are not fabricated. An exact synthetic ID-only-header regression loads the following
 member at the correct position. The owner-run redacted trace confirms that member replies
@@ -1411,7 +1411,7 @@ opening an audio device or contacting Discord.
 ### Unknown Gateway variants (September 10, 2026)
 
 Unknown dispatches remain ignored without granting capabilities; unsupported opcodes retain the
-existing protocol-error behavior. Opt-in `SEREIN_GATEWAY_DIAGNOSTICS=1` now records bounded fixed
+existing protocol-error behavior. Opt-in `LEECH_GATEWAY_DIAGNOSTICS=1` now records bounded fixed
 categories for these cases and missing dispatch names. Received names and payloads never enter
 diagnostics. This changes observability, not the supported service contract. Offline local-socket
 checks cover continued message delivery and heartbeat cursor advancement; normal-user service
@@ -1423,7 +1423,7 @@ The saved, off-by-default Game Activity setting now hosts a local activity-only 
 instead of polling an executable allowlist. It tries `discord-ipc-0` through `discord-ipc-9`
 without replacing an occupied endpoint. Windows named pipes and Unix runtime/temp sockets
 follow [Discord's RPC transport](https://docs.discord.com/developers/topics/rpc).
-Games must connect to Serein; IPC is point-to-point, not an eavesdropping/subscription feed
+Games must connect to Leech; IPC is point-to-point, not an eavesdropping/subscription feed
 from an already-running Discord instance. Enable sharing before launching the game; another
 Discord client may win the game's connection. Games without IPC integration remain unsupported.
 
@@ -1531,7 +1531,7 @@ public server directory in the browser; native Discovery is not implemented.
 ### Account activity sharing and server observations (September 11, 2026)
 
 The local Share game activity switch does not itself enable Discord's account-wide
-`show_current_game` preference. Serein now reads that preference after local opt-in
+`show_current_game` preference. Leech now reads that preference after local opt-in
 and offers Enable on Discord only when it is disabled. This explicit action uses
 normal-user `GET/PATCH /users/@me/settings-proto/1`, preserving other status/custom
 status bytes and guarding the fresh data version. Unconfirmed writes are not retried
@@ -1653,7 +1653,7 @@ unavailable in the current agent environment.
 ### Session presence publication
 
 Click the footer avatar or account name to preview the global profile, select Online,
-Idle, Do Not Disturb or Invisible, and apply/clear a custom status. Serein reads
+Idle, Do Not Disturb or Invisible, and apply/clear a custom status. Leech reads
 the account's Discord status from unofficial `settings-proto/1` before identify
 and writes that field when the owner changes it. A local `account_presence` row
 is only the fallback when that read fails. Profile loading reuses the existing
@@ -2059,7 +2059,7 @@ Artwork uses the existing credential-free, redirect-free bounded image worker an
 account-isolated image cache, with the existing 1024px decode limit for media previews.
 Normal-account behavior and live artwork delivery remain unverified.
 
-Serein also polls the linked Spotify account at most every 15 seconds while visible (sooner
+Leech also polls the linked Spotify account at most every 15 seconds while visible (sooner
 at track end, with a one-second minimum interval), independently
 of local game detection. It reads the connection's `show_activity` preference, obtains a
 session-only bearer through Discord's unofficial connection access-token endpoint, and reads
@@ -2074,7 +2074,7 @@ sender alongside games/custom status. The local profile previews Spotify when no
 Unlinking or disabling Spotify activity is detected on the next poll; service cooldowns apply.
 Track-end polls retain the previous activity while awaiting the next response, with a
 10–30 second request timeout instead of cancelling immediately at the old track deadline.
-The offline debug command is `cargo run --locked -p serein --features demo -- --demo --demo-check-spotify`.
+The offline debug command is `cargo run --locked -p leech --features demo -- --demo --demo-check-spotify`.
 
 ### Outgoing message forwarding
 
@@ -2082,7 +2082,7 @@ The message toolbar and context menu open a native searchable destination picker
 five already-loaded, writable conversations. Forward creation uses the documented
 [`message_reference` type 1](https://github.com/discord/discord-api-docs/blob/main/developers/resources/message.mdx),
 including the source channel/message and guild when known. The service captures the snapshot;
-Serein does not download and re-upload source attachments. Basic supported message types are
+Leech does not download and re-upload source attachments. Basic supported message types are
 eligible; ephemeral, poll and unsupported payloads are excluded. Forwarded context-menu command
 snapshots (type 23) use the existing bounded renderer too.
 
@@ -2247,7 +2247,7 @@ separate high-CPU playback report remain unverified and are not fixed here.
 ## Optional REST API proxy plugin (preview)
 
 The API Proxy community plugin can select an HTTP/HTTPS CONNECT proxy
-for Serein's Discord REST requests, including native account validation, Gateway
+for Leech's Discord REST requests, including native account validation, Gateway
 URL discovery and public application metadata. It is a connection-scoped plugin:
 its narrow grant allows configuration before sign-in and exposes no account data,
 Discord credentials, sockets or general network API to WebAssembly.
@@ -2280,7 +2280,7 @@ this warning for HTTP endpoints; HTTPS proxies encrypt the proxy connection.
 ## Native polls (September 30, 2026)
 
 Poll messages now retain bounded questions, up to ten answers, optional emoji, expiry,
-single/multiple choice and supplied results. Native cards use Serein surfaces and accent
+single/multiple choice and supplied results. Native cards use Leech surfaces and accent
 colors with Discord-style answer rows, selection checkmarks, result fills and a vote footer.
 The composer `+` menu's Create a poll option opens a creation dialog (300-character question, 55-character
 answers, Unicode emoji and the usual 1h/4h/8h/1d/3d/1w durations). Readers can vote,
@@ -2331,7 +2331,7 @@ the active history; a REST-only reload during an outage completes as stale rathe
 than leaving Refresh disabled in Loading.
 
 The offline debug command is
-`cargo run --locked -p serein --features demo -- --demo --demo-check-resume-send`.
+`cargo run --locked -p leech --features demo -- --demo --demo-check-resume-send`.
 It exercises synthetic composer/Refresh/Reconnect input, disconnected sending,
 terminal auth and access gates, uncertain-write preservation and coalesced recovery
 waits without opening a network connection or audio device. Workspace tests also
@@ -2423,4 +2423,4 @@ GIF embeds and external GIFs with an admitted Discord media proxy. Shared HTTPS
 links may come from any host; this does not authorize fetching arbitrary origins.
 Previews still use the existing provider/Discord media admission and bounded
 pipeline. The original share URL, including attachment signatures, is retained.
-The offline debug check is `cargo run --locked -p serein --features demo --example gif_favorites`.
+The offline debug check is `cargo run --locked -p leech --features demo --example gif_favorites`.

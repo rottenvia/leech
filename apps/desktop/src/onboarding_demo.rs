@@ -24,7 +24,7 @@ fn form() -> Form {
 	Form {
 		verification: Some(Verification {
 			version: None,
-			description: Some("A calm synthetic workspace for trying Serein offline.".into()),
+			description: Some("A calm synthetic workspace for trying Leech offline.".into()),
 			fields: vec![Field {
 				kind: FieldKind::Terms,
 				wire_kind: "TERMS".into(),

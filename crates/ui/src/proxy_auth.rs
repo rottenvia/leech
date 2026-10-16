@@ -27,7 +27,7 @@ impl Form {
 
 	pub fn show(&mut self, ui: &mut egui::Ui, endpoint: &str, manual: bool) {
 		ui.collapsing("Proxy authentication", |ui| {
-            ui.label("Credentials stay in Serein's OS credential store and are never shared with the plugin. Apply the proxy URL before saving credentials.");
+            ui.label("Credentials stay in Leech's OS credential store and are never shared with the plugin. Apply the proxy URL before saving credentials.");
             ui.add_enabled_ui(manual && !self.busy, |ui| {
                 if url::Url::parse(endpoint).is_ok_and(|url| url.scheme() == "http") {
                     ui.label("HTTP proxy authentication is unencrypted: anyone observing the connection to the proxy can recover these credentials. Use an HTTPS proxy for encrypted authentication.");

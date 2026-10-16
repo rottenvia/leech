@@ -756,7 +756,7 @@ impl Menu {
 					);
 					let name = ui.interact(rect, name_id, egui::Sense::click());
 					if name.hovered() || name.has_focus() {
-						ui.painter().rect_filled(rect, 6, colors.hover);
+						ui.painter().rect_filled(rect, 8, colors.hover);
 					}
 					ui.painter().galley(
 						rect.min + egui::vec2(6.0, (rect.height() - galley.size().y) * 0.5),
@@ -1264,7 +1264,7 @@ fn argument(
 			.iter()
 			.find(|choice| value_text(&choice.value) == *value)
 			.map_or(value.as_str(), |choice| choice.name.as_str());
-		egui::ComboBox::from_id_salt(id)
+		crate::design::combo(id)
 			.width(ui.available_width())
 			.selected_text(crate::i18n::translate_if_key(
 				&(if label.is_empty() {

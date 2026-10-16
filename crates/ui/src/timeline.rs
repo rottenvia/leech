@@ -248,7 +248,18 @@ fn channel_welcome(ui: &mut egui::Ui, channel: &model::Channel, height: f32) {
 }
 
 fn loading_messages(ui: &mut egui::Ui) {
-	let colors = crate::design::palette(ui);
+	// Name width, line widths as a share of the text column, and an attachment: a fixed
+	// table, so the placeholder reads like a real conversation and never changes between frames.
+	const GROUPS: [(f32, &[f32], bool); 8] = [
+		(112.0, &[0.62], false),
+		(84.0, &[0.9, 0.48], false),
+		(136.0, &[0.34], true),
+		(96.0, &[0.76, 0.85, 0.3], false),
+		(72.0, &[0.55], false),
+		(124.0, &[0.82, 0.64], false),
+		(104.0, &[0.4], false),
+		(90.0, &[0.7, 0.92, 0.58], false),
+	];
 	let height = ui.available_height();
 	let (rect, response) = ui.allocate_exact_size(
 		egui::vec2(ui.available_width(), height),
@@ -261,29 +272,52 @@ fn loading_messages(ui: &mut egui::Ui) {
 			crate::i18n::translate("timeline-loading-messages-loading-messages"),
 		)
 	});
+	if !ui.is_rect_visible(rect) {
+		return;
+	}
 	let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
-	let fill = colors.muted.gamma_multiply(0.22);
-	let text_width = (rect.width() - 88.0).clamp(0.0, 480.0);
-	let rows = (height / 68.0).ceil().clamp(0.0, 128.0) as usize;
-	for (index, length) in [0.85, 0.65, 0.95, 0.55]
-		.into_iter()
-		.cycle()
-		.take(rows)
-		.enumerate()
-	{
-		let origin = rect.min + egui::vec2(16.0, 12.0 + index as f32 * 68.0);
-		painter.circle_filled(origin + egui::vec2(20.0, 20.0), 20.0, fill);
-		for (y, width, height) in [
-			(0.0, text_width.min(96.0), 12.0),
-			(22.0, text_width * length, 10.0),
-			(40.0, text_width * length * 0.7, 10.0),
-		] {
+	let name = crate::design::placeholder_fill(ui, 0.32);
+	let fill = crate::design::placeholder_fill(ui, 0.2);
+	let faint = crate::design::placeholder_fill(ui, 0.12);
+	// Message rows put the avatar at 16 and the text at 72; long lines stop where a reader's
+	// eye would, as real paragraphs rarely span a very wide window.
+	let left = rect.left() + 72.0;
+	let column = (rect.right() - 16.0 - left).clamp(0.0, 760.0);
+	// The timeline is anchored to the composer, so the placeholder fills upwards from there
+	// and arriving messages land where the groups already were.
+	let mut bottom = rect.bottom() - 12.0;
+	for (name_width, lines, attachment) in GROUPS.iter().cycle().take(64) {
+		let block = 24.0 + lines.len() as f32 * 22.0 + if *attachment { 152.0 } else { 0.0 };
+		let top = bottom - block;
+		if bottom < rect.top() {
+			break;
+		}
+		painter.circle_filled(egui::pos2(rect.left() + 36.0, top + 20.0), 20.0, faint);
+		let bar = |x: f32, y: f32, width: f32, height: f32, color| {
 			painter.rect_filled(
-				egui::Rect::from_min_size(origin + egui::vec2(56.0, y), egui::vec2(width, height)),
-				4,
-				fill,
+				egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(width, height)),
+				height * 0.5,
+				color,
+			);
+		};
+		bar(left, top + 4.0, name_width.min(column), 12.0, name);
+		bar(left + name_width + 10.0, top + 6.0, 44.0, 8.0, faint);
+		let mut y = top + 30.0;
+		for share in *lines {
+			bar(left, y, (column * share).max(24.0).min(column), 10.0, fill);
+			y += 22.0;
+		}
+		if *attachment {
+			painter.rect_filled(
+				egui::Rect::from_min_size(
+					egui::pos2(left, y - 4.0),
+					egui::vec2(column.min(280.0), 140.0),
+				),
+				8.0,
+				faint,
 			);
 		}
+		bottom = top - 20.0;
 	}
 }
 fn ease_out_cubic(t: f32) -> f32 {
@@ -425,7 +459,12 @@ fn reserved_chrome(ui: &egui::Ui, message: &Message, width: f32) -> f32 {
 
 pub(crate) fn fill_header_line(ui: &mut egui::Ui, compact: bool, text_line: egui::Rect) {
 	let slack = MESSAGE_LINE - text_line.height();
-	if !compact && slack > 0.0 && ui.min_rect().bottom() - text_line.bottom() < 1.0 {
+	// An empty body (a system row, an attachment alone) has no line to pad.
+	if !compact
+		&& text_line.height() > 0.0
+		&& slack > 0.0
+		&& ui.min_rect().bottom() - text_line.bottom() < 1.0
+	{
 		ui.expand_to_include_y(text_line.bottom() + slack);
 	}
 }
@@ -629,25 +668,27 @@ fn starter_row(
 			// A labelled rule separates the starter from the replies that followed it.
 			ui.horizontal(|ui| {
 				ui.spacing_mut().item_spacing.x = 8.0;
-				let (line, _) = ui.allocate_exact_size(
-					egui::vec2((ui.available_width() - 220.0).max(24.0), 1.0),
-					egui::Sense::hover(),
+				// Measured, so the rule never runs past the row: a guessed label width let
+				// the row overflow and widen every divider below it.
+				let label = ui.painter().layout_no_wrap(
+					crate::i18n::translate("timeline-starter-row-thread-started-from-this-message"),
+					egui::FontId::proportional(12.0),
+					colors.muted,
 				);
+				let tail = 24.0;
+				let lead =
+					(ui.available_width() - label.size().x - 14.0 - tail - 3.0 * 8.0).max(24.0);
+				let (line, _) = ui.allocate_exact_size(egui::vec2(lead, 1.0), egui::Sense::hover());
 				ui.painter().hline(
 					line.x_range(),
 					line.center().y,
 					egui::Stroke::new(1.0, colors.border),
 				);
 				crate::icons::inline(ui, crate::icons::Icon::Thread, 14.0, colors.muted);
-				ui.label(
-					RichText::new(crate::i18n::translate(
-						"timeline-starter-row-thread-started-from-this-message",
-					))
-					.size(12.0)
-					.color(colors.muted),
-				);
+				let (text, _) = ui.allocate_exact_size(label.size(), egui::Sense::hover());
+				ui.painter().galley(text.min, label, colors.muted);
 				let (line, _) = ui.allocate_exact_size(
-					egui::vec2(ui.available_width(), 1.0),
+					egui::vec2(ui.available_width().min(tail), 1.0),
 					egui::Sense::hover(),
 				);
 				ui.painter().hline(
@@ -1164,7 +1205,7 @@ fn copy_action_button(
 	let age = if clicked { Some(0.0) } else { age };
 	let colors = crate::design::palette(ui);
 	if response.hovered() || response.has_focus() {
-		ui.painter().rect_filled(rect, 6, colors.hover);
+		ui.painter().rect_filled(rect, 8, colors.hover);
 	}
 	let label = crate::i18n::translate(if age.is_some() {
 		"updates-update-settings-copied"
@@ -1295,21 +1336,25 @@ enum DeletedLocalAction {
 
 fn deleted_message_actions(popup: egui::Popup<'_>, action: &mut Option<DeletedLocalAction>) {
 	popup.show(|ui| {
-		ui.set_min_width(160.0);
-		if ui
-			.button(crate::i18n::translate(
-				"timeline-deleted-message-actions-toggle-deleted-highlight",
-			))
-			.clicked()
+		ui.set_width(224.0);
+		if crate::design::menu_item(
+			ui,
+			Some(crate::icons::Icon::EyeSlash),
+			&crate::i18n::translate("timeline-deleted-message-actions-toggle-deleted-highlight"),
+			false,
+		)
+		.clicked()
 		{
 			*action = Some(DeletedLocalAction::ToggleHighlight);
 			ui.close();
 		}
-		if ui
-			.button(crate::i18n::translate(
-				"timeline-deleted-message-actions-remove-message",
-			))
-			.clicked()
+		if crate::design::menu_item(
+			ui,
+			Some(crate::icons::Icon::Trash),
+			&crate::i18n::translate("timeline-deleted-message-actions-remove-message"),
+			true,
+		)
+		.clicked()
 		{
 			*action = Some(DeletedLocalAction::Remove);
 			ui.close();
@@ -1347,13 +1392,117 @@ fn message_actions(
 	let (can_pin, pinned, pin_request) = pin;
 	let (can_thread, thread_request) = thread;
 	popup.show(|ui| {
-		ui.set_min_width(160.0);
+		use crate::design::{menu_item, menu_item_if};
+		use crate::icons::Icon;
+		ui.set_width(224.0);
+		ui.spacing_mut().item_spacing.y = 2.0;
+		let t = crate::i18n::translate;
+		if menu_item_if(
+			ui,
+			can_reply,
+			Some(Icon::Reply),
+			&t("timeline-message-actions-reply"),
+			false,
+		)
+		.clicked()
+		{
+			*reply = Some(message.id);
+			ui.close();
+		}
+		if menu_item_if(
+			ui,
+			forward.0,
+			Some(Icon::Forward),
+			&t("timeline-message-actions-forward"),
+			false,
+		)
+		.clicked()
+		{
+			*forward.1 = Some(message.id);
+			ui.close();
+		}
+		if can_thread
+			&& menu_item(
+				ui,
+				Some(Icon::Thread),
+				&t("timeline-message-actions-create-thread"),
+				false,
+			)
+			.clicked()
+		{
+			*thread_request = Some((message.channel, message.id));
+			ui.close();
+		}
+		if own
+			&& menu_item_if(
+				ui,
+				can_edit,
+				Some(Icon::Pencil),
+				&t("timeline-message-actions-edit-message"),
+				false,
+			)
+			.clicked()
+		{
+			*editing = Some((message.channel, message.id, message.content.clone()));
+			*edit_started = true;
+			ui.close();
+		}
+		ui.separator();
+		if crate::select::has_selection(ui.ctx())
+			&& menu_item(
+				ui,
+				Some(Icon::Copy),
+				&t("timeline-message-actions-copy"),
+				false,
+			)
+			.clicked()
+		{
+			crate::select::request_copy(ui.ctx());
+			ui.close();
+		}
+		if menu_item(ui, Some(Icon::Copy), &t("message-menu-copy"), false).clicked() {
+			ui.ctx()
+				.copy_text(crate::i18n::message_text(message).into_owned());
+			ui.close();
+		}
+		if menu_item_if(
+			ui,
+			can_pin,
+			Some(Icon::Pin),
+			&crate::i18n::translate_if_key(if pinned {
+				"timeline-message-actions-unpin-message"
+			} else {
+				"timeline-message-actions-pin-message"
+			}),
+			false,
+		)
+		.clicked()
+		{
+			*pin_request = Some((message.channel, message.id, !pinned));
+			ui.close();
+		}
+		if let Some((emoji, view)) = view_reactions
+			&& menu_item(
+				ui,
+				Some(Icon::Smile),
+				&t("timeline-message-actions-view-reactions"),
+				false,
+			)
+			.clicked()
+		{
+			*view = Some((message.id, emoji, true));
+			ui.close();
+		}
 		if !extension_actions.is_empty() {
+			let ink = crate::design::palette(ui).text;
 			ui.menu_button(
-				crate::i18n::translate("timeline-message-actions-extensions"),
+				(
+					crate::design::menu_glyph(Icon::PuzzlePiece, ink),
+					t("timeline-message-actions-extensions"),
+				),
 				|ui| {
 					for action in extension_actions {
-						if ui.button(&action.label).clicked() {
+						if menu_item(ui, None, &action.label, false).clicked() {
 							*extension_request =
 								Some((action.clone(), message.display_text().into_owned()));
 							ui.close();
@@ -1361,153 +1510,72 @@ fn message_actions(
 					}
 				},
 			);
-			ui.separator();
 		}
-		if crate::select::has_selection(ui.ctx())
-			&& ui
-				.button(crate::i18n::translate("timeline-message-actions-copy"))
-				.clicked()
-		{
-			crate::select::request_copy(ui.ctx());
-			ui.close();
-		}
-		if ui
-			.button(crate::i18n::translate("message-menu-copy"))
-			.clicked()
-		{
-			ui.ctx()
-				.copy_text(crate::i18n::message_text(message).into_owned());
-			ui.close();
-		}
-		if let Some(link) = link
-			&& ui
-				.button(crate::i18n::translate(
-					"timeline-message-actions-copy-message-link",
-				))
-				.clicked()
-		{
-			ui.ctx().copy_text(link.to_owned());
-			ui.close();
-		}
-		if ui
-			.button(crate::i18n::translate(
-				"timeline-message-actions-copy-message-id",
-			))
-			.clicked()
-		{
-			ui.ctx().copy_text(message.id.to_string());
-			ui.close();
-		}
-		if ui
-			.add_enabled(
-				can_reply,
-				egui::Button::new(crate::i18n::translate("timeline-message-actions-reply")),
-			)
-			.clicked()
-		{
-			*reply = Some(message.id);
-			ui.close();
-		}
-		if ui
-			.add_enabled(
-				forward.0,
-				egui::Button::new(crate::i18n::translate("timeline-message-actions-forward")),
-			)
-			.clicked()
-		{
-			*forward.1 = Some(message.id);
-			ui.close();
-		}
-		if can_thread
-			&& ui
-				.button(crate::i18n::translate(
-					"timeline-message-actions-create-thread",
-				))
-				.clicked()
-		{
-			*thread_request = Some((message.channel, message.id));
-			ui.close();
-		}
-		if let Some((emoji, view)) = view_reactions
-			&& ui
-				.button(crate::i18n::translate(
-					"timeline-message-actions-view-reactions",
-				))
-				.clicked()
-		{
-			*view = Some((message.id, emoji, true));
-			ui.close();
-		}
-		if ui
-			.add_enabled(
-				mark_read.is_some(),
-				egui::Button::new(crate::i18n::translate(
-					"timeline-message-actions-mark-read-through-here",
-				)),
-			)
-			.clicked()
-		{
-			if let Some(mark_read) = mark_read {
-				*mark_read = Some(message.id);
-			}
-			ui.close();
-		}
-		if ui
-			.add_enabled(
-				mark_unread.is_some(),
-				egui::Button::new(crate::i18n::translate(
-					"timeline-message-actions-mark-unread",
-				)),
-			)
-			.clicked()
+		if menu_item_if(
+			ui,
+			mark_unread.is_some(),
+			Some(Icon::Envelope),
+			&t("timeline-message-actions-mark-unread"),
+			false,
+		)
+		.clicked()
 		{
 			if let Some(mark_unread) = mark_unread {
 				*mark_unread = Some(message.id);
 			}
 			ui.close();
 		}
-		if ui
-			.add_enabled(
-				can_pin,
-				egui::Button::new(crate::i18n::translate_if_key(if pinned {
-					"timeline-message-actions-unpin-message"
-				} else {
-					"timeline-message-actions-pin-message"
-				})),
+		if menu_item_if(
+			ui,
+			mark_read.is_some(),
+			Some(Icon::Check),
+			&t("timeline-message-actions-mark-read-through-here"),
+			false,
+		)
+		.clicked()
+		{
+			if let Some(mark_read) = mark_read {
+				*mark_read = Some(message.id);
+			}
+			ui.close();
+		}
+		if let Some(link) = link
+			&& menu_item(
+				ui,
+				Some(Icon::Link),
+				&t("timeline-message-actions-copy-message-link"),
+				false,
 			)
 			.clicked()
 		{
-			*pin_request = Some((message.channel, message.id, !pinned));
+			ui.ctx().copy_text(link.to_owned());
 			ui.close();
 		}
 		if own || can_delete {
 			ui.separator();
+			if menu_item_if(
+				ui,
+				can_delete,
+				Some(Icon::Trash),
+				&t("timeline-message-actions-delete-message"),
+				true,
+			)
+			.clicked()
+			{
+				*deleting = Some((message.channel, message.id));
+				ui.close();
+			}
 		}
-		if own
-			&& ui
-				.add_enabled(
-					can_edit,
-					egui::Button::new(crate::i18n::translate(
-						"timeline-message-actions-edit-message",
-					)),
-				)
-				.clicked()
+		ui.separator();
+		if menu_item(
+			ui,
+			Some(Icon::IdCard),
+			&t("timeline-message-actions-copy-message-id"),
+			false,
+		)
+		.clicked()
 		{
-			*editing = Some((message.channel, message.id, message.content.clone()));
-			*edit_started = true;
-			ui.close();
-		}
-		if (own || can_delete)
-			&& ui
-				.add_enabled(
-					can_delete,
-					egui::Button::new(crate::i18n::translate(
-						"timeline-message-actions-delete-message",
-					)),
-				)
-				.clicked()
-		{
-			*deleting = Some((message.channel, message.id));
+			ui.ctx().copy_text(message.id.to_string());
 			ui.close();
 		}
 	});
@@ -1754,6 +1822,8 @@ fn show_system(
 	let (open_thread, open_all) = targets;
 	{
 		let colors = crate::design::palette(ui);
+		// One message line tall, not the 32-point control height rows default to.
+		let interact = std::mem::replace(&mut ui.spacing_mut().interact_size.y, MESSAGE_LINE);
 		ui.horizontal_wrapped(|ui| {
 			ui.spacing_mut().item_spacing = egui::vec2(0.0, 2.0);
 			for segment in &crate::i18n::system_segments(system) {
@@ -1844,6 +1914,7 @@ fn show_system(
 				.on_hover_text_with(|| format!("{time} UTC"));
 			surface.exclude(stamp.rect);
 		});
+		ui.spacing_mut().interact_size.y = interact;
 	}
 }
 impl TimelineView {
@@ -2249,7 +2320,10 @@ impl TimelineView {
 					let prior = previous;
 					let deleted = state.timeline.is_deleted(m.id);
 					let key = row_height_key(m, prior, self.unread_boundary, state, deleted);
-					previous = Some(m);
+					// The starter lives in the parent channel, so the render pass finds no
+					// previous message for the row after it. Key that row the same way here,
+					// or its height reads as stale and is re-measured on every frame.
+					previous = (Some(m.id) != starter_id).then_some(m);
 					let lines = m
 						.content
 						.lines()
@@ -2730,6 +2804,9 @@ impl TimelineView {
 
 				let compact =
 					self.compact_messages || grouped(previous, message, self.unread_boundary);
+				// Discord packs consecutive system rows (calls, joins) one line apart.
+				let system_run = message.system_message().is_some()
+					&& previous.is_some_and(|previous| previous.system_message().is_some());
 				let new_day = previous
 					.is_none_or(|previous| timestamp(previous.id).date() != timestamp(id).date());
 				let response = ui.scope_builder(egui::UiBuilder::new().scope_id(row_id), |ui| {
@@ -2758,6 +2835,8 @@ impl TimelineView {
 							right: 16,
 							top: if self.compact_messages {
 								3
+							} else if system_run {
+								0
 							} else if compact {
 								1
 							} else {
@@ -3179,6 +3258,16 @@ impl TimelineView {
 											egui::Layout::left_to_right(egui::Align::Center),
 											|ui| {
 												ui.spacing_mut().item_spacing.x = 8.0;
+												// Discord shows the author's server tag between
+												// the name and the time.
+												let tag = message.author.primary_guild.as_deref();
+												let reserve = 48.0
+													+ tag.map_or(0.0, |tag| {
+														8.0 + crate::profiles::server_tag_width(
+															ui,
+															Some(tag),
+														)
+													});
 												let author = crate::account_badge::name(
 													ui,
 													&message.author,
@@ -3190,7 +3279,7 @@ impl TimelineView {
 														colors.chat,
 													),
 													egui::Sense::click(),
-													48.0,
+													reserve,
 												)
 												.on_hover_cursor(egui::CursorIcon::PointingHand);
 												if avatar_hot || author.hovered() {
@@ -3215,6 +3304,12 @@ impl TimelineView {
 													&message.author,
 												);
 												surface.keep(&author);
+												if let Some(tag) = tag {
+													let tag = crate::profiles::server_tag(
+														ui, tag, avatars, state.demo,
+													);
+													surface.keep(&tag);
+												}
 												let time = timestamp(id);
 												let time = ui
 													.label(
@@ -3856,7 +3951,7 @@ impl TimelineView {
 							toolbar.spacing_mut().interact_size.y = 28.0;
 							toolbar
 								.painter()
-								.rect_filled(toolbar_rect, 6.0, colors.raised);
+								.rect_filled(toolbar_rect, 8.0, colors.raised);
 							toolbar.painter().rect_stroke(
 								toolbar_rect,
 								6.0,
@@ -3945,7 +4040,7 @@ impl TimelineView {
 							toolbar.spacing_mut().interact_size.y = 28.0;
 							toolbar
 								.painter()
-								.rect_filled(toolbar_rect, 6.0, colors.raised);
+								.rect_filled(toolbar_rect, 8.0, colors.raised);
 							toolbar.painter().rect_stroke(
 								toolbar_rect,
 								6.0,
@@ -4178,7 +4273,7 @@ impl TimelineView {
 							egui::Shape::rect_filled(
 								rect,
 								0.0,
-								crate::design::row_highlight(ui, colors.accent, 0.25),
+								crate::design::row_highlight(ui, colors.accent, 0.12),
 							),
 						);
 					}
@@ -6724,6 +6819,67 @@ mod tests {
 		}
 	}
 	#[test]
+	fn consecutive_call_rows_sit_one_line_apart_like_discord() {
+		fn tops(shape: &egui::Shape, out: &mut Vec<f32>) {
+			match shape {
+				egui::Shape::Text(t) if t.galley.job.text == "Robin" => out.push(t.pos.y),
+				egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| tops(s, out)),
+				_ => {}
+			}
+		}
+		let ctx = egui::Context::default();
+		crate::design::apply(&ctx);
+		let mut state = State {
+			selected: Some(Id(20)),
+			demo: true,
+			..Default::default()
+		};
+		for id in 1..=3 {
+			let mut message = text_message(id);
+			message.kind = 3;
+			message.content.clear();
+			state.timeline.insert(message, false, false).unwrap();
+		}
+		let mut view = TimelineView::default();
+		let mut avatars = crate::avatars::Avatars::default();
+		let mut painted = vec![];
+		for _ in 0..5 {
+			painted.clear();
+			let output = ctx.run_ui(
+				egui::RawInput {
+					screen_rect: Some(egui::Rect::from_min_size(
+						egui::Pos2::ZERO,
+						egui::vec2(900.0, 800.0),
+					)),
+					..Default::default()
+				},
+				|ui| {
+					view.show(
+						ui,
+						&mut state,
+						&mut None,
+						&mut None,
+						(
+							&mut avatars,
+							&mut crate::profiles::ProfileSession::default(),
+						),
+						None,
+					);
+				},
+			);
+			for shape in &output.shapes {
+				tops(&shape.shape, &mut painted);
+			}
+			output.drop_without_applying_deltas();
+		}
+		assert_eq!(painted.len(), 3, "{painted:?}");
+		for pair in painted.windows(2) {
+			let pitch = pair[1] - pair[0];
+			assert!((22.0..=30.0).contains(&pitch), "system rows {pitch} apart");
+		}
+	}
+
+	#[test]
 	fn system_events_render_wrap_and_keep_unknown_fallbacks() {
 		fn text(shape: &egui::Shape, out: &mut Vec<String>) {
 			match shape {
@@ -6809,7 +6965,7 @@ mod tests {
 			// System rows paint the sentence as styled runs with the member name strong.
 			assert!(painted.iter().any(|s| s == "Welcome, "));
 			assert!(painted.iter().any(|s| s == "! Joined the server."));
-			assert!(painted.iter().any(|s| s == " changed the channel name"));
+			assert!(painted.iter().any(|s| s == " changed the channel name: "));
 			assert!(painted.iter().any(|s| s == "new channel name"));
 			for description in [
 				" accepted your friend request.",
@@ -7371,13 +7527,14 @@ mod tests {
 			);
 			// Both entry points share the same menu, including on selectable text,
 			// row whitespace, and Shift+right-click (which must not quick-delete).
+			// Discord's grouping: respond, then copy and keep, then destroy.
 			let menu_labels = [
-				"Copy message",
 				"Reply",
-				"Mark read through here",
-				"Mark Unread",
-				"Pin message",
 				"Edit message",
+				"Copy message",
+				"Pin message",
+				"Mark Unread",
+				"Mark read through here",
 				"Delete message\u{2026}",
 			];
 			for (button, point, modifiers) in [

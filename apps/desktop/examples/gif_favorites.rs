@@ -1,4 +1,4 @@
-//! Offline debug check: cargo run --locked -p serein --features demo --example gif_favorites
+//! Offline debug check: cargo run --locked -p leech --features demo --example gif_favorites
 fn main() {
 	let gifs = ui::debug_gif_favorites_check(test_support::message(1, model::Id(20)));
 	use discord_protocol::gif_favorites::{decode_response, encode_patch};

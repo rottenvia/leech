@@ -1,10 +1,10 @@
 # Community extensions
 
-Serein extensions are local, opt-in tools for the native client. The Extensions
+Leech extensions are local, opt-in tools for the native client. The Extensions
 and Themes pages in Settings contain packages, links to their source, their
 requested capabilities and their review status. A plugin cannot directly call Discord, read credentials, open files or make
 network requests. Separately granted foreground actions can propose messages
-and other app operations; the user reviews and applies each operation in Serein.
+and other app operations; the user reviews and applies each operation in Leech.
 
 ## Install and remove
 
@@ -30,10 +30,10 @@ been accepted. Updates are manual and require renewed capability consent.
 Import selects a local `.serein-extension` JSON package. An import is unreviewed;
 importing alone does not grant it capabilities or execute it.
 
-Disable stops accepting results immediately, then removes Serein's downloaded
+Disable stops accepting results immediately, then removes Leech's downloaded
 package, temporary files and extension data. A failure to remove files is shown
 and cleanup is retried on the next load. Re-enabling requires downloading or
-importing the package again and starts with fresh extension settings. Serein
+importing the package again and starts with fresh extension settings. Leech
 never deletes the creator's Git repository, the user's imported original, or an
 exported theme/image source.
 
@@ -193,7 +193,7 @@ provides a native editor with validated fields and a local preview. It covers
 activity type, application ID/name, details/state and links, large/small artwork,
 two buttons, party size and timers. **Preview changes** is local; **Apply presence**
 saves the configuration and contributes it through the host's presence pipeline.
-Sharing must be enabled separately in Serein; the plugin does not turn it on.
+Sharing must be enabled separately in Leech; the plugin does not turn it on.
 
 **Stop presence** removes the contribution and disables saved automatic resume
 while retaining the last applied fields. **Disable** removes the package and its
@@ -278,7 +278,7 @@ Four opt-in additions extend the same ABI without changing existing SDK structs:
 
 - `data_queries` adds `ExtendedAppInvocation.queries` and approved request actions for
   message search, pins, archived threads, member search, profiles and GIF search.
-  Results reuse Serein's bounded native views: at most 25 rows and 48 KiB total,
+  Results reuse Leech's bounded native views: at most 25 rows and 48 KiB total,
   with loading, error, truncation and next-cursor fields where applicable.
 - `messaging_settings` adds the loaded account privacy snapshot and approved updates
   for DM, message-request, friend-source and game-DM preferences.
@@ -288,7 +288,7 @@ Four opt-in additions extend the same ABI without changing existing SDK structs:
 - `action_feedback` adds `tracked_app_action`. Supply a unique `request_id`; after
   **Apply**, the app-event handler receives `action_result` with `accepted` or
   `rejected` and a stable code (`accepted`, `context_changed`, `unavailable`,
-  `invalid`, `denied` or `failed`). Acceptance means Serein admitted the action to
+  `invalid`, `denied` or `failed`). Acceptance means Leech admitted the action to
   its native path; it does not claim that a later network request succeeded.
 
 Use `ExtendedAppInvocation` only when reading these fields. Existing
@@ -397,7 +397,7 @@ send path. The account's session-reported Nitro entitlement controls animated an
 external custom emoji eligibility and external server sticker eligibility.
 Picking fallback artwork inserts an inline composer preview and never submits it.
 Explicit Send uses `[name](public-artwork-url)` Markdown when the draft also contains
-text. Serein renders these named links as inline artwork; other clients choose their
+text. Leech renders these named links as inline artwork; other clients choose their
 own link/preview presentation. A draft containing only artwork sends up to ten ordinary
 image attachments after host validation, within an 8 MiB prepared batch limit.
 Animated APNG stickers become GIF attachments. A newer text draft typed during
@@ -494,10 +494,10 @@ cleanup succeeds. Shared host code and bounded catalog metadata still cost some
 application space. Freed allocations may remain in the process allocator; an
 unchanged RSS reading alone does not mean an instance remains active.
 
-Plugin storage is ordinary local data, not encrypted by Serein. Do not use it
+Plugin storage is ordinary local data, not encrypted by Leech. Do not use it
 for credentials. No extension diagnostics or private invocation data are
 uploaded. Sandboxing and review reduce exposure but cannot prove absence of
-bugs in the runtime or host; keep Serein updated.
+bugs in the runtime or host; keep Leech updated.
 
 The buffer ABI is documented in the
 [authoring guide](../examples/extensions/README.md#abi-version-1). The demo uses
@@ -523,7 +523,7 @@ optional `storage`, and only panel/activation actions. It receives no account da
 tokens or requests and has no networking API.
 
 Custom proxy origins must use HTTP or HTTPS, have a host, and be at most 2048 bytes.
-Credentials, paths beyond `/`, queries and fragments are rejected. Serein can attach HTTP Basic proxy credentials from its host-managed masked form
+Credentials, paths beyond `/`, queries and fragments are rejected. Leech can attach HTTP Basic proxy credentials from its host-managed masked form
 and OS credential store. Credentials are never passed to Wasm or saved in plugin data.
 SOCKS and PAC are unsupported. REST requests keep TLS certificate verification.
 A failed configured proxy has no direct fallback. Invalid plugin configuration

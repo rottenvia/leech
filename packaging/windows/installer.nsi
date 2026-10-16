@@ -1,5 +1,5 @@
-; Serein Windows Installer Script (NSIS Modern UI 2)
-; Installs per-user to $LOCALAPPDATA\Programs\Serein without elevation
+; Leech Windows Installer Script (NSIS Modern UI 2)
+; Installs per-user to $LOCALAPPDATA\Programs\Leech without elevation
 ; Preserves write permissions for seamless in-app autoupdates
 
 Unicode True
@@ -13,11 +13,11 @@ SetCompressor /SOLID lzma
 !include "Win\COM.nsh"
 !include "Win\Propkey.nsh"
 
-!define PRODUCT_NAME "Serein"
-!define PRODUCT_PUBLISHER "Serein contributors"
+!define PRODUCT_NAME "Leech"
+!define PRODUCT_PUBLISHER "Leech contributors"
 !define PRODUCT_WEB_SITE "https://github.com/ViceVerse-cz/Serein"
-!define APP_EXE "serein.exe"
-!define APP_ID "cz.viceverse.serein"
+!define APP_EXE "leech.exe"
+!define APP_ID "io.github.rottenvia.leech"
 
 !ifndef VERSION
   !define VERSION "0.1.0"
@@ -40,22 +40,22 @@ SetCompressor /SOLID lzma
 !endif
 
 Name "${PRODUCT_NAME} ${VERSION}"
-OutFile "${OUTPUT_DIR}\serein-${VERSION}-setup.exe"
-InstallDir "$LOCALAPPDATA\Programs\Serein"
+OutFile "${OUTPUT_DIR}\leech-${VERSION}-setup.exe"
+InstallDir "$LOCALAPPDATA\Programs\Leech"
 InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "InstallLocation"
 
-!if /FileExists "packaging\windows\Serein.ico"
-  !define MUI_ICON "packaging\windows\Serein.ico"
-  !define MUI_UNICON "packaging\windows\Serein.ico"
-!else if /FileExists "${__FILEDIR__}\Serein.ico"
-  !define MUI_ICON "${__FILEDIR__}\Serein.ico"
-  !define MUI_UNICON "${__FILEDIR__}\Serein.ico"
-!else if /FileExists "Serein.ico"
-  !define MUI_ICON "Serein.ico"
-  !define MUI_UNICON "Serein.ico"
+!if /FileExists "packaging\windows\Leech.ico"
+  !define MUI_ICON "packaging\windows\Leech.ico"
+  !define MUI_UNICON "packaging\windows\Leech.ico"
+!else if /FileExists "${__FILEDIR__}\Leech.ico"
+  !define MUI_ICON "${__FILEDIR__}\Leech.ico"
+  !define MUI_UNICON "${__FILEDIR__}\Leech.ico"
+!else if /FileExists "Leech.ico"
+  !define MUI_ICON "Leech.ico"
+  !define MUI_UNICON "Leech.ico"
 !else
-  !define MUI_ICON "${__FILEDIR__}\Serein.ico"
-  !define MUI_UNICON "${__FILEDIR__}\Serein.ico"
+  !define MUI_ICON "${__FILEDIR__}\Leech.ico"
+  !define MUI_UNICON "${__FILEDIR__}\Leech.ico"
 !endif
 
 !define MUI_ABORTWARNING
@@ -83,8 +83,8 @@ InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRO
 !endif
 
 ; Returns 0 when absent, 1 when running, 2 when the snapshot cannot be checked.
-!macro SereinProcessCheck PREFIX
-Function ${PREFIX}CheckSereinRunning
+!macro LeechProcessCheck PREFIX
+Function ${PREFIX}CheckLeechRunning
   System::Store "s"
   StrCpy $R0 2
   System::Call 'kernel32::CreateToolhelp32Snapshot(i 2, i 0) p .r0'
@@ -117,8 +117,8 @@ Function ${PREFIX}CheckSereinRunning
   System::Store "l"
 FunctionEnd
 !macroend
-!insertmacro SereinProcessCheck ""
-!insertmacro SereinProcessCheck "un."
+!insertmacro LeechProcessCheck ""
+!insertmacro LeechProcessCheck "un."
 
 Function RegisterNotificationShortcut
   System::Store "s"
@@ -161,7 +161,7 @@ Function .onInit
   ${EndIf}
 
   ${Do}
-    Call CheckSereinRunning
+    Call CheckLeechRunning
     Pop $0
     ${If} $0 == 2
       MessageBox MB_OK|MB_ICONSTOP "Cannot check whether ${PRODUCT_NAME} is running. Setup cannot continue safely." /SD IDOK
@@ -169,7 +169,7 @@ Function .onInit
       Abort
     ${EndIf}
     ${If} $0 != 0
-      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${PRODUCT_NAME} is currently running. Please close Serein before continuing." /SD IDCANCEL IDRETRY retry_init IDCANCEL cancel_init
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${PRODUCT_NAME} is currently running. Please close Leech before continuing." /SD IDCANCEL IDRETRY retry_init IDCANCEL cancel_init
       retry_init:
         ${Continue}
       cancel_init:
@@ -233,7 +233,7 @@ Function un.onInit
   ${EndIf}
 
   ${Do}
-    Call un.CheckSereinRunning
+    Call un.CheckLeechRunning
     Pop $0
     ${If} $0 == 2
       MessageBox MB_OK|MB_ICONSTOP "Cannot check whether ${PRODUCT_NAME} is running. Uninstall cannot continue safely." /SD IDOK
@@ -241,7 +241,7 @@ Function un.onInit
       Abort
     ${EndIf}
     ${If} $0 != 0
-      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${PRODUCT_NAME} is currently running. Please close Serein before uninstalling." /SD IDCANCEL IDRETRY retry_uninit IDCANCEL cancel_uninit
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${PRODUCT_NAME} is currently running. Please close Leech before uninstalling." /SD IDCANCEL IDRETRY retry_uninit IDCANCEL cancel_uninit
       retry_uninit:
         ${Continue}
       cancel_uninit:

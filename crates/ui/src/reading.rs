@@ -55,14 +55,14 @@ impl MessagingUi {
 		}
 	}
 
-	/// Header eyebrow with a quiet reset on the right, so the reset stays reachable above a tall card.
+	/// Group heading with a quiet reset on the right, so the reset stays reachable above a tall card.
 	fn header_with_reset(ui: &mut egui::Ui, title: &str, reset: &str) -> bool {
-		let title = crate::i18n::translate_if_key(title);
-		let colors = design::palette(ui);
 		let mut clicked = false;
-		ui.add_space(4.0);
+		if ui.min_rect().height() > 16.0 {
+			ui.add_space(12.0);
+		}
 		ui.horizontal(|ui| {
-			ui.label(design::eyebrow(ui, title, colors.muted));
+			ui.label(design::heading(ui, title));
 			ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
 				clicked = design::text_action(ui, reset).clicked();
 			});
@@ -158,7 +158,7 @@ impl MessagingUi {
 			);
 			ui.add_enabled_ui(value.double_click_reaction_enabled, |ui| {
 				design::row(ui, "emoji-picker-popup-emoji", None, |ui| {
-					egui::ComboBox::from_id_salt("double-click-reaction")
+					crate::design::combo("double-click-reaction")
 						.width(96.0)
 						.selected_text(egui::RichText::new(value.double_click_emoji()).size(22.0))
 						.show_ui(ui, |ui| {

@@ -109,7 +109,7 @@ impl MessagingUi {
 				}
 			});
 		});
-		design::divider(ui);
+		ui.add_space(12.0);
 		heading(ui, "settings-activity-added-games");
 		if self.registered_games.is_empty() {
 			ui.label(
@@ -359,8 +359,7 @@ impl MessagingUi {
 }
 
 fn heading(ui: &mut egui::Ui, key: &str) {
-	let p = design::palette(ui);
-	ui.label(design::medium(ui, tr(key), 22.0).color(p.text_strong));
+	ui.label(design::heading(ui, tr(key)));
 }
 
 /// How an entry got here and when it last ran: "Detected · Last played today".

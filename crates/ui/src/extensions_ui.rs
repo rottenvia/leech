@@ -1025,11 +1025,11 @@ impl ExtensionUi {
 		ui.horizontal_wrapped(|ui| {
 			ui.spacing_mut().item_spacing.x = 8.0;
 			ui.spacing_mut().interact_size.y = height;
-			let field = (ui.available_width() - actions - 8.0).max(160.0);
+			// A pixel of slack keeps rounding from wrapping the last button onto its own row.
+			let field = (ui.available_width() - actions - 9.0).max(160.0);
 			egui::Frame::new()
-				.fill(colors.base)
-				.corner_radius(9)
-				.stroke(egui::Stroke::new(1.0, colors.border))
+				.fill(design::field_fill(colors))
+				.corner_radius(8)
 				.inner_margin(egui::Margin::symmetric(10, 0))
 				.show(ui, |ui| {
 					ui.set_width(field - 20.0);
@@ -1627,8 +1627,9 @@ impl ExtensionUi {
 		};
 		let footer = ui.min_rect().top() + body_height - 24.0 - FOOTER_HEIGHT;
 		ui.add_space((footer - ui.cursor().top()).max(0.0));
-		let neutral = design::mix(colors.raised, colors.text, 0.1);
-		let outline = egui::Stroke::new(1.0, colors.border);
+		// Card actions are filled companions; only applying a theme takes the accent.
+		let neutral = colors.text_strong.gamma_multiply(0.1);
+		let outline = egui::Stroke::NONE;
 		ui.horizontal(|ui| {
 			ui.spacing_mut().item_spacing.x = 8.0;
 			if entry.cleanup_pending {
@@ -1667,17 +1668,9 @@ impl ExtensionUi {
 								"Review & enable"
 							},
 							egui::vec2(width, FOOTER_HEIGHT),
-							if self.themes { neutral } else { colors.accent },
-							if self.themes {
-								outline
-							} else {
-								egui::Stroke::NONE
-							},
-							if self.themes {
-								colors.text_strong
-							} else {
-								colors.accent_text
-							},
+							neutral,
+							outline,
+							colors.text_strong,
 						)
 					})
 					.inner
@@ -1692,7 +1685,7 @@ impl ExtensionUi {
 								ui,
 								"extensions-ui-theme-preview-bar-customize",
 								egui::vec2(ui.available_width().max(1.0), FOOTER_HEIGHT),
-								colors.raised,
+								neutral,
 								outline,
 								colors.text_strong,
 							)
@@ -1755,7 +1748,7 @@ impl ExtensionUi {
 									"extensions-ui-theme-preview-bar-customize"
 								},
 								egui::vec2(ui.available_width().max(1.0), FOOTER_HEIGHT),
-								if active { neutral } else { colors.raised },
+								neutral,
 								outline,
 								colors.text_strong,
 							)
@@ -2656,8 +2649,8 @@ fn toolbar_button(
 		(colors.accent, egui::Stroke::NONE, colors.accent_text)
 	} else {
 		(
-			colors.raised,
-			egui::Stroke::new(1.0, colors.border),
+			colors.text_strong.gamma_multiply(0.1),
+			egui::Stroke::NONE,
 			colors.text_strong,
 		)
 	};
@@ -2784,7 +2777,7 @@ fn capability_label(capability: Capability) -> &'static str {
 			"Propose camera, screen-share and local media-device changes for approval"
 		}
 		Capability::ActionFeedback => {
-			"Receive whether a confirmed app action was accepted by Serein"
+			"Receive whether a confirmed app action was accepted by Leech"
 		}
 		Capability::DataQueries => {
 			"Request and read bounded search, pin, thread, member, profile and GIF results"
@@ -2862,7 +2855,7 @@ pub(crate) fn render_elements(
 					.or_insert_with(|| checked.to_string());
 				let mut checked = value == "true";
 				if ui
-					.push_id(id, |ui| ui.checkbox(&mut checked, label))
+					.push_id(id, |ui| design::checkbox(ui, &mut checked, label))
 					.inner
 					.changed()
 				{
@@ -2877,7 +2870,7 @@ pub(crate) fn render_elements(
 			} => {
 				let selected = values.entry(id.clone()).or_insert_with(|| value.clone());
 				let label = ui.label(label);
-				egui::ComboBox::from_id_salt(id)
+				crate::design::combo(id)
 					.selected_text(selected.as_str())
 					.show_ui(ui, |ui| {
 						for option in options {

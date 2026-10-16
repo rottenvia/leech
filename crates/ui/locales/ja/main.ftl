@@ -3,7 +3,7 @@
 language-system = システム
 language-group = 言語
 language-label = 表示言語
-language-description = セレインの言語を選択してください。 Discord のコンテンツは翻訳されません。
+language-description = Leechの言語を選択してください。 Discord のコンテンツは翻訳されません。
 section-user = ユーザー設定
 section-app = アプリの設定
 section-customization = カスタマイズ
@@ -28,11 +28,11 @@ description-appearance = テーマ、色、ウィンドウ効果、レイアウ�
 description-chat = メッセージ、メディア、リンク、スクロールの動作。
 description-messaging-permissions = 誰があなたに連絡できるか、そしてメッセージをどのようにフィルタリングするかを制御します。
 description-notifications = 受信する通知とその表示方法を選択します。
-description-registered-games = プレイ中のゲームを共有し、Serein が検出したゲームを修正・追加します。
+description-registered-games = プレイ中のゲームを共有し、Leech が検出したゲームを修正・追加します。
 description-voice = マイク、スピーカー、カメラ、音声処理。
-description-keybinds = セレインのキーボード ショートカット。
-description-storage = Serein がこのデバイスに保存しているもの。
-description-updates = このデバイスで Serein を常に最新の状態に保ってください。
+description-keybinds = Leechのキーボード ショートカット。
+description-storage = Leech がこのデバイスに保存しているもの。
+description-updates = このデバイスで Leech を常に最新の状態に保ってください。
 description-extensions = コミュニティプラグインを管理します。
 description-themes = コミュニティのテーマを選択します。
 theme-maker = テーマメーカー
@@ -45,30 +45,30 @@ log-out = ログアウト
 unofficial = 非公式・Discordによって承認されていません
 offline-preview = オフライン プレビュー · 変更はこのセッションに残り、送信されることはありません。
 general-startup = 起動する
-general-open-at-startup = コンピュータの起動時に Serein を開きます
-general-open-at-startup-description = Serein がサインインし、バックグラウンドで接続します。
+general-open-at-startup = コンピュータの起動時に Leech を開きます
+general-open-at-startup-description = Leech がサインインし、バックグラウンドで接続します。
 general-start-minimized = 最小化して開始
 general-start-minimized-description = 邪魔にならないバックグラウンドで開始します。
 general-startup-unavailable = 自動起動は Windows と macOS で利用できます。
 general-window = ウィンドウ
 general-hide-decorations = ウィンドウの装飾を隠す
-general-hide-decorations-description = システムのタイトルバーと境界線を削除します。ウィンドウ マネージャーを使用して、Serein を移動、サイズ変更、または閉じます。
-general-hide-title-bar = セレインのタイトルバーを非表示にする
+general-hide-decorations-description = システムのタイトルバーと境界線を削除します。ウィンドウ マネージャーを使用して、Leech を移動、サイズ変更、または閉じます。
+general-hide-title-bar = Leechのタイトルバーを非表示にする
 general-hide-title-bar-description = 代わりに、システムのタイトル バーとウィンドウ ボタンを使用してください。
-general-keep-menu-bar = セレインをメニューバーに置いておく
-general-keep-system-tray = Serein をシステム トレイに入れておきます
-general-menu-bar-description = ウィンドウを閉じると、Serein がメニュー バーに表示されたままになります。終了するにはメニューから終了してください。
-general-linux-tray-description = クロージングによりセレインは継続します。トレイを使用して、表示、最小化、または終了します。
-general-windows-tray-description = ウィンドウを閉じると、Serein が通知領域に表示されたままになります。終了するにはメニューから終了してください。
+general-keep-menu-bar = Leechをメニューバーに置いておく
+general-keep-system-tray = Leech をシステム トレイに入れておきます
+general-menu-bar-description = ウィンドウを閉じると、Leech がメニュー バーに表示されたままになります。終了するにはメニューから終了してください。
+general-linux-tray-description = クロージングによりLeechは継続します。トレイを使用して、表示、最小化、または終了します。
+general-windows-tray-description = ウィンドウを閉じると、Leech が通知領域に表示されたままになります。終了するにはメニューから終了してください。
 general-tray-unavailable = このプラットフォームではトレイを使用できません。
 general-graphics = グラフィックス
 general-render-with = でレンダリング
-general-gpu-restart = 次回セレイン起動時に有効となります。
+general-gpu-restart = 次回Leech起動時に有効となります。
 general-gpu-current-prefix = 現在絵を描いているのは
 gpu-automatic = 自動
 gpu-high-performance = 高性能
 gpu-power-saving = 省電力
-gpu-automatic-description = Serein にこのウィンドウを描画できる GPU を選択させます。
+gpu-automatic-description = Leech にこのウィンドウを描画できる GPU を選択させます。
 gpu-high-performance-description = 専用グラフィックス カードが利用可能な場合は、それを使用してください。
 gpu-power-saving-description = 内蔵グラフィックスを使用してバッテリーを節約します。
 direct-messages = ダイレクトメッセージ
@@ -213,7 +213,7 @@ account-menu-custom-status-editor-clear-after = 後クリア
 # Context: custom_status_editor
 account-menu-custom-status-editor-no-custom-status = カスタムステータスなし
 # Context: custom_status_editor
-account-menu-custom-status-editor-serein-clears-it = セレインがクリアする
+account-menu-custom-status-editor-leech-clears-it = Leechがクリアする
 # Context: custom_status_editor
 account-menu-custom-status-editor-status-text = ステータステキスト
 # Context: custom_status_editor
@@ -245,7 +245,6 @@ archives-active-threads = アクティブなスレッド
 # Context: show
 archives-show-active-threads-come-from-the-session-older-threads-load-25 = アクティブなスレッドはセッションから取得されます。古いスレッドは一度に 25 個ロードされます。開くと、参加せずにメッセージが読み込まれます。
 # Context: show
-archives-show-archives-active-threads = アクティブなスレッドをアーカイブする
 # Context: show
 archives-show-archives-are-unavailable-while-disconnected-or-without-channel-access = 接続されていないとき、またはチャンネルにアクセスできないときは、アーカイブは利用できません。
 # Context: show
@@ -1543,7 +1542,7 @@ keybinds-show-voice-enable-global-keybinds = グローバルキーバインド�
 # Context: show_voice
 keybinds-show-voice-global-availability = グローバルな可用性
 # Context: show_voice
-keybinds-show-voice-use-voice-shortcuts-while-another-app-is-focused-when-off = 別のアプリがフォーカスされているときに音声ショートカットを使用します。オフの場合、ショートカットは Serein がフォーカスされている間のみ機能します。
+keybinds-show-voice-use-voice-shortcuts-while-another-app-is-focused-when-off = 別のアプリがフォーカスされているときに音声ショートカットを使用します。オフの場合、ショートカットは Leech がフォーカスされている間のみ機能します。
 
 ## crates/ui/src/lib.rs
 # Context: account_card
@@ -1621,7 +1620,7 @@ main-restoring-checking-your-saved-login = 保存されたログイン情報を�
 # Context: restoring
 main-restoring-connecting-to-discord = Discordに接続する
 # Context: restoring_screen
-main-restoring-screen-serein = セレイン
+main-restoring-screen-leech = Leech
 # Context: restoring_screen
 main-restoring-screen-use-a-different-account = 別のアカウントを使用する
 # Context: restoring_screen
@@ -1633,11 +1632,11 @@ main-sign-in-consent-i-own-this-account-and-authorize-this-session = 私はこ�
 # Context: sign_in_consent
 main-sign-in-consent-passwords-and-2fa-stay-on-discord-s-own-login-page = パスワードと 2FA は Discord 自体のログイン ページに残ります。セッション トークンのみが OS 資格情報ストアに保持されます。
 # Context: sign_in_disclosures
-main-sign-in-disclosures-about-serein = セレインについて
+main-sign-in-disclosures-about-leech = Leechについて
 # Context: sign_in_disclosures
 main-sign-in-disclosures-connect-with-this-token = このトークンで接続します
 # Context: sign_in_disclosures
-main-sign-in-disclosures-for-owners-who-already-hold-a-valid-discord-session-token = サインインした別の Serein インストールなどから、すでに有効な Discord セッション トークンを保持しているオーナーの場合。ここではパスワードと 2FA は決して使用されません。これにより、Discord がホストするログイン ページが完全にバイパスされます。
+main-sign-in-disclosures-for-owners-who-already-hold-a-valid-discord-session-token = サインインした別の Leech インストールなどから、すでに有効な Discord セッション トークンを保持しているオーナーの場合。ここではパスワードと 2FA は決して使用されません。これにより、Discord がホストするログイン ページが完全にバイパスされます。
 # Context: sign_in_disclosures
 main-sign-in-disclosures-forget-saved-login = 保存したログイン情報を忘れる
 # Context: sign_in_disclosures
@@ -1651,7 +1650,7 @@ main-sign-in-header-sign-in-with-your-discord-account-to-get-started = 始める
 # Context: sign_in_header
 main-sign-in-header-welcome-back = おかえり
 # Context: sign_in_header
-main-sign-in-header-welcome-to-serein = セレインへようこそ
+main-sign-in-header-welcome-to-leech = Leechへようこそ
 # Context: sign_in_preview
 main-sign-in-status-copy-failure-details = エラーの詳細をコピー
 main-sign-in-preview-explore-the-offline-preview = オフライン プレビューを確認する
@@ -1660,7 +1659,7 @@ main-sign-in-preview-sample-conversations-no-discord-connection = 会話例。 D
 # Context: sign_in_screen
 main-sign-in-screen-independent-and-open-source-not-affiliated-with-discord = 独立したオープンソース。 Discordとは関係ありません。
 # Context: sign_in_screen
-main-sign-in-screen-serein = セレイン
+main-sign-in-screen-leech = Leech
 # Context: ui
 main-ui-cancel = キャンセル
 # Context: ui
@@ -2247,9 +2246,9 @@ screen-body-refresh = リフレッシュ
 # Context: body
 screen-body-screen-or-window = スクリーンまたはウィンドウ
 # Context: body
-screen-body-send-what-your-mac-plays-along-with-the-screen-serein = Mac で再生しているものを画面とともに送信します。セレイン自身の通話音声は省略されています。
+screen-body-send-what-your-mac-plays-along-with-the-screen-leech = Mac で再生しているものを画面とともに送信します。Leech自身の通話音声は省略されています。
 # Context: body
-screen-body-share-sound-from-other-apps-even-when-sharing-one-window = 1 つのウィンドウを共有している場合でも、他のアプリのサウンドを共有します。 Serein 自身の音声は省略されています。
+screen-body-share-sound-from-other-apps-even-when-sharing-one-window = 1 つのウィンドウを共有している場合でも、他のアプリのサウンドを共有します。 Leech 自身の音声は省略されています。
 # Context: body
 screen-body-share-system-audio = システムオーディオを共有する
 # Context: body
@@ -3408,7 +3407,7 @@ settings-activity-added-games = 追加済みのゲーム
 # Context: activity_settings
 settings-activity-no-games-added = 追加されたゲームはありません
 # Context: activity_settings
-settings-activity-hidden = 非表示。Serein はこのゲームを検出しません。
+settings-activity-hidden = 非表示。Leech はこのゲームを検出しません。
 # Context: activity_settings
 settings-activity-detected = 自動検出
 # Context: activity_settings
@@ -3430,7 +3429,7 @@ settings-activity-click-to-rename = クリックして名前を変更
 # Context: activity_settings
 settings-activity-add-a-game = ゲームを追加
 # Context: activity_settings
-settings-activity-choose-program = 実行中のプログラムを選んでください。実行されるたびに Serein がゲームとして表示します。
+settings-activity-choose-program = 実行中のプログラムを選んでください。実行されるたびに Leech がゲームとして表示します。
 # Context: activity_settings
 settings-activity-search-programs = 実行中のプログラムを検索
 # Context: activity_settings
@@ -3458,7 +3457,7 @@ settings-appearance-settings-primary-color = 原色
 # Context: appearance_settings
 settings-appearance-settings-reset = リセット
 # Context: appearance_settings
-settings-appearance-settings-restart-serein-after-changing-this-themes-can-customize-effects-while = これを変更した後、Serein を再起動します。テーマは有効になっている間、効果をカスタマイズできます。
+settings-appearance-settings-restart-leech-after-changing-this-themes-can-customize-effects-while = これを変更した後、Leech を再起動します。テーマは有効になっている間、効果をカスタマイズできます。
 # Context: appearance_settings
 settings-appearance-settings-the-active-theme-brings-its-own-accent-it-takes-over = アクティブなテーマが独自のアクセントをもたらします。テーマの使用中はそれが引き継がれます。
 # Context: appearance_settings
@@ -3495,11 +3494,11 @@ settings-storage-page-clear-cache = キャッシュをクリアする
 # Context: storage_page
 settings-storage-page-local-storage = ローカルストレージ
 # Context: storage_page
-settings-storage-page-messages-and-drafts-are-cached-on-this-device-inside-bounded = メッセージと下書きは、このデバイス上の制限されたアカウント分離ファイル内にキャッシュされます。キャッシュ データは Serein によって暗号化されません。保存されたログイン トークンは OS 資格情報ストアを使用します。
+settings-storage-page-messages-and-drafts-are-cached-on-this-device-inside-bounded = メッセージと下書きは、このデバイス上の制限されたアカウント分離ファイル内にキャッシュされます。キャッシュ データは Leech によって暗号化されません。保存されたログイン トークンは OS 資格情報ストアを使用します。
 # Context: storage_page
 settings-storage-page-removes-cached-messages-and-media-drafts-and-your-login-stay = キャッシュされたメッセージとメディアを削除します。下書きとログインはそのまま残ります。
 # Context: storage_page
-settings-storage-page-serein-does-not-collect-telemetry-or-upload-diagnostics-discord-retains = Serein はテレメトリを収集したり、診断をアップロードしたりしません。 Discord は、独自のポリシーに従ってサービス側のデータを保持します。
+settings-storage-page-leech-does-not-collect-telemetry-or-upload-diagnostics-discord-retains = Leech はテレメトリを収集したり、診断をアップロードしたりしません。 Discord は、独自のポリシーに従ってサービス側のデータを保持します。
 # Context: storage_page
 settings-storage-page-your-privacy = あなたのプライバシー
 # Context: cosmetic_settings
@@ -3941,7 +3940,7 @@ updates-update-settings-could-not-load-or-save-update-preferences-changes-may-no
 # Context: update_settings
 updates-update-settings-download-update = アップデートをダウンロード
 # Context: update_settings
-updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = バックグラウンドでアップデートをダウンロードします。準備ができたら再起動します。 Serein は起動時と、これがオフの場合でも定期的にチェックします。
+updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = バックグラウンドでアップデートをダウンロードします。準備ができたら再起動します。 Leech は起動時と、これがオフの場合でも定期的にチェックします。
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = 最新の変更を加えた初期のビルド。夜間リリースは信頼性が低くなる可能性があります。
 # Context: update_settings
@@ -3967,7 +3966,7 @@ updates-update-settings-release-channel = リリースチャンネル
 # Context: update_settings
 updates-update-settings-restart-to-update = 更新するには再起動してください
 # Context: update_settings
-updates-update-settings-serein-was-installed-via-your-distribution-run-this-in-a = Serein はディストリビューション経由でインストールされました。ターミナルでこれを実行して更新します。
+updates-update-settings-leech-was-installed-via-your-distribution-run-this-in-a = Leech はディストリビューション経由でインストールされました。ターミナルでこれを実行して更新します。
 # Context: update_settings
 updates-update-settings-support-diagnostics = サポートと診断
 # Context: update_log
@@ -4059,13 +4058,9 @@ video-show-player-video-volume = ビデオの音量
 
 ## crates/ui/src/voice.rs
 # Context: call_bar
-voice-call-bar-call-in-progress = 通話中
-# Context: call_bar
 voice-call-bar-incoming-call = 着信中…
 # Context: call_bar
 voice-call-bar-join-call = 通話に参加する
-# Context: call_bar
-voice-call-bar-reconnect-to-refresh-call = 再接続して通話を更新する
 # Context: call_controls
 voice-call-controls-disconnect = 切断する
 # Context: call_controls
@@ -4416,7 +4411,7 @@ onboarding-rules-heading = サーバールール
 # Context: rules
 onboarding-rules-review = チャットする前に、モデレーターがこれらの回答を確認します。
 # Context: field
-onboarding-field-unsupported = このサーバーには Serein がまだ表示できない質問があります。Discord アプリで参加を完了してください。
+onboarding-field-unsupported = このサーバーには Leech がまだ表示できない質問があります。Discord アプリで参加を完了してください。
 # Context: field
 onboarding-field-agree = ルールを読み、同意します
 
@@ -4544,7 +4539,7 @@ reading-double-click-reaction = Double-click reaction
 
 ## crates/platform/src/app_menu.rs
 # Context: macos_menu_bar
-app-menu-about = Sereinについて
+app-menu-about = Leechについて
 # Context: macos_menu_bar
 app-menu-updates = アップデートを確認…
 # Context: macos_menu_bar
@@ -4552,13 +4547,13 @@ app-menu-settings = 設定…
 # Context: macos_menu_bar
 app-menu-services = サービス
 # Context: macos_menu_bar
-app-menu-hide = Sereinを非表示
+app-menu-hide = Leechを非表示
 # Context: macos_menu_bar
 app-menu-hide-others = ほかを非表示
 # Context: macos_menu_bar
 app-menu-show-all = すべてを表示
 # Context: macos_menu_bar
-app-menu-quit = Sereinを終了
+app-menu-quit = Leechを終了
 # Context: macos_menu_bar
 app-menu-file = ファイル
 # Context: macos_menu_bar
@@ -4600,7 +4595,7 @@ app-menu-bring-all-to-front = すべてを手前に移動
 # Context: macos_menu_bar
 app-menu-help = ヘルプ
 # Context: macos_menu_bar
-app-menu-github = GitHubのSerein
+app-menu-github = GitHubのLeech
 # Context: macos_menu_bar
 app-menu-report-issue = 問題を報告…
 

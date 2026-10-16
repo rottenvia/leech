@@ -1,4 +1,4 @@
-//! Offline debug check: cargo run --locked -p serein --example extension_settings
+//! Offline debug check: cargo run --locked -p leech --example extension_settings
 use eframe::egui;
 
 fn texts(shape: &egui::Shape, labels: &mut Vec<String>) {
@@ -78,7 +78,7 @@ fn main() {
 		assert!(
 			!labels
 				.iter()
-				.any(|text| text.contains("Make Serein yours") || text.contains("A new look."))
+				.any(|text| text.contains("Make Leech yours") || text.contains("A new look."))
 		);
 	}
 	messaging.preview_settings("extensions");

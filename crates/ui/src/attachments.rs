@@ -1118,7 +1118,7 @@ pub fn viewer(
 									crate::i18n::translate("attachments-viewer-open-in-browser"),
 									13.0,
 								)
-								.color(Color32::from_rgb(0, 168, 252)),
+								.color(Color32::from_rgb(0xff, 0x9d, 0xbb)),
 							)
 							.sense(Sense::click())
 							.selectable(false),
@@ -1147,7 +1147,7 @@ pub fn viewer(
 										crate::i18n::translate("attachments-viewer-cancel"),
 										13.0,
 									)
-									.color(Color32::from_rgb(0, 168, 252)),
+									.color(Color32::from_rgb(0xff, 0x9d, 0xbb)),
 								)
 								.sense(Sense::click())
 								.selectable(false),

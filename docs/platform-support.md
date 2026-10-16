@@ -16,12 +16,12 @@ The offline `--demo` ignores saved geometry and does not save its window state.
 
 Wayland does not expose global window coordinates to ordinary clients, so window
 placement belongs to the compositor. Niri also controls tiled column sizes and can
-override the application's requested size. To allow Serein's saved width, add to
+override the application's requested size. To allow Leech's saved width, add to
 `~/.config/niri/config.kdl`:
 
 ```kdl
 window-rule {
-    match app-id=r#"^cz\.viceverse\.serein$"#
+    match app-id=r#"^cz\.viceverse\.leech$"#
     default-column-width {}
 }
 ```
@@ -50,7 +50,7 @@ disable the Windows hack. Native DPI and eframe's physical surface sizing remain
 macOS/Linux window creation is unchanged.
 The custom Windows frame requests DWM's rounded-corner treatment on Windows 11. Windows keeps
 maximized windows square, and older releases ignore the unsupported preference.
-For offline inspection, run `cargo run --locked -p serein --features demo -- --demo --demo-rendering`.
+For offline inspection, run `cargo run --locked -p leech --features demo -- --demo --demo-rendering`.
 The diagnostic shows the physical client size, logical viewport, native/egui scale and WGPU
 surface dimensions sampled by a render callback, plus alternating one-pixel stripes.
 The surface sample is from the previous paint: compare at rest after resizing, maximizing,
@@ -100,9 +100,9 @@ requirements, pinned tooling and package inspection. Native AppImage startup and
 upgrading remain unverified in
 the initial fast local pass.
 
-`cargo xtask package` builds the locked default release configuration. macOS gets `dist/Serein.app`; Windows gets an executable plus license files; Debian/Ubuntu Linux additionally produces a `.deb` with desktop integration and dependency metadata. On macOS, packaging replaces the executable through a fresh sibling file and rename, then seals the completed bundle with `codesign --force --sign -` and runs `codesign --verify --strict`. This is a **local ad-hoc signature**, with no signing identity, Developer ID certificate, or notarization. It verifies the staged bundle's integrity and does not certify Gatekeeper acceptance or a trusted publisher. The distinction between signature validity and trust is described in [Apple's code-signing guidance](https://developer.apple.com/library/archive/technotes/tn2206/_index.html).
+`cargo xtask package` builds the locked default release configuration. macOS gets `dist/Leech.app`; Windows gets an executable plus license files; Debian/Ubuntu Linux additionally produces a `.deb` with desktop integration and dependency metadata. On macOS, packaging replaces the executable through a fresh sibling file and rename, then seals the completed bundle with `codesign --force --sign -` and runs `codesign --verify --strict`. This is a **local ad-hoc signature**, with no signing identity, Developer ID certificate, or notarization. It verifies the staged bundle's integrity and does not certify Gatekeeper acceptance or a trusted publisher. The distinction between signature validity and trust is described in [Apple's code-signing guidance](https://developer.apple.com/library/archive/technotes/tn2206/_index.html).
 
-Windows/Linux local staging artifacts remain unsigned. These are not certified installers. Use `ditto -c -k --keepParent dist/Serein.app dist/Serein-macos.zip` on macOS; normal archive tools may package Windows staging output. Do not modify bundle resources after sealing; rerun packaging when source documentation changes. Linux additionally supports `--format rpm`, `--format arch` and `--format dir`; release jobs target Ubuntu 26.04 (x86_64 and ARM64), Fedora 43/44, openSUSE Tumbleweed and Arch independently. Fedora 43 packaging was added in a local fast pass; its build and installation remain unverified until Linux CI and desktop validation. [Flatpak](../packaging/flatpak/README.md) builds offline against GNOME SDK 49 with the pinned Rust compiler and locked vendored sources. Its sandbox currently excludes direct V4L2 camera access, and host game IPC needs the documented socket link; desktop login/keyring/audio still need Linux runtime validation. [Signed repository preparation](../packaging/repositories/README.md) supports apt, dnf/zypper and pacman, but requires configured signing credentials and an HTTPS host; preparing artifacts does not publish repositories. Windows installer/signing and release reproducibility remain open work.
+Windows/Linux local staging artifacts remain unsigned. These are not certified installers. Use `ditto -c -k --keepParent dist/Leech.app dist/Leech-macos.zip` on macOS; normal archive tools may package Windows staging output. Do not modify bundle resources after sealing; rerun packaging when source documentation changes. Linux additionally supports `--format rpm`, `--format arch` and `--format dir`; release jobs target Ubuntu 26.04 (x86_64 and ARM64), Fedora 43/44, openSUSE Tumbleweed and Arch independently. Fedora 43 packaging was added in a local fast pass; its build and installation remain unverified until Linux CI and desktop validation. [Flatpak](../packaging/flatpak/README.md) builds offline against GNOME SDK 49 with the pinned Rust compiler and locked vendored sources. Its sandbox currently excludes direct V4L2 camera access, and host game IPC needs the documented socket link; desktop login/keyring/audio still need Linux runtime validation. [Signed repository preparation](../packaging/repositories/README.md) supports apt, dnf/zypper and pacman, but requires configured signing credentials and an HTTPS host; preparing artifacts does not publish repositories. Windows installer/signing and release reproducibility remain open work.
 
 The webview lives only during login: WKWebView on macOS, WebView2 on Windows, GTK/WebKitGTK on Linux. Linux uses a separate GTK authentication window and pumps it only while login is active. Voice is built in. Audio devices open only for explicit playback, device testing, or a call reaching required encrypted readiness. Popup-dependent authentication and third-party embedded challenges may not work; do not claim all Discord login methods without live tests.
 
@@ -146,7 +146,7 @@ verification on the affected system.
 
 `cargo run --locked` includes native DM and guild audio. Source builds require CMake and a C/C++ toolchain for statically bundled libopus; Linux also needs ALSA development headers (`libasound2-dev` on Debian/Ubuntu). CPAL uses native system audio. See [the voice adapter](../crates/discord-voice/README.md) for codec/protocol dependencies and limitations.
 
-`cargo xtask package` stages the standard release including voice under `dist` (`dist/Serein.app` on macOS). The macOS bundle includes its microphone-use description; actual microphone permission, capture/playback, device switching and sleep/resume have not been exercised. Windows x64 voice release packaging and synthetic protocol/audio tests pass; physical audio and live calls remain unverified on Windows. Linux x64 text/voice release builds and Debian package smoke passed on Ubuntu 26.04 under WSL2; native Linux desktop/audio runtime remains unverified. CMake is a source-build dependency, not a runtime voice service.
+`cargo xtask package` stages the standard release including voice under `dist` (`dist/Leech.app` on macOS). The macOS bundle includes its microphone-use description; actual microphone permission, capture/playback, device switching and sleep/resume have not been exercised. Windows x64 voice release packaging and synthetic protocol/audio tests pass; physical audio and live calls remain unverified on Windows. Linux x64 text/voice release builds and Debian package smoke passed on Ubuntu 26.04 under WSL2; native Linux desktop/audio runtime remains unverified. CMake is a source-build dependency, not a runtime voice service.
 
 Device choices, voice keybinds and the owner's mute/deafen intent are device-local. Mute and deafen can be changed while idle, survive restart and apply to the first voice-state packet when the next call is joined. Voice bindings use native global registration on supported Windows/macOS/Linux X11 setups and the desktop GlobalShortcuts portal on Wayland when they include a modifier. Unmodified focused Push to Talk (V by default) observes key state without consuming typed text and is never registered as an OS-global shortcut. Missing/denied portal access and unavailable/conflicting registrations fall back to focused input. Use headphones because there is no acoustic echo cancellation. No signing, desktop integration, physical audio or live-compatibility claim follows from compilation alone.
 
@@ -181,8 +181,8 @@ Invite verification uses a temporary WebView2 child on Windows, WKWebView child 
 macOS, and a separate GTK4/WebKit6 window on Linux. It
 loads a local verification page and hCaptcha's official widget after the user
 chooses Verify. The local custom-protocol origin is
-`https://serein-captcha.verification.invalid/` on Windows/Linux and
-`serein-captcha://verification.invalid/` on macOS; it is not a Discord page, public
+`https://leech-captcha.verification.invalid/` on Windows/Linux and
+`leech-captcha://verification.invalid/` on macOS; it is not a Discord page, public
 server or account-login surface. No account token enters it. Domain restrictions,
 provider rejection and missing native webview runtimes fail visibly. macOS/Linux
 live CAPTCHA acceptance remains unverified. Widget
@@ -190,7 +190,7 @@ loading and synthetic checks do not establish live Discord challenge acceptance.
 
 ## Persistent tray icon and close behavior (October 2, 2026)
 
-Serein keeps its native tray/menu-bar icon while running, independently of the
+Leech keeps its native tray/menu-bar icon while running, independently of the
 on-by-default minimize-to-tray preference. The preference controls window Close:
 when enabled and registration is available, Close hides the window; otherwise
 Close follows ordinary exit checks. Turning the preference off or losing the
@@ -206,22 +206,22 @@ logic, with a 50 ms repaint request while a call is active. No audio device open
 merely to update the icon. Windows shell behavior remains unverified in this macOS
 repair session; synthetic update-state tests do not prove native shell behavior.
 
-macOS retains its 18-point template Serein menu-bar mark and Show/Quit actions.
+macOS retains its 18-point template Leech menu-bar mark and Show/Quit actions.
 Linux uses ksni StatusNotifierItem with Show, Minimize and Quit. A StatusNotifier
 host is required. Registration failures remain visible independently of the Close
 preference; toggling that preference retries registration while healthy icons stay
 registered. Demo setting changes are session-only.
 
 **Hyprland / native Wayland:** winit cannot hide, unhide, focus or unminimize a native
-Wayland window. On Hyprland, Close and tray Minimize instead park Serein on
-`special:serein-tray` through the compositor socket; Show moves it to the active
+Wayland window. On Hyprland, Close and tray Minimize instead park Leech on
+`special:leech-tray` through the compositor socket; Show moves it to the active
 workspace. This first uses `movetoworkspacesilent` with the numeric workspace `id`
 for restoration or the named special workspace for hiding. A compositor rejection
 falls back to `hl.dsp.window.move` with `follow = false`, preserving the workspace
 `address` when supplied, otherwise its numeric `id`. Transport failures are not
 retried. Workspace names are bounded and escaped before Lua dispatch.
 On KDE Plasma (`XDG_CURRENT_DESKTOP` contains `KDE`), Close loads a small KWin script
-over D-Bus (`org.kde.KWin` `/Scripting`) that minimizes Serein and skips the taskbar,
+over D-Bus (`org.kde.KWin` `/Scripting`) that minimizes Leech and skips the taskbar,
 pager and task switcher; Show and Quit unminimize and activate it first, so Quit no
 longer renders into a minimized surface. Tray Minimize keeps the taskbar entry. Native
 installs match the process ID; Flatpak matches its app ID and writes scripts to its
@@ -242,19 +242,19 @@ prepared on macOS; NixOS/Hyprland and Flatpak desktop validation remain pending.
 ## Opt-in automatic startup
 
 General settings offer automatic launch at Windows sign-in and a dependent Start
-Serein minimized preference. Both default off. Registration uses the current user's
+Leech minimized preference. Both default off. Registration uses the current user's
 Run key; no administrator access, service, scheduled task or new dependency is needed.
 Windows Startup Apps can override this registration. Disable startup before deleting
 a portable installation, or re-enable it after moving the executable.
 Minimized launches stay in the taskbar even when the saved tray preference is enabled;
 the tray can attach safely after a minimized launch. Tray failures leave the window
 recoverable. Without a tray icon the Close button still exits, and the tray Quit action retains unsaved
-work checks. macOS registers a per-user `~/Library/LaunchAgents/cz.viceverse.serein.startup.plist`
+work checks. macOS registers a per-user `~/Library/LaunchAgents/io.github.rottenvia.leech.startup.plist`
 for the next graphical login, with the same launch flags. Turning it off removes only
 that file. It does not launch a second client when enabled or restart after Quit.
 Re-enable startup after moving the executable; disable it before uninstalling. macOS
 Login Items settings can independently block launch. Built-in Linux autostart remains
-unavailable; desktop-session entries can launch `serein --start-minimized`, while ordinary
+unavailable; desktop-session entries can launch `leech --start-minimized`, while ordinary
 launches without the flag remain visible.
 Native macOS sign-out/sign-in remains unverified.
 Offline tests cover isolated registry writes/removal, launch flags and settings
@@ -304,11 +304,11 @@ macOS checks
 strict code-signature validity, the existing publisher's TeamIdentifier and bundle
 identifier, and Gatekeeper acceptance. Windows currently relies on the repository's
 HTTPS/checksum trust boundary because its published packages are unsigned. When
-installed via the per-user installer (`%LOCALAPPDATA%\Programs\Serein`), write
+installed via the per-user installer (`%LOCALAPPDATA%\Programs\Leech`), write
 permissions are maintained without administrator elevation, and the update helper
 automatically updates the Windows uninstall `DisplayVersion` registry key upon
 successful upgrade. Native helpers wait for the old process to exit, retain a rollback
-copy during replacement, and relaunch Serein. A failed recovery leaves its backup
+copy during replacement, and relaunch Leech. A failed recovery leaves its backup
 available with a visible recovery path on the next update attempt.
 
 ## Linux screen sharing
@@ -331,7 +331,7 @@ unverified. See [the screen-sharing checks](voice.md) for build/run commands.
 Screen sharing also tries the legacy `vaapih264enc` element when modern VA encoding
 fails. This optional system plugin uses CPU scaling and hardware H.264 encoding;
 it does not require `vaapipostproc`. Check availability with
-`gst-inspect-1.0 vaapih264enc` in the same runtime as Serein. Installing the modern
+`gst-inspect-1.0 vaapih264enc` in the same runtime as Leech. Installing the modern
 `va` plugin alone does not provide this legacy element. Driver compatibility still
 requires an actual encode test; `vainfo` only advertises capabilities.
 
@@ -346,7 +346,7 @@ package (`libpulse-dev`, `pulseaudio-libs-devel`, `libpulse-devel` or Arch's `li
 The existing Flatpak PulseAudio socket permission covers this access; the ScreenCast
 portal's PipeWire remote grants video only. Windows uses native process loopback on
 build 20348+ (Windows 11 / Server 2022), with a visible audio error on older systems.
-Both exclude Serein's playback and capture other applications even when sharing one
+Both exclude Leech's playback and capture other applications even when sharing one
 window. There is no whole-output fallback. Hardware exclusion and receiving sound in
 an official client remain unverified.
 
@@ -377,7 +377,7 @@ Imaging bindings. Executable/package size changes have not been measured.
 Only the primary still frame is decoded, on existing blocking workers, within the
 existing encoded-byte, source-dimension and scaled RGBA allocation limits (also
 capped at 32 MiB encoded, 8192 pixels per edge and 128 MiB RGBA). OS codec scratch allocations are
-not controlled by Serein. WIC scales to the requested output edge before Serein
+not controlled by Leech. WIC scales to the requested output edge before Leech
 allocates RGBA pixels, so large sources can produce bounded composer thumbnails.
 Originals remain unchanged when uploaded, with image/heic
 or image/heif MIME types. Incoming attachments prefer Discord's existing image

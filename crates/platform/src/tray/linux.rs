@@ -54,7 +54,7 @@ impl Tray {
 		let worker_events = events.clone();
 		runtime.spawn(async move {
 			let Ok(icon) = image::load_from_memory_with_format(
-				include_bytes!("../../../../packaging/linux/hicolor/32x32/apps/serein.png"),
+				include_bytes!("../../../../packaging/linux/hicolor/32x32/apps/leech.png"),
 				image::ImageFormat::Png,
 			) else {
 				worker_events.push(Event::Unavailable);
@@ -138,10 +138,10 @@ struct Item {
 
 impl ksni::Tray for Item {
 	fn id(&self) -> String {
-		"serein".into()
+		"leech".into()
 	}
 	fn title(&self) -> String {
-		"Serein".into()
+		"Leech".into()
 	}
 	fn icon_pixmap(&self) -> Vec<ksni::Icon> {
 		vec![ksni::Icon {
@@ -156,13 +156,13 @@ impl ksni::Tray for Item {
 	fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
 		vec![
 			StandardItem {
-				label: "Show Serein".into(),
+				label: "Show Leech".into(),
 				activate: Box::new(|item: &mut Self| item.events.push(Event::Show)),
 				..Default::default()
 			}
 			.into(),
 			StandardItem {
-				label: "Minimize Serein".into(),
+				label: "Minimize Leech".into(),
 				activate: Box::new(|item: &mut Self| item.events.push(Event::Minimize)),
 				..Default::default()
 			}

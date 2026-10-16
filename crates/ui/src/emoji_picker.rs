@@ -854,18 +854,29 @@ impl Picker {
 		let trigger = crate::icons::toggle(
 			ui,
 			crate::icons::Icon::Smile,
-			28.0,
+			32.0,
 			self.open && self.tab == Tab::Emoji,
 			&crate::i18n::translate("emoji-picker-show-insert-an-emoji"),
+		);
+		let sticker_trigger = crate::icons::toggle(
+			ui,
+			crate::icons::Icon::Sticker,
+			32.0,
+			self.open && self.tab == Tab::Stickers,
+			&crate::i18n::translate_if_key("Send a sticker"),
 		);
 		let gif_trigger = crate::icons::toggle(
 			ui,
 			crate::icons::Icon::Gif,
-			28.0,
+			32.0,
 			self.open && self.tab == Tab::Gifs,
 			&crate::i18n::translate("emoji-picker-show-send-a-gif"),
 		);
-		for (response, tab) in [(&trigger, Tab::Emoji), (&gif_trigger, Tab::Gifs)] {
+		for (response, tab) in [
+			(&trigger, Tab::Emoji),
+			(&sticker_trigger, Tab::Stickers),
+			(&gif_trigger, Tab::Gifs),
+		] {
 			if response.clicked() {
 				if self.open && self.tab == tab {
 					self.open = false;
@@ -889,7 +900,8 @@ impl Picker {
 			avatars,
 			commands,
 			&trigger,
-			Some(&gif_trigger),
+			// The GIF and sticker buttons sit side by side; their span opens tabs, not dismisses.
+			Some(gif_trigger.rect.union(sticker_trigger.rect)),
 		)
 	}
 
@@ -902,7 +914,7 @@ impl Picker {
 		avatars: &mut Avatars,
 		commands: &mut Vec<Command>,
 		trigger: &egui::Response,
-		gif_trigger: Option<&egui::Response>,
+		tab_triggers: Option<egui::Rect>,
 	) -> Option<Pick> {
 		if ui.is_enabled()
 			&& ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
@@ -1801,7 +1813,7 @@ impl Picker {
 				&& i.pointer.interact_pos().is_some_and(|pos| {
 					!area.response.rect.contains(pos)
 						&& !trigger.rect.contains(pos)
-						&& gif_trigger.is_none_or(|trigger| !trigger.rect.contains(pos))
+						&& tab_triggers.is_none_or(|triggers| !triggers.contains(pos))
 				})
 		});
 		self.open = !clicked_outside && selected.is_none();
@@ -2456,7 +2468,7 @@ fn cell(
 	);
 	if ui.is_rect_visible(rect) {
 		if response.hovered() || response.has_focus() {
-			ui.painter().rect_filled(rect, 6, colors.hover);
+			ui.painter().rect_filled(rect, 8, colors.hover);
 		}
 		let inner = rect.shrink(4.0);
 		match image {
@@ -3020,7 +3032,7 @@ mod tests {
 		};
 		let guild = state.guilds[0].id;
 		let mut matches = CustomMatches::default();
-		matches.update(&state, Some(guild), "serein_party");
+		matches.update(&state, Some(guild), "leech_party");
 		let (source, custom) = matches.get(&state, 0).unwrap();
 		let emoji = model::ReactionEmoji {
 			id: Some(custom.id),
@@ -3058,7 +3070,7 @@ mod tests {
 		};
 		let guild = state.guilds[0].id;
 		let mut matches = CustomMatches::default();
-		matches.update(&state, Some(guild), "serein_party");
+		matches.update(&state, Some(guild), "leech_party");
 		let (source, custom) = matches.get(&state, 0).unwrap();
 		assert!(custom.animated);
 		let emoji = model::ReactionEmoji {
@@ -3124,21 +3136,21 @@ mod tests {
 		picker.reaction = None;
 		let local = model::ReactionEmoji {
 			id: Some(Id(9002)),
-			name: Some("serein_party".into()),
+			name: Some("leech_party".into()),
 		};
 		assert!(matches!(
-			picker.pick(&state, local.clone(), "<a:serein_party:9002>".into()),
+			picker.pick(&state, local.clone(), "<a:leech_party:9002>".into()),
 			Pick::Insert(text) if text.contains("https://cdn.discordapp.com/emojis/9002.gif?size=64")
 		));
 		state.selected = Some(Id(22));
 		picker.channel = state.selected;
 		assert!(matches!(
-			picker.pick(&state, local.clone(), "<a:serein_party:9002>".into()),
+			picker.pick(&state, local.clone(), "<a:leech_party:9002>".into()),
 			Pick::Insert(text) if text.contains("https://cdn.discordapp.com/emojis/9002.gif?size=64")
 		));
 		state.premium_type = 2;
 		assert!(matches!(
-			picker.pick(&state, local, "<a:serein_party:9002>".into()),
+			picker.pick(&state, local, "<a:leech_party:9002>".into()),
 			Pick::Insert(_)
 		));
 
@@ -3202,7 +3214,7 @@ mod tests {
 			for _ in 0..3 {
 				assert!(frame(&mut picker, &mut state, &mut avatars, vec![]).is_empty());
 			}
-			let query = if custom { "serein_wave" } else { "rocket" };
+			let query = if custom { "leech_wave" } else { "rocket" };
 			frame(
 				&mut picker,
 				&mut state,
@@ -3234,7 +3246,7 @@ mod tests {
 						matches!(&commands[0], Command::Reactions(client_core::reactions::Command::Set {
 						message: target, emoji, ..
 					}) if *target == message && emoji.id == custom.then_some(Id(9001))
-						&& emoji.name.as_deref() == Some(if custom { "serein_wave" } else { "🚀" }))
+						&& emoji.name.as_deref() == Some(if custom { "leech_wave" } else { "🚀" }))
 					);
 					selected = true;
 					break;
@@ -3716,9 +3728,9 @@ pub(crate) fn debug_fallback_choice(state: &State) -> String {
 		state,
 		model::ReactionEmoji {
 			id: Some(Id(9002)),
-			name: Some("serein_party".into()),
+			name: Some("leech_party".into()),
 		},
-		"<a:serein_party:9002>".into(),
+		"<a:leech_party:9002>".into(),
 	) {
 		Pick::Insert(text) => text,
 		_ => panic!("fallback selection must edit the composer"),

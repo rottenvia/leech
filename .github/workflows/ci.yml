@@ -55,7 +55,7 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Check production build without development fixtures
-        run: cargo check --locked -p serein --bin serein --no-default-features
+        run: cargo check --locked -p leech --bin leech --no-default-features
       - run: cargo xtask check
       - parallel:
           - name: Flatpak encoding after GTK initialization (synthetic)
@@ -72,7 +72,7 @@ jobs:
         run: cargo xtask package
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: serein-${{ runner.os }}-${{ runner.arch }}-unsigned
+          name: leech-${{ runner.os }}-${{ runner.arch }}-unsigned
           path: dist/
   extension-sdk:
     runs-on: ubuntu-latest

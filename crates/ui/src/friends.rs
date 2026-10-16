@@ -377,7 +377,7 @@ impl MessagingUi {
 										"friends-cancel-request"
 									});
 									if *incoming
-										&& round_action(
+										&& row_action(
 											ui,
 											Icon::Check,
 											&language.text("friends-accept-request"),
@@ -387,7 +387,7 @@ impl MessagingUi {
 									{
 										resolve = Some((user.id, true));
 									}
-									if round_action(ui, Icon::Close, &reject_label, colors.danger)
+									if row_action(ui, Icon::Close, &reject_label, colors.danger)
 										.clicked()
 									{
 										resolve = Some((user.id, false));
@@ -746,7 +746,7 @@ impl MessagingUi {
 								if restricted.is_none() {
 									let message = actions
 										.add_enabled_ui(can_message, |ui| {
-											round_action(
+											row_action(
 												ui,
 												Icon::Threads,
 												&language.text("friends-message"),
@@ -758,7 +758,7 @@ impl MessagingUi {
 										selected = Some(user.id);
 									}
 								}
-								let more = round_action(
+								let more = row_action(
 									&mut actions,
 									Icon::More,
 									&language.text("friends-more"),
@@ -854,27 +854,30 @@ fn person_row(
 	(rect, response, hot)
 }
 
-/// Round row action; `tint` colours the glyph while hovered.
-fn round_action(ui: &mut egui::Ui, icon: Icon, label: &str, tint: Color32) -> egui::Response {
+/// Row action in the house button shape; `tint` colours the glyph while hovered.
+fn row_action(ui: &mut egui::Ui, icon: Icon, label: &str, tint: Color32) -> egui::Response {
 	let colors = design::palette(ui);
 	let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(ACTION), egui::Sense::click());
 	let enabled = ui.is_enabled();
 	let hot = enabled && (response.hovered() || response.has_focus());
 	let painter = ui.painter();
-	painter.circle_filled(
-		rect.center(),
-		ACTION / 2.0,
-		if hot {
-			design::mix(colors.base, colors.text, 0.08)
-		} else {
-			colors.base
-		},
+	painter.rect(
+		rect,
+		10,
+		design::mix(
+			colors.raised,
+			colors.text_strong,
+			if hot { 0.15 } else { 0.05 },
+		),
+		design::hairline(ui),
+		egui::StrokeKind::Inside,
 	);
 	if response.has_focus() {
-		painter.circle_stroke(
-			rect.center(),
-			ACTION / 2.0 + 1.0,
+		painter.rect_stroke(
+			rect.expand(1.0),
+			11,
 			egui::Stroke::new(2.0, colors.accent),
+			egui::StrokeKind::Outside,
 		);
 	}
 	icons::paint(

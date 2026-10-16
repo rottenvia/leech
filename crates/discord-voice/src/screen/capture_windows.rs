@@ -129,12 +129,7 @@ impl GraphicsCaptureApiHandler for Handler {
 			control.stop();
 			return Err("Captured frame dimensions are invalid");
 		};
-		if width == 0
-			|| height == 0
-			|| width > MAX_FRAME_WIDTH
-			|| height > MAX_FRAME_HEIGHT
-			|| data_len > MAX_RAW_BYTES
-		{
+		if !crate::screen::fits_capture(width, height) || data_len > MAX_RAW_BYTES {
 			self.0.stop.store(true, Ordering::Release);
 			control.stop();
 			return Err("Captured frame exceeds the 4K limit");
@@ -275,8 +270,8 @@ where
 	let Some((width, height)) = item.dimensions() else {
 		return Err("Selected source dimensions are unavailable");
 	};
-	if width == 0 || height == 0 || width > MAX_FRAME_WIDTH || height > MAX_FRAME_HEIGHT {
-		return Err("Selected source exceeds the 4K capture limit");
+	if !crate::screen::fits_capture(width, height) {
+		return Err("Selected source has more pixels than the 4K capture limit");
 	}
 	let flags = Flags {
 		frames,

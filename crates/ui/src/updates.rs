@@ -56,7 +56,7 @@ impl Default for Updates {
 	}
 }
 impl MessagingUi {
-	/// Whether the account card grows an update row, which it does only while Serein's own
+	/// Whether the account card grows an update row, which it does only while Leech's own
 	/// title bar is hidden: the title-bar button is the only other place the prompt appears.
 	pub(super) fn shows_update_banner(&mut self) -> bool {
 		if self.shows_title_bar() {
@@ -266,7 +266,7 @@ impl MessagingUi {
 		};
 
 		format!(
-			"- **Serein Version:** {} ({channel})\n- **Operating System:** {os} ({arch}){session_type}{package_type}{graphics}\n- **Display Scale:** {scale:.2}\n- **Theme:** {theme_mode} ({theme_variant})\n- **Update Channel:** {update_channel}\n- **Auto Update:** {}",
+			"- **Leech Version:** {} ({channel})\n- **Operating System:** {os} ({arch}){session_type}{package_type}{graphics}\n- **Display Scale:** {scale:.2}\n- **Theme:** {theme_mode} ({theme_variant})\n- **Update Channel:** {update_channel}\n- **Auto Update:** {}",
 			self.build.version,
 			if self.updates.auto_update {
 				"Enabled"
@@ -303,7 +303,7 @@ impl MessagingUi {
 					.rect_filled(badge, 12, colors.accent.gamma_multiply(0.16));
 				crate::icons::paint(
 					ui.painter(),
-					crate::icons::Icon::Serein,
+					crate::icons::Icon::Leech,
 					badge.shrink(10.0),
 					colors.accent,
 				);
@@ -364,7 +364,7 @@ impl MessagingUi {
 					ui.vertical(|ui| {
 						ui.spacing_mut().item_spacing.y = 2.0;
 						ui.label(
-							design::semibold(ui, format!("Serein {}", self.build.version), 17.0)
+							design::semibold(ui, format!("Leech {}", self.build.version), 17.0)
 								.color(colors.text_strong),
 						);
 						ui.add(
@@ -423,7 +423,7 @@ impl MessagingUi {
 						"updates-update-settings-published-stable-releases-switching-channels-never-installs-an-older-ver"
 					}),
 					|ui| {
-						egui::ComboBox::from_id_salt("update-release-channel")
+						crate::design::combo("update-release-channel")
 							.selected_text(crate::i18n::translate_if_key(
 								&(if self.updates.nightly {
 									crate::i18n::translate("updates-update-settings-nightly")
@@ -466,7 +466,7 @@ impl MessagingUi {
 								ui,
 								"updates-update-settings-package-manager-updates",
 								Some(
-									"updates-update-settings-serein-was-installed-via-your-distribution-run-this-in-a",
+									"updates-update-settings-leech-was-installed-via-your-distribution-run-this-in-a",
 								),
 								|ui| {
 									if design::button(
@@ -553,7 +553,7 @@ impl MessagingUi {
 				if index > 0 {
 					design::card_divider(ui);
 				}
-				let title = format!("Serein {}", entry.version);
+				let title = format!("Leech {}", entry.version);
 				egui::CollapsingHeader::new(
 					design::semibold(ui, &title, 14.0).color(colors.text_strong),
 				)
@@ -653,7 +653,7 @@ mod tests {
 		let mut view = MessagingUi::default();
 		view.updates.available = true;
 		scan(&ctx, &mut view, &mut state);
-		// With Serein's own title bar the prompt stays up there, not in the sidebar.
+		// With Leech's own title bar the prompt stays up there, not in the sidebar.
 		#[cfg(not(target_os = "linux"))]
 		assert!(banner(&scan(&ctx, &mut view, &mut state).0).is_none());
 		view.hide_title_bar = true;

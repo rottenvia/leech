@@ -159,7 +159,7 @@ impl Navigation {
 		if tab != Tab::Overview {
 			ui.add_space(12.0);
 		}
-		let heading = ui.label(design::eyebrow(ui, tab.label(), design::palette(ui).muted));
+		let heading = ui.label(design::heading(ui, tab.label()));
 		if heading.rect.top() <= ui.clip_rect().top() + 28.0 {
 			self.active = tab;
 		}

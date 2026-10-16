@@ -76,7 +76,7 @@ def build(args):
     with tempfile.TemporaryDirectory(dir=destination.parent) as temporary:
         stage = Path(temporary) / kind
         stage.mkdir()
-        keyfile = stage / "serein.asc"
+        keyfile = stage / "leech.asc"
         keyfile.write_text(run("gpg", "--batch", "--armor", "--export", args.key))
         if not keyfile.stat().st_size:
             raise ValueError("signing public key not found")
@@ -93,14 +93,14 @@ def build(args):
                 metadata = run("bsdtar", "-xOf", str(target), ".PKGINFO")
                 values = dict(line.split(" = ", 1) for line in metadata.splitlines() if " = " in line)
                 identity, arch = values.get("pkgname"), values.get("arch")
-            if identity != "serein" or arch != args.architecture:
+            if identity != "leech" or arch != args.architecture:
                 raise ValueError(f"unexpected package identity/architecture: {package}")
             copied.append(target)
         if args.format == "deb":
             index = run("apt-ftparchive", "packages", ".", cwd=stage).encode()
             (stage / "Packages").write_bytes(index)
             (stage / "Packages.gz").write_bytes(gzip.compress(index, mtime=0))
-            release = run("apt-ftparchive", "-o", "APT::FTPArchive::Release::Origin=Serein",
+            release = run("apt-ftparchive", "-o", "APT::FTPArchive::Release::Origin=Leech",
                           "-o", f"APT::FTPArchive::Release::Architectures={args.architecture}",
                           "-o", f"APT::FTPArchive::Release::Suite={args.channel}", "release", ".", cwd=stage)
             expiry = format_datetime(datetime.now(timezone.utc) + timedelta(days=30), usegmt=True)
@@ -121,10 +121,10 @@ def build(args):
         else:
             for package in copied:
                 sign(package, args.key)
-            run("repo-add", "--sign", "--key", args.key, "serein.db.tar.gz",
+            run("repo-add", "--sign", "--key", args.key, "leech.db.tar.gz",
                 *(p.name for p in copied), cwd=stage)
-            run("gpg", "--batch", "--verify", str(stage / "serein.db.tar.gz.sig"),
-                str(stage / "serein.db.tar.gz"))
+            run("gpg", "--batch", "--verify", str(stage / "leech.db.tar.gz.sig"),
+                str(stage / "leech.db.tar.gz"))
             # Static hosts/artifact uploads often discard symlinks; publish actual aliases.
             for alias in stage.iterdir():
                 if alias.is_symlink():
@@ -134,9 +134,9 @@ def build(args):
         (stage / "key-fingerprint.txt").write_text(args.key.upper() + "\n")
         url = args.base_url.rstrip("/") + "/" + relative.as_posix()
         if args.format == "rpm":
-            (stage / "serein.repo").write_text(
-                f"[serein-{args.channel}]\nname=Serein {args.channel}\nbaseurl={url}\n"
-                f"enabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey={url}/serein.asc\n")
+            (stage / "leech.repo").write_text(
+                f"[leech-{args.channel}]\nname=Leech {args.channel}\nbaseurl={url}\n"
+                f"enabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey={url}/leech.asc\n")
         stage.chmod(0o755)
         for path in stage.rglob("*"):
             path.chmod(0o755 if path.is_dir() else 0o644)
@@ -151,7 +151,7 @@ def generate_index(destination: Path):
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Serein Linux Repositories</title>
+  <title>Leech Linux Repositories</title>
   <meta http-equiv="refresh" content="0; url=https://github.com/ViceVerse-cz/Serein">
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; background: #111214; color: #dbdee1; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
@@ -164,8 +164,8 @@ def generate_index(destination: Path):
 </head>
 <body>
   <div class="card">
-    <h1>Serein Linux Repositories</h1>
-    <p>Signed native packages and Flatpak repository for Serein.</p>
+    <h1>Leech Linux Repositories</h1>
+    <p>Signed native packages and Flatpak repository for Leech.</p>
     <p>Run <code>curl -fsSL https://viceverse-cz.github.io/Serein/setup.sh | sh</code> to install.</p>
     <p><a href="https://github.com/ViceVerse-cz/Serein">View project on GitHub &rarr;</a></p>
   </div>

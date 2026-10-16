@@ -20,8 +20,8 @@ identical in that run, so it is a measurement artifact.
 | Package executable | 87,314,600 B | 87,555,752 B | +241,152 B (+0.28%) |
 | Installed tree (`xtask package --format dir`) | 91,848,634 B | 92,089,786 B | +241,152 B (+0.26%) |
 | Installed tree, `tar` + `zstd -19` | 46,156,864 B | 46,280,238 B | +123,374 B (+0.27%) |
-| `serein --demo` settled / peak RSS | 134 / 149 MiB | 134 / 149 MiB | 0 |
-| `serein --demo` idle CPU (one core) | 0.25% | 0.25% | noise |
+| `leech --demo` settled / peak RSS | 134 / 149 MiB | 134 / 149 MiB | 0 |
+| `leech --demo` idle CPU (one core) | 0.25% | 0.25% | noise |
 | `profile_preview --page=collectibles` settled / peak RSS | 94 / 110 MiB | 95 / 111 MiB | about +1 MiB |
 | `profile_preview --page=collectibles` CPU | 0.25% | 0.25% | noise |
 
@@ -381,7 +381,7 @@ these measurements cover the package directory and ZIP, not an installer binary.
 | Distribution ZIP | 49,970,177 B | 49,970,277 B | +100 B (+0.00020%) |
 
 For native idle samples, each source was also built with
-`cargo build --release --locked -p serein --no-default-features --features demo`
+`cargo build --release --locked -p leech --no-default-features --features demo`
 and run with `--demo`.
 Both runs used the same 1120×760 synthetic fixture, Windows DPI 120 (125% scale),
 the default DX12 renderer and no child processes. After a 15-second warmup,
@@ -476,7 +476,7 @@ packages passed, without demo/developer features:
 
 | Package metric | Baseline | After | Delta | Method |
 | --- | ---: | ---: | ---: | --- |
-| Executable | 85,449,728 B | 85,464,064 B | +14,336 B / +0.017% | serein.exe file length |
+| Executable | 85,449,728 B | 85,464,064 B | +14,336 B / +0.017% | leech.exe file length |
 | Installed files | 89,623,341 B | 89,637,677 B | +14,336 B / +0.016% | Sum of all dist file lengths |
 | ZIP distribution | 49,775,655 B | 49,781,438 B | +5,783 B / +0.012% | Compress-Archive, Optimal; ZIP file length |
 
@@ -502,7 +502,7 @@ with the same `38d919d7` baseline:
 
 | Package metric | Baseline | After review | Delta | Method |
 | --- | ---: | ---: | ---: | --- |
-| Executable | 85,449,728 B | 85,464,576 B | +14,848 B / +0.017% | serein.exe file length |
+| Executable | 85,449,728 B | 85,464,576 B | +14,848 B / +0.017% | leech.exe file length |
 | Installed files | 89,623,341 B | 89,638,189 B | +14,848 B / +0.017% | Sum of all dist file lengths |
 | ZIP distribution | 49,775,655 B | 49,781,661 B | +6,006 B / +0.012% | Compress-Archive, Optimal; ZIP file length |
 
@@ -546,7 +546,7 @@ documentation files), but this is not a fresh simultaneous package baseline.
 
 | Package metric | Historical baseline | Reply fix | Delta | Method |
 | --- | ---: | ---: | ---: | --- |
-| Executable | 85,464,576 B | 85,465,088 B | +512 B / +0.0006% | serein.exe file length |
+| Executable | 85,464,576 B | 85,465,088 B | +512 B / +0.0006% | leech.exe file length |
 | Installed files | 89,638,189 B | 89,638,701 B | +512 B / +0.0006% | Sum of dist file lengths |
 | ZIP distribution | 49,781,661 B | 49,781,875 B | +214 B / +0.0004% | Compress-Archive, Optimal; ZIP file length |
 

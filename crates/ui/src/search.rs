@@ -215,9 +215,9 @@ impl SearchUi {
 			|name| crate::i18n::translate_args("search-header-input-search-in", &[("name", &name)]),
 		);
 		let frame = egui::Frame::new()
-			.fill(colors.base)
-			.corner_radius(6)
-			.stroke(egui::Stroke::new(1.0, colors.border))
+			.fill(crate::design::field_fill(&colors))
+			.corner_radius(crate::icons::PLATE_RADIUS)
+			.stroke(egui::Stroke::new(1.0, colors.accent.gamma_multiply(0.6)))
 			.inner_margin(egui::Margin::symmetric(8, 0))
 			.show(ui, |ui| {
 				ui.set_height(28.0);
@@ -959,7 +959,8 @@ impl SearchUi {
 					let settings_label = crate::i18n::translate("search-pane-settings");
 					let settings = chip(ui, Chip::icon(icons::Icon::Gear, &settings_label));
 					egui::Popup::menu(&settings).show(|ui| {
-						ui.checkbox(
+						crate::design::checkbox(
+							ui,
 							&mut self.hide_highlight,
 							crate::i18n::translate("search-pane-hide-matching-text-highlight"),
 						);

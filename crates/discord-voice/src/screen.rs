@@ -40,6 +40,17 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 pub const MAX_RAW_BYTES: usize = 3840 * 2160 * 4;
+
+/// Whether a captured picture fits the raw-frame budget. The bound is the byte count of one
+/// 3840x2160 frame rather than each axis, so ultrawide (5120x1440) and portrait (2160x3840)
+/// monitors pass with the same memory ceiling.
+pub(crate) fn fits_capture(width: u32, height: u32) -> bool {
+	width != 0
+		&& height != 0
+		&& width <= 7680
+		&& height <= 7680
+		&& u64::from(width) * u64::from(height) * 4 <= MAX_RAW_BYTES as u64
+}
 pub const MAX_ENCODED_BYTES: usize = 2 * 1024 * 1024;
 
 pub struct RawFrame {
@@ -193,10 +204,10 @@ impl Worker {
 				finished_ready.store(false, Ordering::Release);
 				// The desktop only shows the latest status, which a later stop overwrites.
 				// Name the cause once so a share that ends by itself is never a mystery.
-				if std::env::var_os("SEREIN_VOICE_DIAGNOSTICS").is_some_and(|value| value == "1") {
+				if std::env::var_os("LEECH_VOICE_DIAGNOSTICS").is_some_and(|value| value == "1") {
 					match &result {
-						Ok(()) => eprintln!("[Serein voice Screen] capture_stopped=ok"),
-						Err(reason) => eprintln!("[Serein voice Screen] capture_stopped={reason}"),
+						Ok(()) => eprintln!("[Leech voice Screen] capture_stopped=ok"),
+						Err(reason) => eprintln!("[Leech voice Screen] capture_stopped={reason}"),
 					}
 				}
 				let _ = complete.try_send(result);
@@ -680,10 +691,7 @@ fn validate_frame(frame: &RawFrame) -> Result<(usize, usize), &'static str> {
 		.stride
 		.checked_mul(frame.height as usize)
 		.ok_or("Screen capture returned an unsupported frame size")?;
-	if frame.width == 0
-		|| frame.height == 0
-		|| frame.width > 3840
-		|| frame.height > 2160
+	if !fits_capture(frame.width, frame.height)
 		|| frame.data.len() > MAX_RAW_BYTES
 		|| frame.stride < row_bytes
 		|| required > frame.data.len()
@@ -759,6 +767,17 @@ fn fit_frame(frame: RawFrame, width: u32, height: u32) -> Result<Vec<u8>, &'stat
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn capture_limit_is_the_4k_pixel_budget_not_each_axis() {
+		assert!(fits_capture(3840, 2160));
+		assert!(fits_capture(5120, 1440));
+		assert!(fits_capture(2160, 3840));
+		assert!(!fits_capture(3840, 2400));
+		assert!(!fits_capture(5120, 2880));
+		assert!(!fits_capture(0, 1080));
+		assert!(!fits_capture(7681, 1));
+	}
 
 	#[test]
 	fn idle_screen_keyframe_uses_latest_snapshot_only_when_ready() {
