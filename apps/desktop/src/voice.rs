@@ -380,14 +380,11 @@ impl Voice {
 		}
 	}
 
-	/// Join and leave sounds for the wanted call, whichever media runs it.
+	/// Join and leave sounds for the wanted call, whichever media runs it. This device
+	/// leaving is silent by design: a leave cue of our own only doubled the sound the owner
+	/// already hears when they hang up.
 	fn poll_cues(&mut self, state: &State, ui: &mut ui::MessagingUi, ctx: &egui::Context) {
 		let Some(call) = state.voice.active.as_ref() else {
-			if self.cues.joined && ui.notification_options.allows(Sound::UserLeave) {
-				// Leaving a call this account had joined mirrors its local join cue.
-				ui.notification_preview = Some(Sound::UserLeave);
-				ctx.request_repaint();
-			}
 			self.cues = CallCues::default();
 			return;
 		};
@@ -396,6 +393,11 @@ impl Voice {
 				request: Some(call.request),
 				..CallCues::default()
 			};
+			// A soft tick acknowledges the click; the join sound follows once connected.
+			if !call.phase.connected() && ui.notification_options.allows(Sound::Joining) {
+				ui.notification_preview = Some(Sound::Joining);
+				ctx.request_repaint();
+			}
 		}
 		let Some(owner) = state.user.as_ref().map(|user| user.id) else {
 			return;

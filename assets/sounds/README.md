@@ -22,6 +22,9 @@ from the source sample rate; no re-encoding, metadata stripping or trimming is a
 | `user-leave.mp3` | [user_leave](https://discord.com/assets/7b9a183742515fc2.mp3) | `9fd71c2d8112c82a7fb316602bb1645bc65f5edfa260110bbaae80090fbe9df0` |
 
 The twelve files total 595,870 bytes; each distinct cue is bundled independently. No network fetch or user-file access occurs during playback.
+
+The joining tick played when this device starts joining a call is not a file: it is a 90 ms chirp synthesized at playback (`notification_sounds::joining`), original to Leech.
+
 Incoming and outgoing rings repeat every six and three seconds respectively,
 leaving enough time for each complete clip before its next playback.
 

@@ -274,22 +274,22 @@ pub const QUICK_DEFAULTS: [&str; 3] = ["👍", "❤️", "😂"];
 pub fn quick_button(ui: &mut egui::Ui, emoji: &str, reacted: bool) -> egui::Response {
 	let colors = crate::design::palette(ui);
 	let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(28.0), egui::Sense::click());
-	if reacted || response.hovered() || response.has_focus() {
+	let hover = if ui.is_enabled() {
+		crate::design::hover_motion(ui, &response)
+	} else {
+		0.0
+	};
+	if reacted {
+		ui.painter().rect_filled(rect, 6, colors.selected);
+	} else if hover > 0.0 {
 		ui.painter().rect_filled(
 			rect,
 			6,
-			if reacted {
-				colors.selected
-			} else {
-				colors.hover
-			},
+			egui::Color32::TRANSPARENT.lerp_to_gamma(colors.hover, hover),
 		);
 	}
-	let size = if response.hovered() && ui.is_enabled() {
-		20.0
-	} else {
-		18.0
-	};
+	// The emoji grows on hover and dips while pressed.
+	let size = 18.0 + 2.0 * hover - 2.0 * crate::design::press_motion(ui, &response);
 	let target = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(size));
 	let tint = if ui.is_enabled() {
 		egui::Color32::WHITE

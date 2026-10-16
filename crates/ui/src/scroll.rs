@@ -118,7 +118,13 @@ pub struct Session {
 	bound: bool,
 	last_offset: Option<(egui::Id, f32)>,
 	ignore_press: bool,
+	/// Input time of the last wheel or touchpad scroll.
+	wheel_at: Option<f64>,
 }
+
+/// A middle press this soon after wheel scrolling is a slipped wheel click, not a request to
+/// start autoscroll.
+const WHEEL_SLIP: f64 = 0.6;
 
 /// Scroll speed in points per second for a cursor `offset` points from the drive origin.
 /// Signed like `offset`. Dead zone is a gate, not subtracted.
@@ -151,6 +157,12 @@ impl Session {
 			self.frame = Some(frame);
 			self.bound = false;
 			self.ignore_press = self.step(ui);
+			ui.input(|input| {
+				if input.smooth_scroll_delta() != egui::Vec2::ZERO {
+					self.wheel_at = Some(input.time);
+				}
+				self.ignore_press |= self.wheel_at.is_some_and(|at| input.time - at < WHEEL_SLIP);
+			});
 		}
 		if !self.ignore_press {
 			self.try_start(ui, target, area);
