@@ -8,7 +8,7 @@ pub struct Intercepted {
 	pub side: SidePress,
 }
 
-/// The window's pointer, translated for Serein.
+/// The window's pointer, translated for Leech.
 ///
 /// Holds the two facts `RawInput` cannot carry across frames: whether the middle button is
 /// still down after a frame with no events, and the last position the cursor was seen at.
@@ -35,7 +35,7 @@ impl Pointer {
 		let mut middle = Middle::default();
 		let mut side = SidePress::default();
 		raw.events.retain(|event| match event {
-			// Serein uses middle-click for autoscroll, including over text edits.
+			// Leech uses middle-click for autoscroll, including over text edits.
 			Event::MiddleClickPaste { .. } => false,
 			Event::PointerButton {
 				pos,

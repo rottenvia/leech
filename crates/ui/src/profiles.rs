@@ -538,13 +538,15 @@ pub(crate) fn known_username(state: &State, user: Id) -> Option<String> {
 /// Copies the account username, disabled until one is known.
 pub(crate) fn copy_username_button(ui: &mut egui::Ui, state: &State, user: &User) {
 	let username = known_username(state, user.id);
-	if ui
-		.add_enabled(
-			username.is_some(),
-			egui::Button::new(crate::i18n::translate("profiles-copy-username")),
-		)
-		.on_disabled_hover_text(crate::i18n::translate("profiles-username-unavailable"))
-		.clicked()
+	if design::menu_item_if(
+		ui,
+		username.is_some(),
+		Some(crate::icons::Icon::Copy),
+		&crate::i18n::translate("profiles-copy-username"),
+		false,
+	)
+	.on_disabled_hover_text(crate::i18n::translate("profiles-username-unavailable"))
+	.clicked()
 		&& let Some(username) = username
 	{
 		ui.ctx().copy_text(username);
@@ -564,13 +566,15 @@ pub(crate) fn ignore_button(
 	} else {
 		"profiles-ignore"
 	};
-	let clicked = ui
-		.add_enabled(
-			enabled && ignored.is_some() && state.user_blocked(user.id) == Some(false),
-			egui::Button::new(crate::i18n::translate(label)),
-		)
-		.on_hover_text(crate::i18n::translate("profiles-ignore-hint"))
-		.clicked();
+	let clicked = design::menu_item_if(
+		ui,
+		enabled && ignored.is_some() && state.user_blocked(user.id) == Some(false),
+		Some(crate::icons::Icon::EyeSlash),
+		&crate::i18n::translate(label),
+		false,
+	)
+	.on_hover_text(crate::i18n::translate("profiles-ignore-hint"))
+	.clicked();
 	if !clicked {
 		return None;
 	}
@@ -582,14 +586,14 @@ pub(crate) fn ignore_button(
 }
 /// Opens Discord's support form in the browser and copies the user ID it asks for.
 pub(crate) fn report_button(ui: &mut egui::Ui, user: &User) {
-	let colors = design::palette(ui);
-	if ui
-		.button(
-			RichText::new(crate::i18n::translate("profiles-report-user-profile"))
-				.color(colors.danger),
-		)
-		.on_hover_text(crate::i18n::translate("profiles-report-hint"))
-		.clicked()
+	if design::menu_item(
+		ui,
+		Some(crate::icons::Icon::ShieldWarning),
+		&crate::i18n::translate("profiles-report-user-profile"),
+		true,
+	)
+	.on_hover_text(crate::i18n::translate("profiles-report-hint"))
+	.clicked()
 	{
 		ui.ctx().copy_text(user.id.to_string());
 		ui.ctx().open_url(egui::OpenUrl::new_tab(REPORT_URL));
@@ -723,25 +727,36 @@ fn more_menu(
 	dm_channel: Option<Id>,
 	full: &mut bool,
 ) -> Option<Action> {
-	let colors = design::palette(ui);
 	let mut action = None;
 	ui.set_min_width(200.0);
 	ui.spacing_mut().button_padding = vec2(8.0, 6.0);
 	let own_profile = state.user.as_ref().is_some_and(|own| own.id == user.id);
 	// The footer owns message composition, so the menu does not repeat it.
+	use crate::icons::Icon;
+	use design::{menu_item, menu_item_if};
+	let t = crate::i18n::translate;
+	ui.spacing_mut().item_spacing.y = 2.0;
 	if user.webhook
-		&& ui
-			.button(crate::i18n::translate("profiles-more-menu-copy-webhook-id"))
-			.clicked()
+		&& menu_item(
+			ui,
+			Some(Icon::IdCard),
+			&t("profiles-more-menu-copy-webhook-id"),
+			false,
+		)
+		.clicked()
 	{
 		ui.ctx().copy_text(user.id.to_string());
 		ui.close();
 	}
 	if !user.webhook {
 		if !*full
-			&& ui
-				.button(crate::i18n::translate("profiles-view-full-profile"))
-				.clicked()
+			&& menu_item(
+				ui,
+				Some(Icon::IdCard),
+				&t("profiles-view-full-profile"),
+				false,
+			)
+			.clicked()
 		{
 			*full = true;
 			ui.close();
@@ -754,31 +769,33 @@ fn more_menu(
 	let enabled = actions_enabled(state);
 	let friend = state.friends().any(|friend| friend.id == user.id);
 	ui.separator();
-	if ui
-		.add_enabled(
-			enabled,
-			egui::Button::new(crate::i18n::translate("profiles-more-menu-add-note")),
-		)
-		.clicked()
+	if menu_item_if(
+		ui,
+		enabled,
+		Some(Icon::Pencil),
+		&t("profiles-more-menu-add-note"),
+		false,
+	)
+	.clicked()
 	{
 		action = Some(Action::Menu(crate::user_menu::Action::Note(user.clone())));
 		ui.close();
 	}
-	if ui
-		.add_enabled(
-			enabled && friend,
-			egui::Button::new(crate::i18n::translate_if_key(
-				&(if state.friend_nickname(user.id).is_some() {
-					crate::i18n::translate("profiles-more-menu-edit-friend-nickname")
-				} else {
-					crate::i18n::translate("profiles-more-menu-add-friend-nickname")
-				}),
-			)),
-		)
-		.on_disabled_hover_text(crate::i18n::translate(
-			"profiles-more-menu-private-nicknames-are-available-for-confirmed-friends",
-		))
-		.clicked()
+	if menu_item_if(
+		ui,
+		enabled && friend,
+		Some(Icon::IdCard),
+		&(if state.friend_nickname(user.id).is_some() {
+			t("profiles-more-menu-edit-friend-nickname")
+		} else {
+			t("profiles-more-menu-add-friend-nickname")
+		}),
+		false,
+	)
+	.on_disabled_hover_text(crate::i18n::translate(
+		"profiles-more-menu-private-nicknames-are-available-for-confirmed-friends",
+	))
+	.clicked()
 	{
 		action = Some(Action::Menu(crate::user_menu::Action::Nickname(
 			user.clone(),
@@ -788,21 +805,21 @@ fn more_menu(
 	ui.separator();
 	if let Some(channel) = dm_channel {
 		let muted = state.dm_muted(channel) == Some(true);
-		if ui
-			.add_enabled(
-				enabled,
-				egui::Button::new(crate::i18n::translate_if_key(
-					&(if muted {
-						crate::i18n::translate("profiles-more-menu-unmute")
-					} else {
-						crate::i18n::translate("profiles-more-menu-mute")
-					}),
-				)),
-			)
-			.on_hover_text(crate::i18n::translate(
-				"profiles-more-menu-mute-this-direct-message-s-notifications-until-you-unmute-it",
-			))
-			.clicked()
+		if menu_item_if(
+			ui,
+			enabled,
+			Some(if muted { Icon::Bell } else { Icon::BellSlash }),
+			&(if muted {
+				t("profiles-more-menu-unmute")
+			} else {
+				t("profiles-more-menu-mute")
+			}),
+			false,
+		)
+		.on_hover_text(crate::i18n::translate(
+			"profiles-more-menu-mute-this-direct-message-s-notifications-until-you-unmute-it",
+		))
+		.clicked()
 		{
 			action = Some(Action::Menu(crate::user_menu::Action::Mute {
 				channel,
@@ -811,21 +828,26 @@ fn more_menu(
 			ui.close();
 		}
 	} else {
-		ui.add_enabled(
+		menu_item_if(
+			ui,
 			false,
-			egui::Button::new(crate::i18n::translate("profiles-more-menu-mute")),
+			Some(Icon::BellSlash),
+			&t("profiles-more-menu-mute"),
+			false,
 		)
 		.on_disabled_hover_text(crate::i18n::translate(
 			"profiles-more-menu-no-open-direct-message-with-this-user",
 		));
 	}
 	if friend
-		&& ui
-			.add_enabled(
-				enabled,
-				egui::Button::new(crate::i18n::translate("profiles-more-menu-remove-friend")),
-			)
-			.clicked()
+		&& menu_item_if(
+			ui,
+			enabled,
+			Some(Icon::UserMinus),
+			&t("profiles-more-menu-remove-friend"),
+			true,
+		)
+		.clicked()
 	{
 		action = Some(Action::RemoveFriend);
 		ui.close();
@@ -835,21 +857,18 @@ fn more_menu(
 		action = Some(Action::Menu(ignore));
 	}
 	let blocked = state.user_blocked(user.id) == Some(true);
-	if ui
-		.add_enabled(
-			enabled,
-			egui::Button::new(
-				RichText::new(crate::i18n::translate_if_key(
-					&(if blocked {
-						crate::i18n::translate("profiles-more-menu-unblock")
-					} else {
-						crate::i18n::translate("profiles-more-menu-block")
-					}),
-				))
-				.color(colors.danger),
-			),
-		)
-		.clicked()
+	if menu_item_if(
+		ui,
+		enabled,
+		Some(Icon::Prohibit),
+		&(if blocked {
+			t("profiles-more-menu-unblock")
+		} else {
+			t("profiles-more-menu-block")
+		}),
+		true,
+	)
+	.clicked()
 	{
 		action = Some(Action::Menu(crate::user_menu::Action::Block {
 			user: user.id,
@@ -1282,11 +1301,17 @@ fn section(ui: &mut egui::Ui, theme: &Theme, count: &mut usize, text: &str, full
 		);
 		ui.add_space(4.0);
 	} else {
-		ui.label(RichText::new(text).size(12.0).strong().color(theme.muted));
+		// Discord's popout heads its sections in bold sentence case, not capitals.
+		ui.label(
+			RichText::new(sentence(&text))
+				.size(12.0)
+				.strong()
+				.color(theme.text),
+		);
 		ui.add_space(2.0);
 	}
 }
-/// The compact card's all-caps headings read as shouting at full-profile scale.
+/// All-caps translations ("ABOUT ME") as sentence case ("About me").
 fn sentence(text: &str) -> String {
 	let turkish = crate::i18n::current().resolved() == crate::i18n::Language::Turkish;
 	let mut chars = text.chars();
@@ -2222,7 +2247,7 @@ fn full_panel(
 }
 
 pub(crate) fn profile_opener_id() -> egui::Id {
-	egui::Id::unique("serein-profile-opener")
+	egui::Id::unique("leech-profile-opener")
 }
 
 #[derive(Default)]
@@ -3806,7 +3831,7 @@ pub fn synthetic(user: &User, guild: Option<Id>) -> model::UserProfile {
 	let hash = |c: char| c.to_string().repeat(32);
 	model::UserProfile {
         user: user.clone(),
-        username: "serein.preview".into(),
+        username: "leech.preview".into(),
         board: Some(vec![model::ProfileGameWidget {
             kind: model::ProfileGameWidgetKind::Favorite,
             games: vec![model::ProfileGame { id: Id(90001), name: Some("Synthetic favorite game".into()), icon: Some(hash('b')), cover: Some(hash('b')), comment: None, tags: vec![] }],
@@ -4633,7 +4658,7 @@ mod tests {
 		}
 		assert!(
 			painted.contains("Synthetic person")
-				&& painted.contains("ABOUT ME")
+				&& painted.contains("About me")
 				&& painted.contains("they / them")
 				&& painted.contains("SRN")
 		);
@@ -4756,7 +4781,7 @@ mod tests {
 			}
 			output.drop_without_applying_deltas();
 		}
-		assert!(painted.contains("ROLES"), "{painted}");
+		assert!(painted.contains("Roles"), "{painted}");
 		assert!(painted.contains("Maintainer"), "{painted}");
 		assert!(painted.contains("Contributor"), "{painted}");
 		assert!(!painted.contains("Role 999"), "{painted}");

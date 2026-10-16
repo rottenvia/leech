@@ -486,9 +486,9 @@ fn main() -> eframe::Result {
 	let transparency_available =
 		transparency_available || demo && std::env::args().any(|arg| arg == "--demo-transparency");
 	#[cfg(target_os = "windows")]
-	let icon = include_bytes!("../../../packaging/windows/serein.png").as_slice();
+	let icon = include_bytes!("../../../packaging/windows/leech.png").as_slice();
 	#[cfg(target_os = "linux")]
-	let icon = include_bytes!("../../../packaging/linux/hicolor/256x256/apps/serein.png").as_slice();
+	let icon = include_bytes!("../../../packaging/linux/hicolor/256x256/apps/leech.png").as_slice();
 	let options = eframe::NativeOptions {
 		viewport: {
 			let builder = egui::ViewportBuilder::default()
@@ -498,14 +498,14 @@ fn main() -> eframe::Result {
 				}))
 				.with_min_inner_size(app_settings::MIN_WINDOW_SIZE.map(|size| size as f32))
 				.with_active(!start_minimized)
-				.with_app_id("cz.viceverse.serein");
+				.with_app_id("io.github.rottenvia.leech");
 			#[cfg(any(target_os = "windows", target_os = "linux"))]
 			let builder = builder
 				.with_icon(eframe::icon_data::from_png_bytes(icon).expect("bundled app icon"));
 			if cfg!(target_os = "macos") {
 				// Discord-style inline title bar: traffic lights sit over the app's own strip.
 				// eframe swaps in the egui logo when no icon is set; an empty icon keeps the
-				// bundle's Serein.icns in the Dock and app switcher.
+				// bundle's Leech.icns in the Dock and app switcher.
 				builder
 					.with_icon(egui::IconData::default())
 					.with_title_shown(false)
@@ -565,7 +565,7 @@ fn main() -> eframe::Result {
 		..Default::default()
 	};
 	eframe::run_native(
-		"Serein",
+		"Leech",
 		options,
 		Box::new(move |cc| {
 			let mut desktop =
@@ -814,7 +814,7 @@ impl FrameMetrics {
 	fn new(sample: Option<(Duration, Duration)>) -> Self {
 		Self {
 			enabled: sample.is_some()
-				|| std::env::var_os("SEREIN_FRAME_DIAGNOSTICS").is_some_and(|v| v == "1"),
+				|| std::env::var_os("LEECH_FRAME_DIAGNOSTICS").is_some_and(|v| v == "1"),
 			started: None,
 			sample: sample.map(|(warmup, duration)| FrameSample {
 				ready: std::time::Instant::now() + warmup,
@@ -844,7 +844,7 @@ impl FrameMetrics {
 		}
 		let started = *sample.started.get_or_insert_with(|| {
 			Self::sample_record(serde_json::json!({
-				"serein_frame_sample": "start",
+				"leech_frame_sample": "start",
 				"viewport_size": viewport_size,
 				"pixels_per_point": pixels_per_point,
 			}));
@@ -856,7 +856,7 @@ impl FrameMetrics {
 		}
 		sample.complete = true;
 		Self::sample_record(serde_json::json!({
-			"serein_frame_sample": "complete",
+			"leech_frame_sample": "complete",
 			"elapsed_ms": elapsed.as_millis(),
 			"callbacks": self.frames,
 			"without_input": self.inputless,
@@ -917,7 +917,7 @@ impl Drop for FrameMetrics {
 			let _ = writeln!(
 				std::io::stderr(),
 				// Preserve the legacy diagnostic label; elapsed callback time is wall time.
-				"[Serein frames] callbacks={} without_input={} cpu_us_buckets(1000,2000,4000,8000,16000,32000,64000,above)={:?} reflows(total,consecutive)={:?}",
+				"[Leech frames] callbacks={} without_input={} cpu_us_buckets(1000,2000,4000,8000,16000,32000,64000,above)={:?} reflows(total,consecutive)={:?}",
 				self.frames,
 				self.inputless,
 				self.buckets,
@@ -946,6 +946,8 @@ struct Desktop {
 	extensions: extension_bridge::Bridge,
 	extension_close_pending: bool,
 	login: Option<platform::LoginView>,
+	/// Fixture-only: draw the sign-in window's header with no webview behind it.
+	login_preview: bool,
 	captcha: captcha::Captcha,
 	connection: Option<connection::Connection>,
 	state: State,
@@ -1519,6 +1521,17 @@ impl Desktop {
 			let _ = state.select(model::Id(29));
 		}
 		#[cfg(feature = "demo")]
+		if demo && std::env::args().any(|arg| arg == "--demo-loading") {
+			// The selected channel's history and people are still on their way.
+			state.timeline.clear();
+			state.freshness = model::Freshness::Loading;
+			if let Some(list) = state.members.as_mut() {
+				list.slots.clear();
+				list.lazy = false;
+				list.freshness = model::Freshness::Loading;
+			}
+		}
+		#[cfg(feature = "demo")]
 		if demo && std::env::args().any(|arg| arg == "--demo-voice-failed") {
 			let call = state
 				.voice
@@ -1839,7 +1852,7 @@ impl Desktop {
 		messaging.build = ui::design::Build {
 			channel: if cfg!(debug_assertions) {
 				ui::design::Channel::Dev
-			} else if option_env!("SEREIN_CHANNEL") == Some("nightly") {
+			} else if option_env!("LEECH_CHANNEL") == Some("nightly") {
 				ui::design::Channel::Nightly
 			} else {
 				ui::design::Channel::Stable
@@ -2107,6 +2120,8 @@ impl Desktop {
 		#[cfg_attr(not(feature = "demo"), allow(unused_mut))]
 		let mut sign_in_panels = false;
 		#[cfg_attr(not(feature = "demo"), allow(unused_mut))]
+		let mut sign_in_window = false;
+		#[cfg_attr(not(feature = "demo"), allow(unused_mut))]
 		let mut sign_in_forget = None;
 		#[cfg(feature = "demo")]
 		if demo && std::env::args().any(|arg| arg == "--demo-join-server") {
@@ -2140,6 +2155,8 @@ impl Desktop {
 			state.user = None;
 			state.status = "Disconnected";
 			sign_in_panels = rest == "panels";
+			// `=window` shows the temporary sign-in window's header; no page is loaded.
+			sign_in_window = rest == "window";
 			if rest == "forget" {
 				sign_in_forget = messaging.accounts.get(1).map(|account| account.id);
 			}
@@ -2224,6 +2241,7 @@ impl Desktop {
 			extensions: extension_bridge::Bridge::default(),
 			extension_close_pending: false,
 			login: None,
+			login_preview: sign_in_window,
 			captcha: captcha::Captcha::default(),
 			connection: None,
 			state,
@@ -2933,14 +2951,12 @@ impl Desktop {
 					None
 				}
 				Command::Website => {
-					ctx.open_url(egui::OpenUrl::new_tab(
-						"https://github.com/ViceVerse-cz/Serein",
-					));
+					ctx.open_url(egui::OpenUrl::new_tab("https://github.com/rottenvia/leech"));
 					None
 				}
 				Command::ReportIssue => {
 					ctx.open_url(egui::OpenUrl::new_tab(
-						"https://github.com/ViceVerse-cz/Serein/issues/new/choose",
+						"https://github.com/rottenvia/leech/issues/new",
 					));
 					None
 				}
@@ -2950,7 +2966,7 @@ impl Desktop {
 			}
 		}
 	}
-	/// Whether closing may keep Serein running without a window. macOS apps stay in the Dock
+	/// Whether closing may keep Leech running without a window. macOS apps stay in the Dock
 	/// until quit, and the Dock icon reopens the window.
 	fn background_available(&self) -> bool {
 		cfg!(target_os = "macos") || self.tray_available()
@@ -4236,6 +4252,10 @@ impl Desktop {
 					let Some(channel) = channel else {
 						return;
 					};
+					// `--demo-loading` keeps the people list waiting for its first page.
+					if std::env::args().any(|arg| arg == "--demo-loading") {
+						return;
+					}
 					Event::Members(demo_members(&self.state, guild, channel, request))
 				}
 				Command::ForumPosts { .. } | Command::ForumSummaries { .. } => return,
@@ -4459,7 +4479,7 @@ impl Desktop {
 							ui.label(
 								ui::design::semibold(
 									ui,
-									ui::i18n::translate("main-restoring-screen-serein"),
+									ui::i18n::translate("main-restoring-screen-leech"),
 									16.0,
 								)
 								.color(p.muted),
@@ -4491,7 +4511,7 @@ impl Desktop {
 					ui.painter().rect_filled(mark, 14, p.accent);
 					ui::icons::paint(
 						ui.painter(),
-						ui::icons::Icon::Serein,
+						ui::icons::Icon::Leech,
 						mark.shrink(13.0),
 						p.accent_text,
 					);
@@ -4586,7 +4606,7 @@ impl Desktop {
 							ui.painter().rect_filled(mark, 6, p.accent);
 							ui::icons::paint(
 								ui.painter(),
-								ui::icons::Icon::Serein,
+								ui::icons::Icon::Leech,
 								mark.shrink(5.0),
 								p.accent_text,
 							);
@@ -4594,7 +4614,7 @@ impl Desktop {
 							ui.label(
 								ui::design::semibold(
 									ui,
-									ui::i18n::translate("main-sign-in-screen-serein"),
+									ui::i18n::translate("main-sign-in-screen-leech"),
 									16.0,
 								)
 								.color(p.text_strong),
@@ -4759,7 +4779,7 @@ impl Desktop {
 						if returning {
 							ui::design::secondary_icon_button(ui, ui::icons::Icon::Plus, label)
 						} else {
-							ui::design::primary_icon_button(ui, ui::icons::Icon::Serein, label)
+							ui::design::primary_icon_button(ui, ui::icons::Icon::Leech, label)
 						}
 					})
 					.inner;
@@ -4806,7 +4826,7 @@ impl Desktop {
 			ui.painter().rect_filled(mark, 13, p.accent);
 			ui::icons::paint(
 				ui.painter(),
-				ui::icons::Icon::Serein,
+				ui::icons::Icon::Leech,
 				mark.shrink(11.0),
 				p.accent_text,
 			);
@@ -4817,7 +4837,7 @@ impl Desktop {
 					ui::i18n::translate_if_key(if returning {
 						"main-sign-in-header-welcome-back"
 					} else {
-						"main-sign-in-header-welcome-to-serein"
+						"main-sign-in-header-welcome-to-leech"
 					}),
 					22.0,
 				)
@@ -4936,7 +4956,8 @@ impl Desktop {
 			.inner_margin(egui::Margin::symmetric(12, 9))
 			.show(ui, |ui| {
 				ui.set_width(ui.available_width());
-				ui.checkbox(
+				ui::design::checkbox(
+					ui,
 					&mut self.authorized,
 					ui::design::medium(
 						ui,
@@ -5158,7 +5179,7 @@ impl Desktop {
 		let p = ui::design::palette(ui);
 		if ui::design::disclosure(
 			ui,
-			&ui::i18n::translate("main-sign-in-disclosures-about-serein"),
+			&ui::i18n::translate("main-sign-in-disclosures-about-leech"),
 			self.about_open,
 		)
 		.clicked()
@@ -5403,14 +5424,14 @@ impl Desktop {
 						if self.messaging.custom_font.busy && self.font_picker.is_none() {
 							self.messaging.custom_font.busy = false;
 							self.messaging.custom_font.status =
-								"Local storage worker stopped. Restart Serein to save fonts.";
+								"Local storage worker stopped. Restart Leech to save fonts.";
 						}
 						if self.messaging.channel_preferences_reload
 							|| self.messaging.channel_preferences_load_pending
 						{
 							self.messaging.channel_preferences_reload = false;
 							self.messaging.channel_preferences_load_pending = false;
-							self.messaging.channel_preferences_status = "Local storage worker stopped; restart Serein to restore channel preferences.";
+							self.messaging.channel_preferences_status = "Local storage worker stopped; restart Leech to restore channel preferences.";
 						}
 						presence_cache_stopped = self.presence_load_pending;
 						break;
@@ -5724,7 +5745,7 @@ impl Desktop {
 						// Nothing could have been saved without a credential store.
 						Err(platform::CredentialError::NoStore) => "",
 						Err(_) => {
-							"Could not remove the Serein saved login in your OS credential manager"
+							"Could not remove the Leech saved login in your OS credential manager"
 						}
 					};
 				}
@@ -6013,15 +6034,15 @@ impl Desktop {
 		}
 		if let Some(failure) = terminal {
 			for (setting, scope) in [
-				("SEREIN_MEMBER_DIAGNOSTICS", "members"),
-				("SEREIN_GATEWAY_DIAGNOSTICS", "gateway"),
+				("LEECH_MEMBER_DIAGNOSTICS", "members"),
+				("LEECH_GATEWAY_DIAGNOSTICS", "gateway"),
 			] {
 				if std::env::var_os(setting).as_deref() == Some(std::ffi::OsStr::new("1")) {
 					use std::io::Write;
 					// One extra fixed-label terminal line per enabled scope; closed stderr is OK.
 					let _ = writeln!(
 						std::io::stderr(),
-						"[Serein {scope}] Session stopped: {}",
+						"[Leech {scope}] Session stopped: {}",
 						failure.label()
 					);
 				}
@@ -6469,7 +6490,7 @@ impl eframe::App for Desktop {
 	}
 	fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
 		let ctx = ui.ctx().clone();
-		let title_bar_height = if self.login.is_some() {
+		let title_bar_height = if self.login.is_some() || self.login_preview {
 			platform::LOGIN_HEADER_HEIGHT
 		} else if self.state.user.is_some() {
 			ui::design::TITLE_BAR_HEIGHT
@@ -6745,69 +6766,89 @@ impl eframe::App for Desktop {
 			ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
 			self.confirming_close = true;
 		}
-		if self.login.is_some() {
+		if self.login.is_some() || self.login_preview {
 			let p = ui::design::palette(ui);
-			egui::Panel::top("login-header")
+			// The caption buttons reach the window corner, so only the left edge is padded.
+			let header = egui::Panel::top("login-header")
 				.exact_size(platform::LOGIN_HEADER_HEIGHT)
 				.show_separator_line(false)
 				.frame(
 					egui::Frame::NONE
 						.fill(ui::design::window_palette(ui).surface)
-						.stroke(egui::Stroke::new(1.0, p.border))
-						.inner_margin(egui::Margin::symmetric(16, 0)),
+						.inner_margin(egui::Margin {
+							left: 16,
+							right: if self.messaging.hide_title_bar { 16 } else { 0 },
+							top: 0,
+							bottom: 0,
+						}),
 				)
 				.show(ui, |ui| {
 					ui::design::window_drag(ui, ui.max_rect());
 					ui.horizontal_centered(|ui| {
+						ui.spacing_mut().item_spacing.x = 12.0;
 						ui.add_space(self.traffic_light_inset());
 						let (rect, _) =
 							ui.allocate_exact_size(egui::vec2(32.0, 32.0), egui::Sense::hover());
-						ui.painter().rect_filled(rect, 8, p.accent);
+						ui.painter()
+							.rect_filled(rect, ui::icons::PLATE_RADIUS, p.accent);
 						ui::icons::paint(
 							ui.painter(),
-							ui::icons::Icon::Serein,
+							ui::icons::Icon::Leech,
 							rect.shrink(7.0),
 							p.accent_text,
 						);
-						ui.add_space(4.0);
-						ui.vertical(|ui| {
-							ui.spacing_mut().item_spacing.y = 1.0;
-							ui.label(
-								ui::design::semibold(
-									ui,
-									ui::i18n::translate("main-ui-sign-in-to-discord"),
-									15.0,
-								)
-								.color(p.text_strong),
-							);
-							ui.label(
-								egui::RichText::new(ui::i18n::translate(
-									"main-ui-discord-com-temporary-login-window-passwords-and-2fa-never-leave",
-								))
-								.size(12.0)
-								.color(p.muted),
-							);
+						// Both lines are measured and placed as one block, so they centre on
+						// the mark; a plain column would hang from the top of the header.
+						let heading = ui::i18n::translate("main-ui-sign-in-to-discord");
+						let note = ui::i18n::translate(
+							"main-ui-discord-com-temporary-login-window-passwords-and-2fa-never-leave",
+						);
+						let room = (ui.available_width() - 260.0).max(120.0);
+						let title = egui::WidgetText::from(
+							ui::design::semibold(ui, heading.as_str(), 15.0).color(p.text_strong),
+						)
+						.into_galley(
+							ui,
+							Some(egui::TextWrapMode::Truncate),
+							room,
+							egui::TextStyle::Body,
+						);
+						let detail = egui::WidgetText::from(
+							egui::RichText::new(note.as_str()).size(12.0).color(p.muted),
+						)
+						.into_galley(
+							ui,
+							Some(egui::TextWrapMode::Truncate),
+							room,
+							egui::TextStyle::Body,
+						);
+						let (block, text) = ui.allocate_exact_size(
+							egui::vec2(
+								title.size().x.max(detail.size().x),
+								title.size().y + 2.0 + detail.size().y,
+							),
+							egui::Sense::hover(),
+						);
+						text.widget_info(|| {
+							egui::WidgetInfo::labeled(
+								egui::Role::Label,
+								true,
+								format!("{heading}. {note}"),
+							)
 						});
+						let below = block.min + egui::vec2(0.0, title.size().y + 2.0);
+						ui.painter().galley(block.min, title, p.text_strong);
+						ui.painter().galley(below, detail, p.muted);
 						ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
 							if !self.messaging.hide_title_bar {
 								ui::design::window_controls(ui);
 							}
-							if ui
-								.add(
-									egui::Button::new(
-										ui::design::medium(
-											ui,
-											ui::i18n::translate("main-ui-cancel"),
-											13.0,
-										)
-										.color(p.text_strong),
-									)
-									.fill(p.raised)
-									.stroke(egui::Stroke::new(1.0, p.border))
-									.corner_radius(6)
-									.min_size(egui::vec2(0.0, 32.0)),
-								)
-								.clicked()
+							if ui::design::button(
+								ui,
+								"main-ui-cancel",
+								ui::design::ButtonKind::Outline,
+							)
+							.clicked()
 							{
 								self.login = None;
 								self.state.auth = AuthState::Unauthenticated;
@@ -6815,6 +6856,12 @@ impl eframe::App for Desktop {
 						});
 					});
 				});
+			let edge = header.response.rect;
+			ui.painter().hline(
+				edge.x_range(),
+				edge.bottom() - 0.5,
+				ui::design::hairline(ui),
+			);
 			egui::CentralPanel::default()
 				.frame(egui::Frame::NONE.fill(p.canvas))
 				.show(ui, |ui| {

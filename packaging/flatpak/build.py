@@ -19,9 +19,9 @@ def output(*args, cwd=ROOT):
 
 def generate_flatpakref(repo_url=DEFAULT_REPO_URL):
     return f"""[Flatpak Ref]
-Name=cz.viceverse.serein
+Name=io.github.rottenvia.leech
 Branch=master
-Title=Serein
+Title=Leech
 Comment=Fast, secure and lightweight native Discord client
 Icon=https://viceverse-cz.github.io/Serein/icons/serein.png
 Url={repo_url}
@@ -36,7 +36,7 @@ def prepare(destination):
     pin = tomllib.loads((ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
     sysroot = Path(output("rustup", "run", pin, "rustc", "--print", "sysroot"))
     version = output(str(sysroot / "bin/rustc"), "--version").split()[1]
-    manifest = json.loads((ROOT / "packaging/flatpak/cz.viceverse.serein.json").read_text())
+    manifest = json.loads((ROOT / "packaging/flatpak/io.github.rottenvia.leech.json").read_text())
     if version != pin or f"= {pin}" not in manifest["modules"][0]["build-commands"][0]:
         raise ValueError("Flatpak manifest and installed Rust must match rust-toolchain.toml")
     destination.mkdir(parents=True, exist_ok=False)
@@ -61,7 +61,7 @@ def prepare(destination):
     config = output("rustup", "run", pin, "cargo", "vendor", "--locked", "cargo-vendor", cwd=source)
     with (source / ".cargo/config.toml").open("a") as stream:
         stream.write("\n" + config + "\n")
-    (destination / "cz.viceverse.serein.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    (destination / "io.github.rottenvia.leech.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
 def main():
@@ -75,12 +75,12 @@ def main():
     prepare(destination)
     if not args.prepare_only:
         subprocess.run(["flatpak-builder", "--user", "--repo=repo", "build",
-                        "cz.viceverse.serein.json"], cwd=destination, check=True)
+                        "io.github.rottenvia.leech.json"], cwd=destination, check=True)
         subprocess.run(["flatpak", "build-update-repo", "--generate-static-deltas", "repo"],
                        cwd=destination, check=True)
         subprocess.run(["flatpak", "build-bundle", "--runtime-repo=https://flathub.org/repo/flathub.flatpakrepo",
-                        "repo", "Serein-linux.flatpak", "cz.viceverse.serein"], cwd=destination, check=True)
-        (destination / "serein.flatpakref").write_text(generate_flatpakref(args.repo_url))
+                        "repo", "Leech-linux.flatpak", "io.github.rottenvia.leech"], cwd=destination, check=True)
+        (destination / "leech.flatpakref").write_text(generate_flatpakref(args.repo_url))
 
 
 if __name__ == "__main__":

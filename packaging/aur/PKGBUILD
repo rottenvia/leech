@@ -1,13 +1,13 @@
 # Binary recipe for the existing voice-enabled Arch release. No Rust build required.
-pkgname=serein-bin
+pkgname=leech-bin
 pkgver=1.0.0pre.nightly.20261001.53
 pkgrel=1
 pkgdesc='Unofficial native Discord client (prebuilt nightly)'
 arch=('x86_64')
 url='https://github.com/ViceVerse-cz/Serein'
 license=('MIT' 'Apache-2.0')
-provides=("serein=$pkgver")
-conflicts=('serein' 'serein-git')
+provides=("leech=$pkgver")
+conflicts=('leech' 'leech-git')
 options=('!strip' '!debug' '!lto')
 # Preserve the native release's ABI floors, including dynamically loaded media plugins.
 depends=(
@@ -155,9 +155,9 @@ sha256sums_x86_64=('5efa3f71216cced0da707753b96007add5efc9bad256c390ecc020c5a238
 
 package() {
   install -d "$pkgdir/usr/bin" "$pkgdir/usr/share/licenses/$pkgname"
-  install -m755 "$srcdir/usr/bin/serein" "$pkgdir/usr/bin/serein"
+  install -m755 "$srcdir/usr/bin/leech" "$pkgdir/usr/bin/leech"
   install -d "$pkgdir/usr/share"
   cp -a "$srcdir/usr/share/." "$pkgdir/usr/share/"
-  install -m644 "$srcdir/usr/share/doc/serein/LICENSE-MIT" "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
-  install -m644 "$srcdir/usr/share/doc/serein/LICENSE-APACHE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+  install -m644 "$srcdir/usr/share/doc/leech/LICENSE-MIT" "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+  install -m644 "$srcdir/usr/share/doc/leech/LICENSE-APACHE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
 }

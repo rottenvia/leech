@@ -1,4 +1,4 @@
-//! Offline debug check: cargo run --locked -p serein --features demo --example double_click_settings
+//! Offline debug check: cargo run --locked -p leech --features demo --example double_click_settings
 fn main() {
 	local_store::LocalStore::debug_double_click_reaction_check();
 	ui::MessagingUi::debug_double_click_reaction_check(

@@ -24,7 +24,7 @@ pub(super) fn name(
 		ui.painter().layout_no_wrap(
 			crate::i18n::translate_if_key(key),
 			egui::FontId::proportional(10.0),
-			colors.accent_text,
+			colors.mention_text,
 		)
 	});
 	let reserve = badge.as_ref().map_or(0.0, |text| {
@@ -56,7 +56,14 @@ pub(super) fn name(
 			vec2(text.size().x + 8.0 + verified_width, 16.0),
 			Sense::hover(),
 		);
-		ui.painter().rect_filled(rect, 3, colors.accent);
+		// A tinted chip, not a solid block: the label stays quiet beside the name.
+		ui.painter().rect(
+			rect,
+			5,
+			colors.accent.gamma_multiply(0.2),
+			egui::Stroke::new(1.0, colors.accent.gamma_multiply(0.4)),
+			egui::StrokeKind::Inside,
+		);
 		if verified {
 			icons::paint(
 				ui.painter(),
@@ -65,7 +72,7 @@ pub(super) fn name(
 					egui::pos2(rect.left() + 8.5, rect.center().y),
 					vec2(9.0, 9.0),
 				),
-				colors.accent_text,
+				colors.mention_text,
 			);
 		}
 		ui.painter().galley(
@@ -74,7 +81,7 @@ pub(super) fn name(
 				rect.center().y - text.size().y * 0.5,
 			),
 			text,
-			colors.accent_text,
+			colors.mention_text,
 		);
 		let description_key = match (account_label, verified) {
 			(_, true) => "account-badge-verified-bot-description",

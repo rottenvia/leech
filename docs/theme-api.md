@@ -54,8 +54,8 @@ font sizes are whole logical pixels, before the user's display scale.
 | `item_spacing` | [8, 8] | Each axis 0–24 |
 | `button_padding` | [12, 6] | Each axis 0–24 |
 | `control_height` | 32 | 24–56 |
-| `widget_radius` | 8 | 0–24 |
-| `window_radius` | 12 | 0–24 |
+| `widget_radius` | 10 | 0–24 |
+| `window_radius` | 14 | 0–24 |
 | `menu_radius` | 12 | 0–24 |
 
 For example, this `theme` value provides a flatter, roomier appearance:
@@ -82,7 +82,7 @@ emergency reset shortcut. Reset keeps installed themes available for re-selectio
 Disable removes the selected package and its local data.
 
 The Appearance **Transparency & blur** switch is the device-wide opt-in and requires
-restarting Serein after enabling or disabling it. Disabled launches use an opaque
+restarting Leech after enabling or disabling it. Disabled launches use an opaque
 native window and GPU surface, with no blur or transparency compositor requests.
 Themes cannot enable window effects while this switch is off. Once enabled, the
 optional theme `transparency_blur` value can disable effects for that theme;
@@ -99,7 +99,7 @@ Setting transparency to zero disables blur and restores the native opaque-window
 hint where supported; only restarting with the Appearance switch off releases the
 alpha-capable GPU surface. X11 cannot change its native hint after window creation.
 The synthetic native preview can opt in without saved settings using
-`cargo run --locked -p serein --features demo -- --demo --demo-transparency`.
+`cargo run --locked -p leech --features demo -- --demo --demo-transparency`.
 
 These metrics affect controls that inherit the shared native style. Custom
 painted elements, explicit text sizes, fixed-height rows and per-widget padding

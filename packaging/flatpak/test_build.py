@@ -18,7 +18,7 @@ def clean_git_environment():
 class PreparationTest(unittest.TestCase):
     def test_generate_flatpakref(self):
         ref = build.generate_flatpakref("https://example.com/flatpak/repo")
-        self.assertIn("Name=cz.viceverse.serein", ref)
+        self.assertIn("Name=io.github.rottenvia.leech", ref)
         self.assertIn("Url=https://example.com/flatpak/repo", ref)
         self.assertIn("RuntimeRepo=https://flathub.org/repo/flathub.flatpakrepo", ref)
 
@@ -46,13 +46,13 @@ class PreparationTest(unittest.TestCase):
                 "GIT_CONFIG_COUNT": "1",
                 "GIT_CONFIG_KEY_0": "core.worktree",
                 "GIT_CONFIG_VALUE_0": str(parent),
-                "SEREIN_FIXTURE_ENV": "retained",
+                "LEECH_FIXTURE_ENV": "retained",
             }
             original_output = subprocess.check_output
 
             def checked_output(*args, **kwargs):
                 self.assertFalse(any(key.startswith("GIT_") for key in os.environ))
-                self.assertEqual(os.environ["SEREIN_FIXTURE_ENV"], "retained")
+                self.assertEqual(os.environ["LEECH_FIXTURE_ENV"], "retained")
                 return original_output(*args, **kwargs)
 
             before_environment = dict(os.environ)
@@ -80,11 +80,11 @@ class PreparationTest(unittest.TestCase):
             (root / "private-untracked").write_text("must not copy")
             packaging = root / "packaging/flatpak"
             packaging.mkdir(parents=True)
-            manifest = json.loads((build.ROOT / "packaging/flatpak/cz.viceverse.serein.json").read_text())
-            (packaging / "cz.viceverse.serein.json").write_text(json.dumps(manifest))
+            manifest = json.loads((build.ROOT / "packaging/flatpak/io.github.rottenvia.leech.json").read_text())
+            (packaging / "io.github.rottenvia.leech.json").write_text(json.dumps(manifest))
             subprocess.run(["git", "init", "--quiet", str(root)], check=True)
             subprocess.run(["git", "add", ".cargo/config.toml", "Cargo.lock", "rust-toolchain.toml",
-                            "packaging/flatpak/cz.viceverse.serein.json"], cwd=root, check=True)
+                            "packaging/flatpak/io.github.rottenvia.leech.json"], cwd=root, check=True)
             (packaging / "private-untracked").write_text("must not copy packaging secrets")
             initialized = root / "initialized-submodule"
             initialized.mkdir()
@@ -130,10 +130,10 @@ class PreparationTest(unittest.TestCase):
             self.assertFalse((source / "packaging/flatpak/private-untracked").exists())
             for name in ["initialized-submodule", "uninitialized-submodule", "missing-submodule"]:
                 self.assertFalse((source / name).exists())
-            self.assertEqual(json.loads((source / "packaging/flatpak/cz.viceverse.serein.json").read_text()), manifest)
+            self.assertEqual(json.loads((source / "packaging/flatpak/io.github.rottenvia.leech.json").read_text()), manifest)
             self.assertEqual((source / "Cargo.lock").read_text(), "locked fixture")
             self.assertTrue((source / "flatpak-rust/bin/rustc").is_file())
             config = (source / ".cargo/config.toml").read_text()
             self.assertIn('[alias]', config)
             self.assertIn('directory = "cargo-vendor"', config)
-            self.assertEqual(json.loads((destination / "cz.viceverse.serein.json").read_text()), manifest)
+            self.assertEqual(json.loads((destination / "io.github.rottenvia.leech.json").read_text()), manifest)

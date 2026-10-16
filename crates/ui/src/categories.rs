@@ -384,7 +384,7 @@ fn category_header(
 		color,
 	);
 	let mut job = egui::text::LayoutJob::simple_singleline(
-		name.to_uppercase(),
+		name.to_owned(),
 		egui::FontId::new(12.0, crate::design::semibold_family(ui.ctx())),
 		color,
 	);
@@ -438,7 +438,12 @@ fn eyebrow_row(ui: &mut egui::Ui, label: &str, row_height: f32) -> egui::Rect {
 		egui::Layout::left_to_right(egui::Align::Center),
 		|ui| {
 			ui.add_space(8.0);
-			ui.add(egui::Label::new(design::eyebrow(ui, label, colors.muted)).selectable(false));
+			// The app's own list headings read in sentence case, like Discord's; server
+			// categories keep their capitals.
+			ui.add(
+				egui::Label::new(design::semibold(ui, label, 12.0).color(colors.muted))
+					.selectable(false),
+			);
 		},
 	)
 	.response
@@ -671,7 +676,9 @@ impl MessagingUi {
 						CachedRow::Participant(entry) => {
 							let entry = &state.voice.roster[entry];
 							let response = ui.horizontal(|ui| {
-								ui.add_space(28.0);
+								// Avatars stand in the channel-icon column; the row is inset
+								// just enough to read as a child of the channel above.
+								ui.add_space(4.0);
 								self.voice_participant(ui, state, entry);
 							});
 							paint_shelf_rule(
@@ -687,10 +694,11 @@ impl MessagingUi {
 								&& state.can_manage_channel(category.id);
 							let collapsed =
 								self.channel_preferences.category_collapsed(category.id);
+							// Server categories keep Discord's capitals.
 							let response = category_header(
 								ui,
 								category.id,
-								&category.name,
+								&category.name.to_uppercase(),
 								count,
 								collapsed,
 								row_height,
@@ -826,7 +834,7 @@ impl MessagingUi {
 								state.unread_count(channel.id)
 							};
 							let enabled = visible && (channel.supports_text() || forum);
-							// Kinds Serein cannot render keep Discord's own destination.
+							// Kinds Leech cannot render keep Discord's own destination.
 							let external = (!channel.supports_text() && !forum)
 								.then(|| crate::markdown::discord_url(channel, None))
 								.flatten()
@@ -1689,8 +1697,10 @@ mod tests {
 				.find(|(s, _)| s == "Find conversation")
 				.unwrap()
 				.1;
-			// Friends is the icon-only button pinned to the right of the search row.
-			let friends = egui::pos2(width - 8.0 - 15.0, find.center().y);
+			// Friends is Discord's row under the search in the header strip.
+			let friends_row = before.iter().find(|(s, _)| s == "Friends").unwrap().1;
+			assert!(friends_row.top() > find.bottom());
+			let friends = friends_row.center();
 			for pressed in [true, false] {
 				render(
 					&mut view,
@@ -1731,6 +1741,10 @@ mod tests {
 					.unwrap()
 					.1,
 				find
+			);
+			assert_eq!(
+				after.iter().find(|(s, _)| s == "Friends").unwrap().1,
+				friends_row
 			);
 			assert!(!after.iter().any(|(s, _)| s == "DIRECT MESSAGES"));
 			let visible_dms = after

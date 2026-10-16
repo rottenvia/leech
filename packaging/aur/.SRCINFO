@@ -1,4 +1,4 @@
-pkgbase = serein-bin
+pkgbase = leech-bin
 	pkgdesc = Unofficial native Discord client (prebuilt nightly)
 	pkgver = 1.0.0pre.nightly.20261001.53
 	pkgrel = 1
@@ -142,13 +142,13 @@ pkgbase = serein-bin
 	optdepends = gnome-keyring: Secret Service credential provider
 	optdepends = gst-plugins-bad: hardware screen encoding
 	optdepends = gst-libav: inline video
-	provides = serein=1.0.0pre.nightly.20261001.53
-	conflicts = serein
-	conflicts = serein-git
+	provides = leech=1.0.0pre.nightly.20261001.53
+	conflicts = leech
+	conflicts = leech-git
 	options = !strip
 	options = !debug
 	options = !lto
 	source_x86_64 = https://github.com/ViceVerse-cz/Serein/releases/download/v1.0.0-nightly.20261001.53/serein-v1.0.0-nightly.20261001.53-Linux-arch-serein-1.0.0pre.nightly.20261001.53-1-x86_64.pkg.tar.zst
 	sha256sums_x86_64 = 5efa3f71216cced0da707753b96007add5efc9bad256c390ecc020c5a238dfc5
 
-pkgname = serein-bin
+pkgname = leech-bin

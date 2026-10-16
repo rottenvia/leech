@@ -134,7 +134,7 @@ impl Field {
 	}
 }
 impl Verification {
-	/// A form Serein cannot answer completely (an unknown required question).
+	/// A form Leech cannot answer completely (an unknown required question).
 	pub fn supported(&self) -> bool {
 		self.fields
 			.iter()

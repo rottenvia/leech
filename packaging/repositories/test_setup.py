@@ -98,15 +98,15 @@ class SetupTest(unittest.TestCase):
                 self.assertNotIn(r"\033[", output)
                 if expected_status == 0 and distro == "ubuntu":
                     deb_arch = "amd64" if architecture == "x86_64" else "arm64"
-                    self.assertIn(f"/ubuntu-26.04/{deb_arch}/apt/serein.asc", output)
+                    self.assertIn(f"/ubuntu-26.04/{deb_arch}/apt/leech.asc", output)
                     source = (root / "source-list").read_text()
                     self.assertIn(f"arch={deb_arch} ", source)
                     self.assertIn(f"/ubuntu-26.04/{deb_arch}/apt ./", source)
                 elif expected_status == 0:
                     path = (
-                        "/arch/x86_64/arch/serein.asc"
+                        "/arch/x86_64/arch/leech.asc"
                         if id_like == "arch"
-                        else f"/fedora-{version}/x86_64/rpm/serein.repo"
+                        else f"/fedora-{version}/x86_64/rpm/leech.repo"
                     )
                     self.assertIn(path, output)
                 else:

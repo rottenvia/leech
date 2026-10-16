@@ -3,7 +3,7 @@
 language-system = System
 language-group = Sprache
 language-label = Anzeigesprache
-language-description = Wählen Sie Sereins Sprache. Discord-Inhalte werden niemals übersetzt.
+language-description = Wählen Sie Leechs Sprache. Discord-Inhalte werden niemals übersetzt.
 section-user = Benutzereinstellungen
 section-app = App-Einstellungen
 section-customization = Anpassung
@@ -28,11 +28,11 @@ description-appearance = Thema, Farben, Fenstereffekte und Layout.
 description-chat = Wie sich Nachrichten, Medien, Links und Scrollen verhalten.
 description-messaging-permissions = Steuern Sie, wer Sie kontaktieren kann und wie Nachrichten gefiltert werden.
 description-notifications = Wählen Sie aus, welche Benachrichtigungen Sie erhalten und wie diese angezeigt werden.
-description-registered-games = Teile, was du spielst, und korrigiere oder ergänze die Spiele, die Serein erkennt.
+description-registered-games = Teile, was du spielst, und korrigiere oder ergänze die Spiele, die Leech erkennt.
 description-voice = Mikrofon, Lautsprecher, Kamera und Sprachverarbeitung.
-description-keybinds = Tastaturkürzel für Serein.
-description-storage = Was Serein auf diesem Gerät speichert.
-description-updates = Halten Sie Serein auf diesem Gerät auf dem neuesten Stand.
+description-keybinds = Tastaturkürzel für Leech.
+description-storage = Was Leech auf diesem Gerät speichert.
+description-updates = Halten Sie Leech auf diesem Gerät auf dem neuesten Stand.
 description-extensions = Community-Plugins verwalten.
 description-themes = Wählen Sie ein Community-Thema.
 theme-maker = Theme-Ersteller
@@ -45,30 +45,30 @@ log-out = Abmelden
 unofficial = Inoffiziell · nicht von Discord unterstützt
 offline-preview = Offline-Vorschau · Änderungen bleiben in dieser Sitzung und werden nie gesendet.
 general-startup = Start-up
-general-open-at-startup = Öffnen Sie Serein, wenn Ihr Computer startet
-general-open-at-startup-description = Serein meldet sich an und verbindet sich im Hintergrund.
+general-open-at-startup = Öffnen Sie Leech, wenn Ihr Computer startet
+general-open-at-startup-description = Leech meldet sich an und verbindet sich im Hintergrund.
 general-start-minimized = Minimiert starten
 general-start-minimized-description = Beginnen Sie im Hintergrund, aus dem Weg.
 general-startup-unavailable = Der automatische Start ist unter Windows und macOS verfügbar.
 general-window = Fenster
 general-hide-decorations = Fensterdekorationen verstecken
-general-hide-decorations-description = Entfernen Sie die Titelleiste und die Ränder des Systems. Verwenden Sie Ihren Fenstermanager, um Serein zu verschieben, in der Größe zu ändern oder zu schließen.
-general-hide-title-bar = Serein-Titelleiste ausblenden
+general-hide-decorations-description = Entfernen Sie die Titelleiste und die Ränder des Systems. Verwenden Sie Ihren Fenstermanager, um Leech zu verschieben, in der Größe zu ändern oder zu schließen.
+general-hide-title-bar = Leech-Titelleiste ausblenden
 general-hide-title-bar-description = Verwenden Sie stattdessen die Systemtitelleiste und die Fensterschaltflächen.
-general-keep-menu-bar = Behalten Sie Serein in der Menüleiste
-general-keep-system-tray = Bewahren Sie Serein in der Taskleiste auf
-general-menu-bar-description = Durch das Schließen des Fensters verbleibt Serein in der Menüleiste. Verlassen Sie das Menü, um es zu verlassen.
-general-linux-tray-description = Das Schließen hält Serein am Laufen. Verwenden Sie die Taskleiste zum Anzeigen, Minimieren oder Beenden.
-general-windows-tray-description = Durch das Schließen des Fensters bleibt Serein im Benachrichtigungsbereich. Verlassen Sie das Menü, um es zu verlassen.
+general-keep-menu-bar = Behalten Sie Leech in der Menüleiste
+general-keep-system-tray = Bewahren Sie Leech in der Taskleiste auf
+general-menu-bar-description = Durch das Schließen des Fensters verbleibt Leech in der Menüleiste. Verlassen Sie das Menü, um es zu verlassen.
+general-linux-tray-description = Das Schließen hält Leech am Laufen. Verwenden Sie die Taskleiste zum Anzeigen, Minimieren oder Beenden.
+general-windows-tray-description = Durch das Schließen des Fensters bleibt Leech im Benachrichtigungsbereich. Verlassen Sie das Menü, um es zu verlassen.
 general-tray-unavailable = Das Fach ist auf dieser Plattform nicht verfügbar.
 general-graphics = Grafik
 general-render-with = Rendern mit
-general-gpu-restart = Wird beim nächsten Start von Serein wirksam.
+general-gpu-restart = Wird beim nächsten Start von Leech wirksam.
 general-gpu-current-prefix = Zeichne derzeit mit
 gpu-automatic = Automatisch
 gpu-high-performance = Hohe Leistung
 gpu-power-saving = Energiesparend
-gpu-automatic-description = Lassen Sie Serein die GPU auswählen, die dieses Fenster zeichnen kann.
+gpu-automatic-description = Lassen Sie Leech die GPU auswählen, die dieses Fenster zeichnen kann.
 gpu-high-performance-description = Verwenden Sie die separate Grafikkarte, sofern verfügbar.
 gpu-power-saving-description = Verwenden Sie integrierte Grafiken, um Batterie zu sparen.
 direct-messages = Direktnachrichten
@@ -212,7 +212,7 @@ account-menu-custom-status-editor-clear-after = Danach klar
 # Context: custom_status_editor
 account-menu-custom-status-editor-no-custom-status = Kein benutzerdefinierter Status
 # Context: custom_status_editor
-account-menu-custom-status-editor-serein-clears-it = Serein klärt es
+account-menu-custom-status-editor-leech-clears-it = Leech klärt es
 # Context: custom_status_editor
 account-menu-custom-status-editor-status-text = Statustext
 # Context: custom_status_editor
@@ -244,7 +244,6 @@ archives-active-threads = AKTIVE Threads
 # Context: show
 archives-show-active-threads-come-from-the-session-older-threads-load-25 = Aktive Threads stammen aus der Sitzung. Ältere Threads laden jeweils 25. Beim Öffnen werden Nachrichten geladen, ohne beizutreten.
 # Context: show
-archives-show-archives-active-threads = Archiviert aktive Threads
 # Context: show
 archives-show-archives-are-unavailable-while-disconnected-or-without-channel-access = Bei getrennter Verbindung oder ohne Kanalzugriff sind Archive nicht verfügbar.
 # Context: show
@@ -1542,7 +1541,7 @@ keybinds-show-voice-enable-global-keybinds = Aktivieren Sie globale Tastenkombin
 # Context: show_voice
 keybinds-show-voice-global-availability = Globale Verfügbarkeit
 # Context: show_voice
-keybinds-show-voice-use-voice-shortcuts-while-another-app-is-focused-when-off = Verwenden Sie Sprachverknüpfungen, während eine andere App fokussiert ist. Wenn diese Option deaktiviert ist, funktionieren Verknüpfungen nur, während Serein fokussiert ist.
+keybinds-show-voice-use-voice-shortcuts-while-another-app-is-focused-when-off = Verwenden Sie Sprachverknüpfungen, während eine andere App fokussiert ist. Wenn diese Option deaktiviert ist, funktionieren Verknüpfungen nur, während Leech fokussiert ist.
 
 ## crates/ui/src/lib.rs
 # Context: account_card
@@ -1620,7 +1619,7 @@ main-restoring-checking-your-saved-login = Überprüfen Sie Ihr gespeichertes Lo
 # Context: restoring
 main-restoring-connecting-to-discord = Verbindung zu Discord herstellen
 # Context: restoring_screen
-main-restoring-screen-serein = Serein
+main-restoring-screen-leech = Leech
 # Context: restoring_screen
 main-restoring-screen-use-a-different-account = Verwenden Sie ein anderes Konto
 # Context: restoring_screen
@@ -1632,11 +1631,11 @@ main-sign-in-consent-i-own-this-account-and-authorize-this-session = Ich besitze
 # Context: sign_in_consent
 main-sign-in-consent-passwords-and-2fa-stay-on-discord-s-own-login-page = Passwörter und 2FA bleiben auf Discords eigener Anmeldeseite; Nur das Sitzungstoken wird in Ihrem Betriebssystem-Anmeldeinformationsspeicher aufbewahrt.
 # Context: sign_in_disclosures
-main-sign-in-disclosures-about-serein = Über Serein
+main-sign-in-disclosures-about-leech = Über Leech
 # Context: sign_in_disclosures
 main-sign-in-disclosures-connect-with-this-token = Verbinden Sie sich mit diesem Token
 # Context: sign_in_disclosures
-main-sign-in-disclosures-for-owners-who-already-hold-a-valid-discord-session-token = Für Besitzer, die bereits über ein gültiges Discord-Sitzungstoken verfügen, beispielsweise von einer anderen angemeldeten Serein-Installation. Passwörter und 2FA werden hier nie verwendet; Dadurch wird die von Discord gehostete Anmeldeseite vollständig umgangen.
+main-sign-in-disclosures-for-owners-who-already-hold-a-valid-discord-session-token = Für Besitzer, die bereits über ein gültiges Discord-Sitzungstoken verfügen, beispielsweise von einer anderen angemeldeten Leech-Installation. Passwörter und 2FA werden hier nie verwendet; Dadurch wird die von Discord gehostete Anmeldeseite vollständig umgangen.
 # Context: sign_in_disclosures
 main-sign-in-disclosures-forget-saved-login = Gespeichertes Login vergessen
 # Context: sign_in_disclosures
@@ -1650,7 +1649,7 @@ main-sign-in-header-sign-in-with-your-discord-account-to-get-started = Melden Si
 # Context: sign_in_header
 main-sign-in-header-welcome-back = Willkommen zurück
 # Context: sign_in_header
-main-sign-in-header-welcome-to-serein = Willkommen bei Serein
+main-sign-in-header-welcome-to-leech = Willkommen bei Leech
 # Context: sign_in_preview
 main-sign-in-status-copy-failure-details = Fehlerdetails kopieren
 main-sign-in-preview-explore-the-offline-preview = Entdecken Sie die Offline-Vorschau
@@ -1659,7 +1658,7 @@ main-sign-in-preview-sample-conversations-no-discord-connection = Beispielgespr�
 # Context: sign_in_screen
 main-sign-in-screen-independent-and-open-source-not-affiliated-with-discord = Unabhängig und Open Source. Nicht mit Discord verbunden.
 # Context: sign_in_screen
-main-sign-in-screen-serein = Serein
+main-sign-in-screen-leech = Leech
 # Context: ui
 main-ui-cancel = Stornieren
 # Context: ui
@@ -2246,9 +2245,9 @@ screen-body-refresh = Aktualisieren
 # Context: body
 screen-body-screen-or-window = Bildschirm oder Fenster
 # Context: body
-screen-body-send-what-your-mac-plays-along-with-the-screen-serein = Senden Sie zusammen mit dem Bildschirm, was Ihr Mac abspielt. Sereins eigener Anrufton wird weggelassen.
+screen-body-send-what-your-mac-plays-along-with-the-screen-leech = Senden Sie zusammen mit dem Bildschirm, was Ihr Mac abspielt. Leechs eigener Anrufton wird weggelassen.
 # Context: body
-screen-body-share-sound-from-other-apps-even-when-sharing-one-window = Teilen Sie Sound von anderen Apps, auch wenn Sie ein Fenster teilen. Sereins eigener Ton wird weggelassen.
+screen-body-share-sound-from-other-apps-even-when-sharing-one-window = Teilen Sie Sound von anderen Apps, auch wenn Sie ein Fenster teilen. Leechs eigener Ton wird weggelassen.
 # Context: body
 screen-body-share-system-audio = Teilen Sie Systemaudio
 # Context: body
@@ -3407,7 +3406,7 @@ settings-activity-added-games = Hinzugefügte Spiele
 # Context: activity_settings
 settings-activity-no-games-added = Keine Spiele hinzugefügt
 # Context: activity_settings
-settings-activity-hidden = Ausgeblendet. Serein erkennt dieses Spiel nicht mehr.
+settings-activity-hidden = Ausgeblendet. Leech erkennt dieses Spiel nicht mehr.
 # Context: activity_settings
 settings-activity-detected = Automatisch erkannt
 # Context: activity_settings
@@ -3429,7 +3428,7 @@ settings-activity-click-to-rename = Zum Umbenennen klicken
 # Context: activity_settings
 settings-activity-add-a-game = Spiel hinzufügen
 # Context: activity_settings
-settings-activity-choose-program = Wähle ein laufendes Programm. Serein zeigt es als dein Spiel an, sobald es läuft.
+settings-activity-choose-program = Wähle ein laufendes Programm. Leech zeigt es als dein Spiel an, sobald es läuft.
 # Context: activity_settings
 settings-activity-search-programs = Laufende Programme durchsuchen
 # Context: activity_settings
@@ -3457,7 +3456,7 @@ settings-appearance-settings-primary-color = Grundfarbe
 # Context: appearance_settings
 settings-appearance-settings-reset = Zurücksetzen
 # Context: appearance_settings
-settings-appearance-settings-restart-serein-after-changing-this-themes-can-customize-effects-while = Starten Sie Serein neu, nachdem Sie dies geändert haben. Themes können ihre Effekte anpassen, solange sie aktiviert sind.
+settings-appearance-settings-restart-leech-after-changing-this-themes-can-customize-effects-while = Starten Sie Leech neu, nachdem Sie dies geändert haben. Themes können ihre Effekte anpassen, solange sie aktiviert sind.
 # Context: appearance_settings
 settings-appearance-settings-the-active-theme-brings-its-own-accent-it-takes-over = Das aktive Thema bringt seinen eigenen Akzent; Es übernimmt, während das Thema verwendet wird.
 # Context: appearance_settings
@@ -3494,11 +3493,11 @@ settings-storage-page-clear-cache = Cache leeren
 # Context: storage_page
 settings-storage-page-local-storage = Lokaler Speicher
 # Context: storage_page
-settings-storage-page-messages-and-drafts-are-cached-on-this-device-inside-bounded = Nachrichten und Entwürfe werden auf diesem Gerät in begrenzten, kontoisolierten Dateien zwischengespeichert. Cache-Daten werden von Serein nicht verschlüsselt; Gespeicherte Anmeldetokens verwenden den Anmeldeinformationsspeicher des Betriebssystems.
+settings-storage-page-messages-and-drafts-are-cached-on-this-device-inside-bounded = Nachrichten und Entwürfe werden auf diesem Gerät in begrenzten, kontoisolierten Dateien zwischengespeichert. Cache-Daten werden von Leech nicht verschlüsselt; Gespeicherte Anmeldetokens verwenden den Anmeldeinformationsspeicher des Betriebssystems.
 # Context: storage_page
 settings-storage-page-removes-cached-messages-and-media-drafts-and-your-login-stay = Entfernt zwischengespeicherte Nachrichten und Medien. Entwürfe und Ihr Login bleiben bestehen.
 # Context: storage_page
-settings-storage-page-serein-does-not-collect-telemetry-or-upload-diagnostics-discord-retains = Serein erfasst keine Telemetriedaten und lädt keine Diagnosedaten hoch. Discord speichert dienstseitige Daten gemäß seinen eigenen Richtlinien.
+settings-storage-page-leech-does-not-collect-telemetry-or-upload-diagnostics-discord-retains = Leech erfasst keine Telemetriedaten und lädt keine Diagnosedaten hoch. Discord speichert dienstseitige Daten gemäß seinen eigenen Richtlinien.
 # Context: storage_page
 settings-storage-page-your-privacy = Ihre Privatsphäre
 # Context: cosmetic_settings
@@ -3947,7 +3946,7 @@ updates-update-settings-could-not-load-or-save-update-preferences-changes-may-no
 # Context: update_settings
 updates-update-settings-download-update = Update herunterladen
 # Context: update_settings
-updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Laden Sie Updates im Hintergrund herunter. Starten Sie neu, wenn Sie bereit sind. Serein prüft weiterhin beim Start und in regelmäßigen Abständen, wenn die Funktion deaktiviert ist.
+updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Laden Sie Updates im Hintergrund herunter. Starten Sie neu, wenn Sie bereit sind. Leech prüft weiterhin beim Start und in regelmäßigen Abständen, wenn die Funktion deaktiviert ist.
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = Frühe Builds mit den neuesten Änderungen. Nächtliche Veröffentlichungen können weniger zuverlässig sein.
 # Context: update_settings
@@ -3973,7 +3972,7 @@ updates-update-settings-release-channel = Release-Kanal
 # Context: update_settings
 updates-update-settings-restart-to-update = Zum Aktualisieren neu starten
 # Context: update_settings
-updates-update-settings-serein-was-installed-via-your-distribution-run-this-in-a = Serein wurde über Ihre Distribution installiert. Führen Sie dies in einem Terminal aus, um es zu aktualisieren.
+updates-update-settings-leech-was-installed-via-your-distribution-run-this-in-a = Leech wurde über Ihre Distribution installiert. Führen Sie dies in einem Terminal aus, um es zu aktualisieren.
 # Context: update_settings
 updates-update-settings-support-diagnostics = Support & Diagnose
 # Context: update_log
@@ -4065,13 +4064,9 @@ video-show-player-video-volume = Videolautstärke
 
 ## crates/ui/src/voice.rs
 # Context: call_bar
-voice-call-bar-call-in-progress = Anruf läuft
-# Context: call_bar
 voice-call-bar-incoming-call = Eingehender Anruf…
 # Context: call_bar
 voice-call-bar-join-call = Nehmen Sie am Anruf teil
-# Context: call_bar
-voice-call-bar-reconnect-to-refresh-call = Stellen Sie die Verbindung wieder her, um den Anruf zu aktualisieren
 # Context: call_controls
 voice-call-controls-disconnect = Trennen
 # Context: call_controls
@@ -4430,7 +4425,7 @@ onboarding-rules-heading = Serverregeln
 # Context: rules
 onboarding-rules-review = Ein Moderator prüft diese Antworten, bevor du schreiben kannst.
 # Context: field
-onboarding-field-unsupported = Dieser Server stellt eine Frage, die Serein noch nicht anzeigen kann. Schließe den Beitritt in der Discord-App ab.
+onboarding-field-unsupported = Dieser Server stellt eine Frage, die Leech noch nicht anzeigen kann. Schließe den Beitritt in der Discord-App ab.
 # Context: field
 onboarding-field-agree = Ich habe die Regeln gelesen und stimme ihnen zu
 
@@ -4558,7 +4553,7 @@ reading-double-click-reaction = Double-click reaction
 
 ## crates/platform/src/app_menu.rs
 # Context: macos_menu_bar
-app-menu-about = Über Serein
+app-menu-about = Über Leech
 # Context: macos_menu_bar
 app-menu-updates = Nach Updates suchen …
 # Context: macos_menu_bar
@@ -4566,13 +4561,13 @@ app-menu-settings = Einstellungen …
 # Context: macos_menu_bar
 app-menu-services = Dienste
 # Context: macos_menu_bar
-app-menu-hide = Serein ausblenden
+app-menu-hide = Leech ausblenden
 # Context: macos_menu_bar
 app-menu-hide-others = Andere ausblenden
 # Context: macos_menu_bar
 app-menu-show-all = Alle einblenden
 # Context: macos_menu_bar
-app-menu-quit = Serein beenden
+app-menu-quit = Leech beenden
 # Context: macos_menu_bar
 app-menu-file = Ablage
 # Context: macos_menu_bar
@@ -4614,7 +4609,7 @@ app-menu-bring-all-to-front = Alle nach vorne bringen
 # Context: macos_menu_bar
 app-menu-help = Hilfe
 # Context: macos_menu_bar
-app-menu-github = Serein auf GitHub
+app-menu-github = Leech auf GitHub
 # Context: macos_menu_bar
 app-menu-report-issue = Problem melden …
 

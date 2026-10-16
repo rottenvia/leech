@@ -11,12 +11,12 @@ use std::sync::{
 	any(target_os = "windows", target_os = "linux"),
 	not(feature = "development-data")
 ))]
-const NAME: &str = "cz.viceverse.serein";
+const NAME: &str = "io.github.rottenvia.leech";
 #[cfg(all(
 	any(target_os = "windows", target_os = "linux"),
 	feature = "development-data"
 ))]
-const NAME: &str = "cz.viceverse.serein.development";
+const NAME: &str = "io.github.rottenvia.leech.development";
 
 pub enum Launch {
 	Primary(Instance),
@@ -155,7 +155,7 @@ mod win {
 		}
 		pub fn listen(self, request: impl Fn() + Send + 'static) {
 			let _ = std::thread::Builder::new()
-				.name("serein-instance".into())
+				.name("leech-instance".into())
 				.spawn(move || {
 					while self.wait() {
 						request();
@@ -202,7 +202,7 @@ mod linux {
 
 	pub fn listen(listener: UnixListener, request: impl Fn() + Send + 'static) {
 		let _ = std::thread::Builder::new()
-			.name("serein-instance".into())
+			.name("leech-instance".into())
 			.spawn(move || {
 				// Connections carry no data; accepting one is the request.
 				for stream in listener.incoming() {
@@ -237,7 +237,7 @@ mod macos {
 		// SAFETY: NSObject has no subclassing requirements. The handler stays on the main
 		// thread and is retained until it is unregistered on drop.
 		#[unsafe(super = NSObject)]
-		#[name = "SereinReopenHandler"]
+		#[name = "LeechReopenHandler"]
 		#[thread_kind = MainThreadOnly]
 		#[ivars = State]
 		struct Handler;

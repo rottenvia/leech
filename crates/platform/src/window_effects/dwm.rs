@@ -17,7 +17,7 @@ use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
 
 // A nonzero scalar, not a pointer: WS_SYSMENU plus a presence bit, even in fullscreen.
-const REQUESTED_MENU: PCWSTR = w!("Serein.CustomCaption.RequestedMenu");
+const REQUESTED_MENU: PCWSTR = w!("Leech.CustomCaption.RequestedMenu");
 
 // winit retains WS_SYSMENU even for undecorated windows and restores it on style changes.
 // With a full-client DWM frame this paints native buttons underneath our custom buttons.

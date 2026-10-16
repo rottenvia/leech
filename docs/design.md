@@ -1,8 +1,8 @@
-# Serein interface direction
+# Leech interface direction
 
-Serein follows the familiar three-column messaging layout and density of a modern desktop chat
-client, but it is not a visual clone: it uses its own cool blue-grey neutrals, the Serein azure
-accent, softer corner radii and its own server-rail selection language. The palette, typography
+Leech follows the familiar three-column messaging layout and density of a modern desktop chat
+client, but it is not a visual clone: it uses its own plum-cast neutrals, a rose accent,
+hairline edges, softer corner radii and its own server-rail selection language. The palette, typography
 and spacing live in `crates/ui/src/design.rs`; every view resolves colours through
 `design::palette(ui)`.
 
@@ -10,8 +10,8 @@ and spacing live in `crates/ui/src/design.rs`; every view resolves colours throu
 
 The `Palette` carries surface roles: `base` (title strip and server rail), `sidebar`
 (channel and member lists), `chat`, `raised` (composer, cards, search field, popovers), `hover`,
-`selected`, `border`, `text_strong`/`text`/`muted`, `link`, `accent` (Serein azure `#1a72e8`),
-presence
+`selected`, `border`, `text_strong`/`text`/`muted`, `link`, `accent` (rose: pastel `#f0719b`
+under dark text on dark appearances, `#d6336c` under white text on light ones), presence
 colours, mention colours and an optional two-stop `backdrop` gradient. `canvas` and `surface`
 remain as aliases of `chat` and `sidebar` for older call sites.
 
@@ -19,7 +19,7 @@ A process-wide `Variant` recolours the whole application on top of egui's light/
 
 | Preset | Surfaces |
 |---|---|
-| Serein | House neutral greys: dark (`#0e0e10` / `#141416` / `#18181b` / `#202023`) or light (`#e4e4e7` / `#f2f2f4` / white), following System/Light/Dark |
+| Leech | House plum-cast neutrals: dark (`#0f090c` / `#150d11` / `#191015` / `#22161c`) or light (`#ece4e8` / `#f6f1f3` / white), following System/Light/Dark |
 | Eclipse | Deep black surfaces for OLED displays |
 | Slate | Lighter blue-grey surfaces (`#1b1f2a` / `#262b38` / `#2c3140`) |
 | Nightfall, Ember, Verdant, Afterglow | Gradient backdrop painted under translucent dark surfaces |
@@ -27,7 +27,7 @@ A process-wide `Variant` recolours the whole application on top of egui's light/
 Gradient presets paint a full-window mesh in the background layer each frame and use
 translucent panel fills; they always use dark text. Presets are chosen from the account card's
 settings menu (swatch row) and persist in the application-wide SQLite `theme_variant` row next
-to the light/dark appearance; unknown keys fall back to Serein. The keys written by earlier
+to the light/dark appearance; unknown keys fall back to Leech. The keys written by earlier
 builds (`onyx`, `ash`, `midnight-blurple`, `crimson-moon`, `forest`, `sunset`) still resolve to
 their renamed presets, so a stored preference survives the rename. `--demo --demo-theme=<key>` and
 `--demo-light` open fixtures in a preset for screenshots.
@@ -39,23 +39,62 @@ palette surfaces in both message and forum composers, independently of chat tran
 
 ## Brand mark and server rail
 
-The application mark is the Serein chat-wave (`assets/brand/`), not a third-party logo. Its
-silhouette is rasterized into the shared icon atlas as `serein-mark` and painted wherever the
+The application mark is a leech bent into a lowercase L (`assets/brand/`), not a third-party logo. Its
+silhouette is rasterized into the shared icon atlas as `leech-mark` and painted wherever the
 client identifies itself: the loading screen, the sign-in card and its button, the login header
 and the Direct Messages tile at the top of the server rail.
 
 Server tiles keep one constant rounded-square silhouette instead of morphing between a circle and
 a squircle. Selection and unread state are shown by `notifications::rail_indicator`: a 3px accent
 underline below the tile (wide when selected, narrower on hover), a short neutral tick for unread,
-and a 2px accent ring around the selected tile. Controls use an 8px widget radius and 12px
-window/menu radius, softer than the 4px/8px pair the layout started from.
+and a 2px accent ring around the selected tile. Controls use a 10px widget radius, 12px menus and
+cards and 14px windows.
+
+## Buttons and edges
+
+Controls are filled, not outlined. Buttons (`design::button`) are 36px tall with an 8px
+radius: Primary is the accent, Danger is red, Outline is a neutral veil of the text colour,
+and Neutral is bare until hovered. Text fields, drop-downs and other inset controls share
+`design::field_fill`, a step darker than the panels, with a faint edge and an accent ring while
+focused. Every drop-down comes from `design::combo`, whose chevron turns over while the list is
+open. Check boxes (`design::checkbox`) are rounded 20px boxes filled with the accent and a
+white check when on; a chosen radio is a filled accent disc. Switch tracks are filled without
+an outline.
+
+Settings groups (`design::group`) are a sentence-case 16px heading over a borderless tile
+(`design::card`, a veil of the text colour), with faint rules between rows. Form labels are
+sentence case too; uppercase eyebrows are kept for list sections such as server categories and
+member groups. A settings row measures its control and stacks the control under the text when
+both do not fit, so a wide control never draws over its description.
+
+Every menu row is `design::menu_item`: an 18px glyph, the label, a quiet hover plate and red
+for an action that destroys something; submenu rows take a matching `design::menu_glyph`. The
+message menu follows Discord's grouping: respond (reply, forward, thread, edit), copy and keep
+(copy, pin, reactions, unread, link), delete on its own, the ID last.
+
+Icon buttons come from `crates/ui/src/icons.rs`: bare (plate on hover) and accent (filled
+while enabled, the composer's send). Their
+hover and pressed plates are veils of the text colour with an 8px radius. Toggles keep a faint
+plate while on. A toggle whose state must read at a glance (noise suppression in the voice
+panel) shows its state in the glyph: a plain glyph while on, the same glyph slashed while off. It opens a popover with the switch, the filter (RNNoise or WebRTC and its strength), the
+live microphone level and a link into the voice settings; disconnect beside it is quiet at
+rest and turns red under the pointer. Account labels (APP, BOT) are tinted accent chips, not solid blocks. The title
+bar's status chips (OFFLINE PREVIEW, the DEV and NIGHTLY build chips) share that treatment at
+one 20px height: a faint fill of their tint inside a hairline of it, with no gradient or glow.
+Row actions in lists (friends, roles) are the same rounded squares as every other button, not
+circles. A disabled filled button keeps a dimmed fill and takes the strong text colour, so its
+label stays legible.
+
+Scroll bars stay out of the picture: nothing at rest, a faint 3px thread while the pointer is
+over the area, a soft handle only when the bar itself is pointed at. Dialog sheets and the
+share-source list hide the bar altogether; a cut-off last row says the sheet scrolls.
 
 ## Typography
 
 Inter (Regular, Medium, SemiBold; SIL OFL 1.1) leads proportional text; egui's default faces and
 the bundled Noto CJK/Arabic fallbacks follow in every family. egui has no synthetic bold, so
 `design::semibold`/`design::medium` select the heavier families for author names, headings,
-channel names and uppercase 12px eyebrows. Body is 15px, small 12px. Until `fonts::install`
+channel names and the uppercase 12px eyebrows of list sections. Body is 15px, small 12px. Until `fonts::install`
 marks a context, the weight families resolve to the default face so headless tests never
 reference an unknown family.
 
@@ -84,22 +123,42 @@ The bundled faces remain upstream's hinted TrueType builds. See `assets/README.m
   immediately for tiling window managers; the device preference also applies at startup.
 - 72px server rail (`base`): 48px home button and server icons (circle, rounded square when
   hovered/selected), white edge pill (8px unread, 20px hover, 40px selected), red mention badges.
-- The lists and conversation share one rounded surface beside the rail. Channel sidebar
+- The shell is three floating panels on the `base` backdrop: the lists, the conversation and
+  the member pane are rounded cards (12px radius, one-pixel hairline) with an 8px gap between
+  them and to the window edge; the account card under the lists shares their right edge. An
+  open search pane lives inside the conversation card behind a divider. Content is painted
+  square and `design::finish_panel` rounds each card afterwards, so headers, the call stage and
+  media need no corner handling. Window images and see-through chrome keep flat columns, since
+  a corner cannot be cut out of a picture with a flat colour. Channel sidebar
   (240px default, resizable): 48px header with the server name, category eyebrows with chevrons,
   32px rows with `#`/speaker/forum/thread glyphs, `selected`/`hover` fills, unread edge pill,
   mention badge; DM rows are 44px with 32px avatars. Forum rows open their post archive.
+  As in Discord, the DM column puts "Find conversation" in its header strip and a Friends row
+  above the conversations.
   Account card at the bottom (`raised`, avatar with presence dot, name, status, settings gear).
 - Conversation header (48px): channel glyph or DM avatar, semibold name, then icon buttons
-  (reload, threads/archive, pins, member list toggle), a 144px search field and DM call/voice
-  controls. A thin notice strip appears only for loading/stale/archive/history states.
-- Timeline: 16px gutters, 40px avatars, content at 72px, medium-weight author names, 12px muted
-  timestamps, `hover` row highlight, date dividers with a centred label, red "New messages"
-  divider, floating hover toolbar (react, reply, edit, more) overlapping the row above.
-- Composer: rounded `raised` bar with attach (+), placeholder `Message #channel`, emoji picker
-  and send icons; a character counter appears within 200 characters of the limit.
+  (threads/archive, pins, member list toggle), a 144px search field and, in a DM outside its
+  call, Discord's voice and video call buttons. Reload appears only when history failed or went
+  stale or the connection is lost. A one-to-one DM has no member list, as in Discord. A thin
+  notice strip appears only for loading/stale/archive/history states.
+- Timeline: 16px gutters, 40px avatars, content at 72px, medium-weight author names followed
+  by the author's server tag, 12px muted timestamps, `hover` row highlight, date dividers with a
+  centred label, red "New messages" divider, floating hover toolbar (react, reply, edit, more)
+  overlapping the row above. System rows (calls, joins, pins) are one line each and stack one
+  line apart. GIFs wear a GIF badge; their favourite star shows under the pointer.
+- Composer: rounded `raised` bar with a bare attach (+), placeholder `Message #channel`, then
+  GIF, sticker and emoji pickers and send; a character counter appears within 200 characters
+  of the limit.
 - Member list (240px): ONLINE/OFFLINE eyebrows with counts; group DMs show a localized
   Members — N heading including the current account, updated with participant changes. 42px rows with
   presence dots, custom status and hover fill; opens a Members window on narrow layouts.
+- Settings (a modal like Discord's): the sidebar opens with your avatar, name and an "Edit
+  profile" link, then a search field and the pages with their icons under sentence-case
+  section titles; the sections of an open page hang off a guide line. The page title and a
+  plain close button sit in a slim bar above a centred column.
+- Loading: the timeline fills upwards from the composer with placeholder message groups of
+  varied length (an occasional attachment), and the member list shows a heading and avatar
+  rows in the real rows' geometry. Both breathe slowly and repaint only while shown.
 
 Confirmed empty guild text, announcement and thread histories show a welcome above the
 composer: a circular channel-kind icon, a wrapped semibold channel heading and a short
@@ -122,26 +181,43 @@ navigation; the timeline centers and briefly highlights the exact target.
 `--features demo -- --demo --demo-message-links` exercises these states with an offline
 fixture; `--demo-light` selects the light appearance.
 
-Icons are [Phosphor Icons](https://phosphoricons.com) 2.1.1 (MIT) in the fill/bold weights,
-rasterized once into `assets/icons/atlas.png` (37 white glyphs in 64px cells) and tinted at
-draw time by `crates/ui/src/icons.rs`; there is no icon font. Provenance and the regeneration
+Icons are [Phosphor Icons](https://phosphoricons.com) 2.1.1 (MIT): interface glyphs in the bold
+weight, brand logos, badges and file types in the fill weight, plus a few glyphs drawn in this
+repository. They are rasterized once into `assets/icons/atlas.png` (white glyphs in 64px
+cells) and tinted at draw time by `crates/ui/src/icons.rs`; there is no icon font. Provenance and the regeneration
 command are in `assets/icons/README.md`. The profile popout keeps its 300px Discord-style card.
 
 Shortcut capture also accepts egui's browser, media and system keys, including Caps Lock,
 Pause and the macOS Fn key, when the OS delivers them to the focused window. These bindings
 persist through the existing device settings. Global availability remains limited by the
-native shortcut adapter; unsupported global bindings continue to work while Serein is focused.
+native shortcut adapter; unsupported global bindings continue to work while Leech is focused.
 
-Voice follows Discord's call screens: a black stage with 80px participant avatars (DM calls,
-above the conversation) or 16:9 tiles with name badges (guild channels), a bottom control bar
-of dark pills (mute with settings chevron, camera, screen share, activities, soundboard, more)
-and a red hang-up button, a green "In a call" badge in the header, mute/deafen toggles in the
-account card, and a "Voice Connected" panel above it while connected. Camera, screen share,
-activities and soundboard are shown disabled: Serein has no such features.
+Voice follows Discord's call screens: a stage that stays dark in every appearance, in the house
+plum cast rather than black and neutral grey, with 80px participant avatars (DM calls, above
+the conversation; everyone else first and you last, names on hover, a red badge for a mute; a
+voice-only DM call opens only as tall as its avatars and the bar) or hairlined 16:9 tiles with
+name badges (guild channels), a bottom control bar of dark pills (mute with settings chevron,
+camera, screen share, more) and a red hang-up button, mute/deafen toggles in the account card,
+whose status line reads "In a call" with a green handset, and a "Voice Connected" panel above
+it while connected. Screen-share status is not shown on the stage; the share dialog and the button tooltip carry it. A DM call
+that rings or runs without this device shows the same stage with whoever is in it and green
+buttons to join with video or voice (and a red decline while it rings here); a call ringing in
+another conversation keeps a slim banner. The header and the bar
+stay visible beside the avatars or tiles and fade out only over an enlarged video, which keeps
+a slim 8px margin from the stage edges instead of touching the sidebar. In the channel list a
+voice channel's participants stand in the channel-icon column (24px avatars under the speaker
+glyph), and the stream preview card floats 8px clear of the sidebar edge. Stage tiles grow to
+fill the stage up to 960px wide each, so a large window shows a full grid rather than one short row. The panel follows
+Discord's: a signal glyph, noise suppression (a grey five-bar waveform, slashed while off) and
+disconnect beside the title, then two equal cells for
+camera (split with its settings chevron) and screen share, filled with the accent while on.
+Each mute/deafen toggle shares one plate with its settings chevron and turns red while latched;
+the call bar tints its microphone half the same way. Activities and soundboard are absent:
+Leech has no such features.
 
 ## Verification notes
 
-Native macOS captures at 1120×760 in Serein dark, Eclipse, Slate, Nightfall and light were
+Native macOS captures at 1120×760 in Leech dark, Eclipse, Slate, Nightfall and light were
 inspected on September 10, 2026 with the offline fixtures (`--demo`, `--demo-chat`,
 `--demo-notifications`, `--demo-voice`). Keyboard reachability of channel rows, the forum row,
 toolbar actions and members is covered by headless egui tests. Screen-reader/IME behaviour and
@@ -168,7 +244,7 @@ a question above stacked, left-aligned answer rows, right-edge selection circles
 and checkmarks, separate vote counts and percentages, and a compact vote/expiry
 footer. The card spans up to 472px including padding. Long answers wrap while
 their selection markers stay aligned; narrow result rows put tallies beneath the
-answer. Colors continue to resolve from the active Serein palette.
+answer. Colors continue to resolve from the active Leech palette.
 
 Open poll creation from Create a poll in the composer's `+` menu.
 The creation dialog uses uppercase field labels, inset question/answer fields,

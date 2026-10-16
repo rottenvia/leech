@@ -166,7 +166,7 @@ fn form(
 			} => {
 				let label = design::label(ui, label);
 				let selected = values.entry(id.clone()).or_insert_with(|| value.clone());
-				egui::ComboBox::from_id_salt(id)
+				crate::design::combo(id)
 					.width(ui.available_width())
 					.selected_text(selected.as_str())
 					.show_ui(ui, |ui| {
@@ -206,7 +206,7 @@ fn preview_card(
 	activity_status: (&str, bool),
 ) {
 	let colors = design::palette(ui);
-	ui.label(design::eyebrow(ui, "PROFILE PREVIEW", colors.muted));
+	ui.label(design::heading(ui, "Profile preview"));
 	ui.add_space(8.0);
 	if let Some(presence) = presence {
 		let kind = match presence.kind {

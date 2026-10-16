@@ -1,6 +1,6 @@
-# Serein agent guide
+# Leech agent guide
 
-Serein is an unofficial native Rust/egui client for existing Discord accounts. It is not a bot,
+Leech is an unofficial native Rust/egui client for existing Discord accounts. It is not a bot,
 backend, web wrapper, or separate voice service.
 
 ## Product and security boundaries
@@ -25,7 +25,7 @@ for UI, `docs/discord-compatibility.md` for protocol, `docs/storage-policy.md` f
 
 Feature/fix requests authorize implementation and the ordinary tested PR workflow: task branch,
 local checks, synthetic screenshots and measurements when relevant, commit, push to `origin`,
-and create or update a PR. Follow `.agents/skills/serein-delivery/SKILL.md`. Reuse an open task
+and create or update a PR. Follow `.agents/skills/leech-delivery/SKILL.md`. Reuse an open task
 PR. Mark complete implementations ready for review; only unfinished requested work belongs in draft.
 CI failures or unavailable evidence do not determine draft status. Report checks and limitations
 accurately. Never merge, force-push, deploy, release or change repository permissions.
@@ -66,7 +66,7 @@ Use the delivery skill for evidence. Inspect checks, fix task-caused failures an
 pre-existing failures honestly. Do not create `docs/progress.md` or `docs/adr/`; update performance,
 compatibility, storage or dependency docs when their claims change.
 
-For author-visible SDK changes, use `.agents/skills/serein-sdk-wiki/SKILL.md` and publish its
+For author-visible SDK changes, use `.agents/skills/leech-sdk-wiki/SKILL.md` and publish its
 reviewed wiki update from the pushed source commit. Keep unmerged capabilities labeled Preview.
 
 Load optional skills only for their specific workflows: `ponytail` for complexity tradeoffs,

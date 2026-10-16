@@ -640,7 +640,7 @@ fn execute(
 #[cfg(all(debug_assertions, feature = "demo"))]
 pub fn debug_voice_preferences_check() {
 	let root = std::env::temp_dir().join(format!(
-		"serein-voice-preferences-{}-{}",
+		"leech-voice-preferences-{}-{}",
 		std::process::id(),
 		std::time::SystemTime::now()
 			.duration_since(std::time::UNIX_EPOCH)
@@ -810,7 +810,7 @@ mod tests {
 	#[test]
 	fn notification_choice_survives_a_full_queue_and_database_reopen() {
 		let root = std::env::temp_dir().join(format!(
-			"serein-notification-restart-{}-{}",
+			"leech-notification-restart-{}-{}",
 			std::process::id(),
 			std::time::SystemTime::now()
 				.duration_since(std::time::UNIX_EPOCH)

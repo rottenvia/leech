@@ -526,7 +526,7 @@ fn field(
 	let label = crate::i18n::translate_if_key(label);
 	let label_id = ui
 		.horizontal(|ui| {
-			let label = ui.label(design::eyebrow(ui, &label, colors.muted));
+			let label = ui.label(design::medium(ui, &label, 14.0).color(colors.text_strong));
 			if multiline {
 				ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
 					ui.label(
@@ -568,10 +568,9 @@ fn preview(
 	let (demo, guilds) = media;
 	let colors = design::palette(ui);
 	let mut action = None;
-	ui.label(design::eyebrow(
+	ui.label(design::heading(
 		ui,
 		crate::i18n::translate("profile-edit-preview-preview"),
-		colors.muted,
 	));
 	ui.add_space(4.0);
 	// Paint with the profile's own colors, as other people see the card, not the app theme.
@@ -694,11 +693,16 @@ fn preview(
 								ui.add_space(8.0);
 								ui.separator();
 								ui.add_space(8.0);
-								ui.label(design::eyebrow(
-									ui,
-									crate::i18n::translate("profile-edit-preview-about-me"),
-									theme.text,
-								));
+								ui.label(
+									design::semibold(
+										ui,
+										design::sentence_case(&crate::i18n::translate(
+											"profile-edit-preview-about-me",
+										)),
+										12.0,
+									)
+									.color(theme.text),
+								);
 								let mut mentions = crate::profiles::ProfileSession::default();
 								crate::markdown::Formatted::parse(&draft.bio).show_with_images(
 									ui,

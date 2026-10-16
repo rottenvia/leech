@@ -578,7 +578,7 @@ impl ThemeEditor {
 						}
 						changed |= row(ui, "Image fit", |ui| {
 							let mut changed = false;
-							egui::ComboBox::from_id_salt("image-fit")
+							crate::design::combo("image-fit")
 								.selected_text(crate::i18n::translate_if_key(
 									&(match background.fit {
 										BackgroundFit::Cover => {
@@ -882,8 +882,8 @@ impl ThemeEditor {
 									[12, 6],
 								);
 								for (label, value, default) in [
-									("Control corners", &mut style.widget_radius, 8),
-									("Window corners", &mut style.window_radius, 12),
+									("Control corners", &mut style.widget_radius, 10),
+									("Window corners", &mut style.window_radius, 14),
 									("Menu corners", &mut style.menu_radius, 12),
 								] {
 									changed |= metric(ui, label, value, default, 0..=24);
@@ -1311,7 +1311,7 @@ fn section_controls(
 			crate::i18n::translate("theme-editor-section-controls-selected-section"),
 			13.0,
 		));
-		egui::ComboBox::from_id_salt("background-section")
+		crate::design::combo("background-section")
 			.width(ui.available_width())
 			.selected_text(crate::i18n::translate_if_key(selected.label_key()))
 			.show_ui(ui, |ui| {

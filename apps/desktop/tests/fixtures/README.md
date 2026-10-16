@@ -2,7 +2,7 @@
 
 `audio-tone.mp3` is an original 0.2-second 440 Hz sine wave, generated locally for offline
 decoder tests. It contains no user recording or service content. Same MIT OR Apache-2.0
-license as Serein. Generation command (FFmpeg is development-only, never bundled):
+license as Leech. Generation command (FFmpeg is development-only, never bundled):
 
 ```sh
 ffmpeg -f lavfi -i 'sine=frequency=440:sample_rate=24000:duration=0.2' -ac 1 -c:a libmp3lame -b:a 64k -map_metadata -1 -write_xing 0 audio-tone.mp3
@@ -10,7 +10,7 @@ ffmpeg -f lavfi -i 'sine=frequency=440:sample_rate=24000:duration=0.2' -ac 1 -c:
 
 
 `video.mov` is an original three-second 320x180/24fps animated test pattern with
-440 Hz mono AAC audio. It uses the same MIT OR Apache-2.0 license as Serein,
+440 Hz mono AAC audio. It uses the same MIT OR Apache-2.0 license as Leech,
 contains no account media, and is included only in tests/demo builds. Reproduce:
 
 ```sh
@@ -24,7 +24,7 @@ The `video-silent.mov` variant remuxes `video.mov` with `-an -c:v copy`.
 ## Synthetic HEIC fixture
 
 `heic-large.heic` is an original 6000x4000 solid RGB (64, 128, 192) image,
-under the same MIT OR Apache-2.0 license as Serein. It contains no account media.
+under the same MIT OR Apache-2.0 license as Leech. It contains no account media.
 The fixture is embedded only by the debug/demo HEIC check, never a normal release.
 It exercises successful WIC decoding and scaling of a source whose full RGBA
 output (96,000,000 bytes) exceeds the composer allocation ceiling. Pixel assertions
@@ -43,5 +43,5 @@ pillow_heif.from_pillow(Image.new("RGB", (6000, 4000), (64, 128, 192))).save(
 )
 ```
 
-Neither generation dependency is installed by Cargo or bundled with Serein.
+Neither generation dependency is installed by Cargo or bundled with Leech.
 The successful Windows decode check requires the installed HEIF/HEVC codecs.

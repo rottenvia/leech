@@ -123,20 +123,31 @@ pub(super) fn contents(
 	action: &mut Option<Action>,
 	view: Option<ShortcutView<'_>>,
 ) {
-	let colors = crate::design::palette(ui);
-	ui.set_min_width(200.0);
+	use crate::design::{menu_item, menu_item_if};
+	use crate::icons::Icon;
+	let t = crate::i18n::translate;
+	ui.set_width(224.0);
+	ui.spacing_mut().item_spacing.y = 2.0;
 	ui.spacing_mut().button_padding = egui::vec2(8.0, 6.0);
-	if ui
-		.button(crate::i18n::translate("user-menu-contents-profile"))
-		.clicked()
+	if menu_item(
+		ui,
+		Some(Icon::User),
+		&t("user-menu-contents-profile"),
+		false,
+	)
+	.clicked()
 	{
 		profile.command_open(user.clone());
 		ui.close();
 	}
 	if !user.webhook
-		&& ui
-			.button(crate::i18n::translate("profiles-view-full-profile"))
-			.clicked()
+		&& menu_item(
+			ui,
+			Some(Icon::IdCard),
+			&t("profiles-view-full-profile"),
+			false,
+		)
+		.clicked()
 	{
 		profile.open_full(user.clone());
 		ui.close();
@@ -146,9 +157,7 @@ pub(super) fn contents(
 			state
 				.channel(id)
 				.is_some_and(|channel| channel.supports_text())
-		}) && ui
-		.button(crate::i18n::translate("user-menu-contents-mention"))
-		.clicked()
+		}) && menu_item(ui, Some(Icon::At), &t("user-menu-contents-mention"), false).clicked()
 	{
 		*action = Some(Action::Mention(user.clone()));
 		ui.close();
@@ -170,30 +179,35 @@ pub(super) fn contents(
 	let reachable = user.id.0 != 0
 		&& state.user.as_ref().is_some_and(|own| own.id != user.id)
 		&& state.user_blocked(user.id) == Some(false);
-	if ui
-		.add_enabled(
-			state.can_open_user_dm(user),
-			egui::Button::new(crate::i18n::translate("friends-message")),
-		)
-		.clicked()
+	if menu_item_if(
+		ui,
+		state.can_open_user_dm(user),
+		Some(Icon::ChatText),
+		&t("friends-message"),
+		false,
+	)
+	.clicked()
 	{
 		*action = Some(Action::Message(user.clone()));
 		ui.close();
 	}
-	if ui
-		.add_enabled(
-			state.can_open_user_dm(user)
-				&& enabled && !state.demo
-				&& voice_available(ui)
-				&& state
-					.voice
-					.active
-					.as_ref()
-					.is_none_or(|call| dm.is_none_or(|channel| call.channel != channel.id))
-				&& dm.is_none_or(|channel| state.can_call(channel.id)),
-			egui::Button::new(crate::i18n::translate("user-menu-contents-start-a-call")),
-		)
-		.clicked()
+	if menu_item_if(
+		ui,
+		state.can_open_user_dm(user)
+			&& enabled
+			&& !state.demo
+			&& voice_available(ui)
+			&& state
+				.voice
+				.active
+				.as_ref()
+				.is_none_or(|call| dm.is_none_or(|channel| call.channel != channel.id))
+			&& dm.is_none_or(|channel| state.can_call(channel.id)),
+		Some(Icon::Phone),
+		&t("user-menu-contents-start-a-call"),
+		false,
+	)
+	.clicked()
 	{
 		*action = Some(Action::StartCall(user.clone()));
 		ui.close();
@@ -216,46 +230,50 @@ pub(super) fn contents(
 		} else {
 			("friends-add", Some(Action::AddFriend(user.clone())))
 		};
-		if ui
-			.add_enabled(
-				enabled
-					&& reachable && state.friends_known()
-					&& state.friend_requests_known()
-					&& friend_action.is_some(),
-				egui::Button::new(crate::i18n::translate(label)),
-			)
-			.clicked()
+		if menu_item_if(
+			ui,
+			enabled
+				&& reachable && state.friends_known()
+				&& state.friend_requests_known()
+				&& friend_action.is_some(),
+			Some(Icon::AddPeople),
+			&t(label),
+			false,
+		)
+		.clicked()
 		{
 			*action = friend_action;
 			ui.close();
 		}
 	}
 	ui.separator();
-	if ui
-		.add_enabled(
-			enabled,
-			egui::Button::new(crate::i18n::translate("user-menu-contents-add-note")),
-		)
-		.clicked()
+	if menu_item_if(
+		ui,
+		enabled,
+		Some(Icon::Pencil),
+		&t("user-menu-contents-add-note"),
+		false,
+	)
+	.clicked()
 	{
 		*action = Some(Action::Note(user.clone()));
 		ui.close();
 	}
-	if ui
-		.add_enabled(
-			enabled && state.friends().any(|friend| friend.id == user.id),
-			egui::Button::new(crate::i18n::translate_if_key(
-				&(if state.friend_nickname(user.id).is_some() {
-					crate::i18n::translate("user-menu-contents-edit-friend-nickname")
-				} else {
-					crate::i18n::translate("user-menu-contents-add-friend-nickname")
-				}),
-			)),
-		)
-		.on_disabled_hover_text(crate::i18n::translate(
-			"user-menu-contents-private-nicknames-are-available-for-confirmed-friends",
-		))
-		.clicked()
+	if menu_item_if(
+		ui,
+		enabled && state.friends().any(|friend| friend.id == user.id),
+		Some(Icon::IdCard),
+		&(if state.friend_nickname(user.id).is_some() {
+			t("user-menu-contents-edit-friend-nickname")
+		} else {
+			t("user-menu-contents-add-friend-nickname")
+		}),
+		false,
+	)
+	.on_disabled_hover_text(crate::i18n::translate(
+		"user-menu-contents-private-nicknames-are-available-for-confirmed-friends",
+	))
+	.clicked()
 	{
 		*action = Some(Action::Nickname(user.clone()));
 		ui.close();
@@ -264,42 +282,42 @@ pub(super) fn contents(
 	if let Some(dm) = dm {
 		if let Some(view) = view {
 			let pinned = view.contains(Shortcut::Pinned, dm.id);
-			if ui
-				.add_enabled(
-					view.available(),
-					egui::Button::new(crate::i18n::translate_if_key(
-						&(if pinned {
-							crate::i18n::translate("user-menu-contents-unpin-dm")
-						} else {
-							crate::i18n::translate("user-menu-contents-pin-dm")
-						}),
-					)),
-				)
-				.on_hover_text(crate::i18n::translate(
-					"user-menu-contents-pinned-direct-messages-are-saved-on-this-device",
-				))
-				.clicked()
+			if menu_item_if(
+				ui,
+				view.available(),
+				Some(Icon::Pin),
+				&(if pinned {
+					t("user-menu-contents-unpin-dm")
+				} else {
+					t("user-menu-contents-pin-dm")
+				}),
+				false,
+			)
+			.on_hover_text(crate::i18n::translate(
+				"user-menu-contents-pinned-direct-messages-are-saved-on-this-device",
+			))
+			.clicked()
 			{
 				*action = Some(Action::Shortcut(view.toggle(Shortcut::Pinned, dm.id)));
 				ui.close();
 			}
 		}
 		let muted = state.dm_muted(dm.id) == Some(true);
-		if ui
-			.add_enabled(
-				enabled,
-				egui::Button::new(crate::i18n::translate_if_key(
-					&(if muted {
-						crate::i18n::translate("user-menu-contents-unmute-conversation")
-					} else {
-						crate::i18n::translate("user-menu-contents-mute-conversation")
-					}),
-				)),
-			)
-			.on_hover_text(crate::i18n::translate(
-				"user-menu-contents-mute-this-direct-message-s-notifications-until-you-unmute-it",
-			))
-			.clicked()
+		if menu_item_if(
+			ui,
+			enabled,
+			Some(if muted { Icon::Bell } else { Icon::BellSlash }),
+			&(if muted {
+				t("user-menu-contents-unmute-conversation")
+			} else {
+				t("user-menu-contents-mute-conversation")
+			}),
+			false,
+		)
+		.on_hover_text(crate::i18n::translate(
+			"user-menu-contents-mute-this-direct-message-s-notifications-until-you-unmute-it",
+		))
+		.clicked()
 		{
 			*action = Some(Action::Mute {
 				channel: dm.id,
@@ -307,25 +325,28 @@ pub(super) fn contents(
 			});
 			ui.close();
 		}
-		if ui
-			.add_enabled(
-				enabled,
-				egui::Button::new(crate::i18n::translate("user-menu-contents-close-dm")),
-			)
-			.on_hover_text(crate::i18n::translate(
-				"user-menu-contents-remove-this-conversation-from-your-dm-list-messages-are-kept",
-			))
-			.clicked()
+		if menu_item_if(
+			ui,
+			enabled,
+			Some(Icon::Close),
+			&t("user-menu-contents-close-dm"),
+			false,
+		)
+		.on_hover_text(crate::i18n::translate(
+			"user-menu-contents-remove-this-conversation-from-your-dm-list-messages-are-kept",
+		))
+		.clicked()
 		{
 			*action = Some(Action::CloseDm(dm.id));
 			ui.close();
 		}
 	} else {
-		ui.add_enabled(
+		menu_item_if(
+			ui,
 			false,
-			egui::Button::new(crate::i18n::translate(
-				"user-menu-contents-mute-conversation",
-			)),
+			Some(Icon::BellSlash),
+			&t("user-menu-contents-mute-conversation"),
+			false,
 		)
 		.on_disabled_hover_text(crate::i18n::translate(
 			"user-menu-contents-no-open-direct-message-with-this-user",
@@ -336,19 +357,18 @@ pub(super) fn contents(
 		*action = Some(ignore);
 	}
 	let blocked = state.user_blocked(user.id) == Some(true);
-	if ui
-		.add_enabled(
-			enabled,
-			egui::Button::new(
-				egui::RichText::new(crate::i18n::translate_if_key(if blocked {
-					"user-menu-contents-unblock"
-				} else {
-					"user-menu-contents-block"
-				}))
-				.color(colors.danger),
-			),
-		)
-		.clicked()
+	if menu_item_if(
+		ui,
+		enabled,
+		Some(Icon::Prohibit),
+		&crate::i18n::translate_if_key(if blocked {
+			"user-menu-contents-unblock"
+		} else {
+			"user-menu-contents-block"
+		}),
+		true,
+	)
+	.clicked()
 	{
 		*action = Some(Action::Block {
 			user: user.id,
@@ -396,7 +416,7 @@ mod tests {
 		let mut response = None;
 		let mut output = ctx.run_ui(
 			egui::RawInput {
-				screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(320.0, 420.0))),
+				screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(320.0, 640.0))),
 				events,
 				..Default::default()
 			},
@@ -483,7 +503,7 @@ mod tests {
 						.unwrap_or_else(|| panic!("Missing {expected}: {text:?}"))
 						.1;
 					assert!(
-						Rect::from_min_size(Pos2::ZERO, egui::vec2(320.0, 420.0))
+						Rect::from_min_size(Pos2::ZERO, egui::vec2(320.0, 640.0))
 							.contains_rect(rect)
 					);
 				}

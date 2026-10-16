@@ -52,11 +52,7 @@ impl Navigation {
 		if tab != Tab::Spam {
 			ui.add_space(12.0);
 		}
-		let heading = ui.label(design::eyebrow(
-			ui,
-			crate::i18n::translate_if_key(tab.heading()),
-			design::palette(ui).muted,
-		));
+		let heading = ui.label(design::heading(ui, tab.heading()));
 		if heading.rect.top() <= ui.clip_rect().top() + 28.0 {
 			self.active = tab;
 		}
@@ -204,7 +200,7 @@ impl MessagingUi {
 						"messaging-permissions-messaging-permissions-settings-changes-apply-to-this-server-only"
 					}),
 					|ui| {
-						egui::ComboBox::from_id_salt("messaging-permissions-guild")
+						crate::design::combo("messaging-permissions-guild")
 							.selected_text(label)
 							.width(ui.available_width().min(260.0))
 							.height(280.0)

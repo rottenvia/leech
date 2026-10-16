@@ -422,6 +422,8 @@ pub struct MessagingUi {
 	pub voice_focus_participants: bool,
 	/// How far the call stage's hover chrome (and tile name badges) has faded out: 0 shown.
 	voice_chrome_hidden: f32,
+	/// DM call joined with "Join with video": the camera starts once it connects.
+	voice_camera_on_join: Option<Id>,
 	/// Session-only visibility of the selected guild voice channel's chat.
 	pub voice_chat_open: bool,
 	/// Tile click to start (`Some(user)`) or stop (`None`) watching, applied by the stage.
@@ -511,8 +513,8 @@ fn composer_cap(
 		},
 	)
 	.corner_radius(egui::CornerRadius {
-		nw: 8,
-		ne: 8,
+		nw: 12,
+		ne: 12,
 		sw: 0,
 		se: 0,
 	})
@@ -544,7 +546,7 @@ fn mention_switch(ui: &mut egui::Ui, colors: &design::Palette, on: &mut bool) {
 		"Click to enable pinging the original author."
 	};
 	if response.hovered() || response.has_focus() {
-		ui.painter().rect_filled(rect, 6, colors.hover);
+		ui.painter().rect_filled(rect, 8, colors.hover);
 	}
 	let galley = ui.painter().layout_no_wrap(label.to_owned(), font, color);
 	ui.painter()
@@ -896,7 +898,7 @@ impl MessagingUi {
 				Some(Ok(model::InvitePreview {
 					guild: Id(424242),
 					embed: model::Embed {
-						title: Some("Serein community".into()),
+						title: Some("Leech community".into()),
 						..Default::default()
 					},
 				})),
@@ -1307,24 +1309,14 @@ impl MessagingUi {
 							design::build_badge(ui, self.build);
 						}
 						if state.demo && !self.updates.available && !self.updates.ready {
-							egui::Frame::new()
-								.stroke(egui::Stroke::new(1.0, colors.border))
-								.corner_radius(10)
-								.inner_margin(egui::Margin::symmetric(8, 3))
-								.show(ui, |ui| {
-									ui.label(
-										design::semibold(
-											ui,
-											crate::i18n::translate("lib-title-bar-offline-preview"),
-											10.0,
-										)
-										.color(colors.muted),
-									);
-								})
-								.response
-								.on_hover_text(crate::i18n::translate(
-									"lib-title-bar-synthetic-data-no-network-or-local-storage",
-								));
+							design::chip(
+								ui,
+								&crate::i18n::translate("lib-title-bar-offline-preview"),
+								colors.muted,
+							)
+							.on_hover_text(crate::i18n::translate(
+								"lib-title-bar-synthetic-data-no-network-or-local-storage",
+							));
 						}
 						if !state.demo
 							&& state.auth != client_core::auth::AuthState::Authenticated
@@ -1398,13 +1390,14 @@ impl MessagingUi {
 		}
 		if !has_entry {
 			ui.add_space(8.0);
-			if list.freshness != Freshness::Fresh {
-				let text = if list.freshness == Freshness::Unavailable {
-					language.text("people-unavailable")
-				} else {
-					language.text("loading-people")
-				};
-				ui.label(RichText::new(text).small().color(colors.muted));
+			if list.freshness == Freshness::Unavailable {
+				ui.label(
+					RichText::new(language.text("people-unavailable"))
+						.small()
+						.color(colors.muted),
+				);
+			} else if list.freshness != Freshness::Fresh {
+				loading_people(ui, &language.text("loading-people"));
 			} else {
 				ui.label(
 					RichText::new(language.text("no-people"))
@@ -1765,13 +1758,41 @@ impl MessagingUi {
 						self.server_menu.header(ui, state, guild, title);
 						return;
 					}
-					ui.add(
-						egui::Label::new(
-							design::semibold(ui, title, 15.0).color(colors.text_strong),
+					// Discord's DM column keeps the conversation search in its header strip.
+					let ctx = ui.ctx().clone();
+					let find = ui
+						.add_enabled_ui(
+							!self.ime_active
+								&& !ctx.input(|input| {
+									input
+										.events
+										.iter()
+										.any(|event| matches!(event, egui::Event::Ime(_)))
+								}),
+							|ui| {
+								ui.add_sized(
+									[ui.available_width(), 30.0],
+									egui::Button::new(
+										RichText::new(language.text("find-conversation"))
+											.size(13.0),
+									)
+									.fill(design::field_fill(&colors))
+									.truncate(),
+								)
+							},
 						)
-						.truncate()
-						.selectable(false),
-					);
+						.inner
+						.on_hover_text(language.text("find-conversation-tooltip"));
+					find.widget_info(|| {
+						egui::WidgetInfo::labeled(
+							egui::Role::Button,
+							ui.is_enabled(),
+							language.text("find-conversation"),
+						)
+					});
+					if find.clicked() {
+						self.switcher.open(&ctx);
+					}
 				});
 				ui.painter().hline(
 					rect.x_range().expand(16.0),
@@ -1787,79 +1808,58 @@ impl MessagingUi {
 				bottom: 0,
 			})
 			.show(ui, |ui| {
-				let ctx = ui.ctx().clone();
 				if self.guild.is_none() {
-					// Search and Friends share one row; Friends is the compact glyph beside it.
-					ui.horizontal(|ui| {
-						ui.spacing_mut().item_spacing.x = 6.0;
-						let find = ui
-							.add_enabled_ui(
-								!self.ime_active
-									&& !ctx.input(|input| {
-										input
-											.events
-											.iter()
-											.any(|event| matches!(event, egui::Event::Ime(_)))
-									}),
-								|ui| {
-									ui.add_sized(
-										[(ui.available_width() - 36.0).max(60.0), 30.0],
-										egui::Button::new(language.text("find-conversation"))
-											.truncate(),
-									)
-								},
-							)
-							.inner
-							.on_hover_text(language.text("find-conversation-tooltip"));
-						find.widget_info(|| {
-							egui::WidgetInfo::labeled(
-								egui::Role::Button,
-								ui.is_enabled(),
-								language.text("find-conversation"),
-							)
-						});
-						if find.clicked() {
-							self.switcher.open(&ctx);
-						}
-						let friends = state.selected.is_none();
-						let (rect, response) =
-							ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
-						let hovered = response.hovered() || response.has_focus();
-						if friends || hovered {
-							ui.painter().rect_filled(
-								rect,
-								6,
-								if friends {
-									colors.selected
-								} else {
-									colors.hover
-								},
-							);
-						}
-						icons::paint(
-							ui.painter(),
-							icons::Icon::People,
-							rect.shrink(7.0),
-							if friends || hovered {
-								colors.text_strong
-							} else {
-								colors.muted
-							},
+					// Discord's Friends row, in the geometry of the conversation rows below it.
+					let selected = state.selected.is_none();
+					let (rect, response) = ui.allocate_exact_size(
+						egui::vec2(ui.available_width(), 44.0),
+						egui::Sense::click(),
+					);
+					let row = rect.shrink2(egui::vec2(0.0, 1.0));
+					let hovered = response.hovered() || response.has_focus();
+					if selected {
+						ui.painter().rect_filled(row, 8, colors.selected);
+					} else if hovered {
+						ui.painter().rect_filled(
+							row,
+							8,
+							design::row_highlight(ui, colors.hover, 1.0),
 						);
-						response.widget_info(|| {
-							egui::WidgetInfo::selected(
-								egui::Role::Button,
-								true,
-								friends,
-								language.text("friends"),
-							)
-						});
-						if response.on_hover_text(language.text("friends")).clicked() {
-							state.open_home();
-							self.guild = None;
-							self.search.open = false;
-						}
+					}
+					let ink = if selected || hovered {
+						colors.text_strong
+					} else {
+						colors.muted
+					};
+					icons::paint(
+						ui.painter(),
+						icons::Icon::People,
+						egui::Rect::from_center_size(
+							egui::pos2(row.left() + 24.0, row.center().y),
+							egui::Vec2::splat(22.0),
+						),
+						ink,
+					);
+					ui.painter().text(
+						egui::pos2(row.left() + 52.0, row.center().y),
+						egui::Align2::LEFT_CENTER,
+						language.text("friends"),
+						egui::FontId::new(15.0, design::medium_family(ui.ctx())),
+						ink,
+					);
+					response.widget_info(|| {
+						egui::WidgetInfo::selected(
+							egui::Role::Button,
+							true,
+							selected,
+							language.text("friends"),
+						)
 					});
+					if response.clicked() {
+						state.open_home();
+						self.guild = None;
+						self.search.open = false;
+					}
 					ui.add_space(8.0);
 				}
 				if let Some(guild) = self.guild
@@ -1938,7 +1938,7 @@ impl MessagingUi {
 		};
 		let card = egui::Frame::new()
 			.fill(card_fill)
-			.corner_radius(8)
+			.corner_radius(12)
 			.inner_margin(0)
 			.show(ui, |ui| {
 				ui.set_width(ui.available_width());
@@ -2046,38 +2046,78 @@ impl MessagingUi {
 														.truncate()
 														.selectable(false),
 													);
-													ui.add(
-														egui::Label::new(
-															RichText::new(
-																if !self
-																	.own_presence
-																	.custom_status
-																	.is_empty()
-																{
-																	self.own_presence
-																		.custom_status
-																		.clone()
-																} else if let Some(game) = self
-																	.own_game
-																	.as_deref()
-																	.filter(|_| {
-																		self.share_game_activity
-																	}) {
-																	game.to_owned()
-																} else if state.demo {
-																	language.text("offline-preview")
-																} else if state.gateway_connected {
-																	language.text(account_menu::presence_status_key(self.own_presence.status))
-																} else {
-																	language.text("reconnecting")
-																},
-															)
-															.size(12.0)
-															.color(colors.muted),
+													// Discord swaps the status for a green
+													// handset and "In a call" while connected.
+													let in_call =
+														state.voice.active.as_ref().is_some_and(
+															|call| {
+																matches!(
+															call.phase,
+															client_core::voice::Phase::Connected
+																| client_core::voice::Phase::Waiting
 														)
-														.truncate()
-														.selectable(false),
-													);
+															},
+														);
+													if in_call {
+														ui.horizontal(|ui| {
+															ui.spacing_mut().item_spacing.x = 4.0;
+															ui.spacing_mut().interact_size.y = 0.0;
+															icons::inline(
+																ui,
+																icons::Icon::InCall,
+																12.0,
+																colors.positive,
+															);
+															ui.add(
+																egui::Label::new(
+																	RichText::new(
+																		language.text("in-a-call"),
+																	)
+																	.size(12.0)
+																	.color(colors.muted),
+																)
+																.truncate()
+																.selectable(false),
+															);
+														});
+													} else {
+														ui.add(
+															egui::Label::new(
+																RichText::new(
+																	if !self
+																		.own_presence
+																		.custom_status
+																		.is_empty()
+																	{
+																		self.own_presence
+																			.custom_status
+																			.clone()
+																	} else if let Some(game) = self
+																		.own_game
+																		.as_deref()
+																		.filter(|_| {
+																			self.share_game_activity
+																		}) {
+																		game.to_owned()
+																	} else if state.demo {
+																		language
+																			.text("offline-preview")
+																	} else if state
+																		.gateway_connected
+																	{
+																		language.text(account_menu::presence_status_key(self.own_presence.status))
+																	} else {
+																		language
+																			.text("reconnecting")
+																	},
+																)
+																.size(12.0)
+																.color(colors.muted),
+															)
+															.truncate()
+															.selectable(false),
+														);
+													}
 												})
 												.response;
 											let identity = ui
@@ -2114,7 +2154,7 @@ impl MessagingUi {
 			});
 		// Painted over the frame rather than as its stroke, so the card keeps the composer's height.
 		ui.painter()
-			.rect_stroke(card.response.rect, 8, card_edge, egui::StrokeKind::Inside);
+			.rect_stroke(card.response.rect, 12, card_edge, egui::StrokeKind::Inside);
 		if let Some(anchor) = anchor {
 			self.account_menu(&anchor, state, commands);
 		}
@@ -2151,7 +2191,16 @@ impl MessagingUi {
 					} else {
 						egui::Color32::TRANSPARENT
 					})
-					.inner_margin(egui::Margin::symmetric(16, 0)),
+					.inner_margin(egui::Margin::symmetric(16, 0))
+					// Spanning the search pane, it still stops at the card's right edge.
+					.outer_margin(if search_open && design::floating_panels(ui) {
+						egui::Margin {
+							right: design::PANEL_GAP,
+							..Default::default()
+						}
+					} else {
+						egui::Margin::ZERO
+					}),
 			)
 			.show(ui, |ui| {
 				let rect = ui.max_rect();
@@ -2291,7 +2340,7 @@ impl MessagingUi {
 					} else {
 						// Search pill.
 						let (pill, response) =
-							ui.allocate_exact_size(egui::vec2(144.0, 28.0), egui::Sense::click());
+							ui.allocate_exact_size(egui::vec2(160.0, 30.0), egui::Sense::click());
 						let enabled = state.can_search();
 						response.widget_info(|| {
 							egui::WidgetInfo::labeled(
@@ -2300,7 +2349,11 @@ impl MessagingUi {
 								language.text("search"),
 							)
 						});
-						ui.painter().rect_filled(pill, 6, colors.raised);
+						ui.painter().rect_filled(
+							pill,
+							icons::PLATE_RADIUS,
+							design::field_fill(&colors),
+						);
 						let pill_text = if enabled {
 							colors.muted
 						} else {
@@ -2334,14 +2387,15 @@ impl MessagingUi {
 						}
 					}
 					ui.add_space(4.0);
-					if icons::toggle(
-						ui,
-						icons::Icon::People,
-						32.0,
-						show_members,
-						&language.text("show-member-list"),
-					)
-					.clicked()
+					if !dm
+						&& icons::toggle(
+							ui,
+							icons::Icon::People,
+							32.0,
+							show_members,
+							&language.text("show-member-list"),
+						)
+						.clicked()
 					{
 						if wide_members {
 							let shown = self.members_preference(state);
@@ -2398,17 +2452,23 @@ impl MessagingUi {
 					});
 					let can_reconnect = state.auth == client_core::auth::AuthState::Authenticated
 						&& !state.gateway_connected;
-					let reload = ui
-						.add_enabled_ui(can_reload || can_reconnect, |ui| {
-							icons::button(
-								ui,
-								icons::Icon::Reload,
-								32.0,
-								&language.text("reload-history"),
-							)
-						})
-						.inner;
-					if reload.clicked() {
+					// Discord has no reload button; it appears only when history failed, went
+					// stale or the connection is lost.
+					let needed = can_reconnect
+						|| (can_reload
+							&& matches!(
+								state.freshness,
+								Freshness::Stale | Freshness::Unavailable
+							));
+					if needed
+						&& icons::button(
+							ui,
+							icons::Icon::Reload,
+							32.0,
+							&language.text("reload-history"),
+						)
+						.clicked()
+					{
 						if can_reconnect {
 							self.reconnect_requested = true;
 						}
@@ -2418,12 +2478,18 @@ impl MessagingUi {
 						}
 					}
 				}
-				if let Some(channel) = state.selected.filter(|_| {
+				// Discord's DM header offers voice and video calls only outside that call.
+				if let Some(channel) = state.selected.filter(|id| {
 					channel
 						.as_ref()
 						.is_some_and(|c| c.guild.is_none() && matches!(c.kind, 1 | 3))
+						&& state
+							.voice
+							.active
+							.as_ref()
+							.is_none_or(|call| call.channel != *id)
 				}) {
-					self.voice_settings(ui, state.demo, state.voice.active.is_some());
+					self.video_call_button(ui, state, channel, commands);
 					self.call_button(ui, state, channel, commands);
 				}
 				ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -2449,7 +2515,7 @@ impl MessagingUi {
 									| client_core::voice::Phase::Waiting
 							)
 					});
-					// The "In a call" label beside the name already says it while we share the call.
+					// The stage already shows who shares our call.
 					let in_voice = !in_call
 						&& channel
 							.as_ref()
@@ -2513,17 +2579,6 @@ impl MessagingUi {
 							}
 						}
 					});
-					if in_call {
-						ui.add_space(4.0);
-						icons::inline(ui, icons::Icon::InCall, 16.0, colors.positive);
-						ui.add(
-							egui::Label::new(
-								design::medium(ui, language.text("in-a-call"), 14.0)
-									.color(colors.positive),
-							)
-							.selectable(false),
-						);
-					}
 				});
 			});
 		});
@@ -2769,7 +2824,7 @@ impl MessagingUi {
 				.filter(|guild| state.needs_onboarding(*guild));
 			if let Some(guild) = gated {
 				design::glass_frame(ui, colors.raised, egui::Margin::same(12))
-					.corner_radius(8)
+					.corner_radius(12)
 					.show(ui, |ui| {
 						ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
 							if dialog::action(
@@ -2804,7 +2859,7 @@ impl MessagingUi {
 				return;
 			}
 			design::glass_frame(ui, colors.raised, egui::Margin::same(12))
-				.corner_radius(8)
+				.corner_radius(12)
 				.show(ui, |ui| {
 					let mut hint =
 						"You don't have permission to send messages in this channel.".to_owned();
@@ -3291,9 +3346,9 @@ impl MessagingUi {
 		}
 		design::glass_frame(ui, colors.raised, egui::Margin::symmetric(10, 6))
             .corner_radius(if cap_top.is_some() {
-                egui::CornerRadius { nw: 0, ne: 0, sw: 8, se: 8 }
+                egui::CornerRadius { nw: 0, ne: 0, sw: 12, se: 12 }
             } else {
-                egui::CornerRadius::same(8)
+                egui::CornerRadius::same(12)
             })
             .show(ui, |ui| {
                 // Outer frame bounds for the autocomplete popout: undo the inner margin and
@@ -3312,7 +3367,7 @@ impl MessagingUi {
                 let column = |ui: &mut egui::Ui, add: &mut dyn FnMut(&mut egui::Ui)| {
                     if stacked {
                         ui.allocate_ui_with_layout(
-                            egui::vec2(28.0, draft_height),
+                            egui::vec2(32.0, draft_height),
                             egui::Layout::bottom_up(egui::Align::Center),
                             |ui| {
                                 ui.spacing_mut().item_spacing.y = 4.0;
@@ -3332,7 +3387,7 @@ impl MessagingUi {
                     } else {
                         Some(ui
                             .add_enabled_ui(can_attach || can_create_poll, |ui| {
-                                icons::button(ui, icons::Icon::Attach, 28.0, &crate::i18n::translate("lib-ime-updates-text-attach-files"))
+                                icons::button(ui, icons::Icon::Plus, 32.0, &crate::i18n::translate("lib-ime-updates-text-attach-files"))
                             })
                             .inner
                             .on_hover_text(crate::i18n::translate("lib-ime-updates-text-choose-drop-or-paste-files-ctrl-cmd-option-v-up")))
@@ -3372,10 +3427,10 @@ impl MessagingUi {
                         column(ui, &mut |ui| {
                         let send_button = ui
                             .add_enabled_ui(can_send, |ui| {
-                                icons::button(
+                                icons::accent_button(
                                     ui,
                                     icons::Icon::Send,
-                                    28.0,
+                                    32.0,
                                     &crate::i18n::translate_if_key(if editing_here { "lib-ime-updates-text-save-edit" } else if application_command { "lib-ime-updates-text-send-command" } else { "lib-ime-updates-text-send-message" }),
                                 )
                             })
@@ -4232,9 +4287,17 @@ impl MessagingUi {
 		// See-through chrome paints each section once; a shared column coat would stack under
 		// the rail and account strip and make them denser than the title bar.
 		let layered = design::layered_sections(ui);
+		// Plain themes float the lists, the conversation and the member pane as rounded
+		// cards on the rail's tone, a gap apart; the backdrop goes down before any of them.
+		let floating = design::floating_panels(ui);
+		let gap = design::PANEL_GAP;
+		if floating {
+			ui.painter()
+				.rect_filled(ui.available_rect_before_wrap(), 0, background.base);
+		}
 		let navigation = egui::Panel::left("navigation")
 			.resizable(true)
-			.show_separator_line(!design::has_window_background(ui))
+			.show_separator_line(!design::has_window_background(ui) && !floating)
 			.default_size(rail + f32::from(self.reading_preferences.sidebar_width).min(sidebar_max))
 			.size_range(rail + 190.0..=rail + sidebar_max)
 			.frame(
@@ -4278,12 +4341,18 @@ impl MessagingUi {
 					.show(ui, |ui| self.account_card(ui, state, &mut commands));
 				self.notification_rail(ui, state, &mut commands);
 				// The lists sit on their own rounded surface beside the rail, above the card.
-				let lists = ui.available_rect_before_wrap();
+				let mut lists = ui.available_rect_before_wrap();
+				if floating {
+					// Same right edge as the account card below, a gap short of the conversation.
+					lists.max.x -= f32::from(gap);
+				}
 				// A window image continues the lists into the card strip, so only it stays square.
 				let rounded = !design::has_window_background(ui);
 				ui.painter().rect_filled(
 					lists,
-					if rounded {
+					if floating {
+						egui::CornerRadius::same(design::PANEL_RADIUS as u8)
+					} else if rounded {
 						egui::CornerRadius {
 							nw: 8,
 							sw: 8,
@@ -4313,7 +4382,14 @@ impl MessagingUi {
 						design::paint_corner_notch(ui.painter(), corner, inward, 8.0, notch);
 					}
 				}
-				self.sidebar(ui, state, &title, &mut commands);
+				if floating {
+					ui.scope_builder(egui::UiBuilder::new().max_rect(lists), |ui| {
+						self.sidebar(ui, state, &title, &mut commands);
+					});
+					design::finish_panel(ui, lists, background.base);
+				} else {
+					self.sidebar(ui, state, &title, &mut commands);
+				}
 			});
 		self.record_reading_sidebar(navigation.response.rect.width() - rail);
 		if self.channel_preferences_changed {
@@ -4349,6 +4425,9 @@ impl MessagingUi {
 			commands.push(command);
 		}
 		let wide_members = ui.available_width() >= 720.0;
+		// Everything right of the navigation column; the floating cards are cut out of it.
+		let shell = ui.available_rect_before_wrap();
+		let mut members_edge = None;
 		if !settings_open
 			&& !self.switcher_frame
 			&& !self.ime_active
@@ -4377,7 +4456,13 @@ impl MessagingUi {
 		self.search.sync(&ctx, state, &mut commands);
 		let search_open =
 			self.search.results_visible(state) && state.selected.is_some() && !selected_voice;
+		// Like Discord, a one-to-one DM has no member list: the stage and header name both people.
+		let direct_message = state
+			.selected
+			.and_then(|id| state.channel(id))
+			.is_some_and(|c| c.kind == 1 && c.guild.is_none());
 		let show_members = !selected_voice
+			&& !direct_message
 			&& !search_open
 			&& state.selected.is_some()
 			&& if wide_members {
@@ -4400,10 +4485,11 @@ impl MessagingUi {
 			} else {
 				(ui.available_width() * 0.6).max(240.0)
 			};
+			// Search results share the conversation's card: one sheet with a divider.
 			egui::Panel::right("search-pane")
 				.resizable(false)
 				.show_separator_line(!design::has_window_background(ui))
-				.exact_size(width)
+				.exact_size(width + if floating { f32::from(gap) } else { 0.0 })
 				.frame(
 					egui::Frame::new()
 						.fill(design::section_surface(
@@ -4411,7 +4497,16 @@ impl MessagingUi {
 							background.sidebar,
 							design::ImageSection::MemberList,
 						))
-						.inner_margin(egui::Margin::same(12)),
+						.inner_margin(egui::Margin::same(12))
+						.outer_margin(if floating {
+							egui::Margin {
+								right: gap,
+								bottom: gap,
+								..Default::default()
+							}
+						} else {
+							egui::Margin::ZERO
+						}),
 				)
 				.show(ui, |ui| {
 					self.search.pane(
@@ -4438,10 +4533,20 @@ impl MessagingUi {
 				commands.push(command);
 			}
 			if wide_members {
-				egui::Panel::right("people-pane")
+				let around = if floating {
+					egui::Margin {
+						left: gap,
+						right: gap,
+						top: 0,
+						bottom: gap,
+					}
+				} else {
+					egui::Margin::ZERO
+				};
+				let people = egui::Panel::right("people-pane")
 					.resizable(false)
-					.show_separator_line(!design::has_window_background(ui))
-					.exact_size(240.0)
+					.show_separator_line(!design::has_window_background(ui) && !floating)
+					.exact_size(240.0 + around.sum().x)
 					.frame(
 						egui::Frame::new()
 							.fill(design::section_surface(
@@ -4454,11 +4559,17 @@ impl MessagingUi {
 								right: 8,
 								top: 8,
 								bottom: 8,
-							}),
+							})
+							.outer_margin(around),
 					)
 					.show(ui, |ui| {
 						self.member_rows(ui, state, &mut commands);
 					});
+				if floating {
+					let card = people.response.rect - around;
+					design::finish_panel(ui, card, background.base);
+					members_edge = Some(people.response.rect.left());
+				}
 			} else {
 				let response = dialog::Dialog::new("members-narrow", language.text("members"))
 					.subtitle(language.text("members-description"))
@@ -4486,7 +4597,20 @@ impl MessagingUi {
 					} else {
 						background.chat
 					})
-					.inner_margin(0),
+					.inner_margin(0)
+					.outer_margin(if floating {
+						egui::Margin {
+							right: if search_open || members_edge.is_some() {
+								0
+							} else {
+								gap
+							},
+							bottom: gap,
+							..Default::default()
+						}
+					} else {
+						egui::Margin::ZERO
+					}),
 			)
 			.show(ui, |ui| {
 				let message_surface =
@@ -4633,13 +4757,14 @@ impl MessagingUi {
 							} else {
 								egui::Color32::TRANSPARENT
 							})
-							// The bottom inset matches the account card's, so the input and the
-							// account pill sit on one line across the window.
+							// Inside a floating card the input keeps the same 16px from the
+							// card's bottom edge as from its sides; flat columns keep the
+							// account card's inset, so both pills sit on one line.
 							.inner_margin(egui::Margin {
 								left: 16,
 								right: 16,
 								top: 2,
-								bottom: 8,
+								bottom: if floating { 16 } else { 8 },
 							}),
 					)
 					.show(ui, |ui| {
@@ -4863,6 +4988,18 @@ impl MessagingUi {
 						}
 					});
 			});
+		if floating {
+			// The conversation card runs from the navigation column to the member card, or to
+			// the window's gap; an open search pane lives inside it.
+			let card = egui::Rect::from_min_max(
+				shell.min,
+				egui::pos2(
+					members_edge.unwrap_or(shell.right() - f32::from(gap)),
+					shell.bottom() - f32::from(gap),
+				),
+			);
+			design::finish_panel(ui, card, background.base);
+		}
 		if state
 			.archives
 			.as_ref()
@@ -8349,7 +8486,8 @@ mod composer_tests {
 					if clear {
 						0
 					} else if dm {
-						3
+						// The DM list and the header; a one-to-one DM has no member list.
+						2
 					} else {
 						1
 					},
@@ -9582,7 +9720,7 @@ pub fn debug_pr565(mut state: State, mut user: model::User) {
 	state.own_profile.data = Some(profiles::synthetic(&own, None));
 	assert_eq!(
 		profiles::known_username(&state, own.id).as_deref(),
-		Some("serein.preview")
+		Some("leech.preview")
 	);
 	click(
 		&mut view,
@@ -9644,3 +9782,45 @@ pub fn debug_pr565(mut state: State, mut user: model::User) {
 
 #[cfg(all(debug_assertions, feature = "demo"))]
 pub use timeline::debug_copy_feedback_check;
+
+/// The member list while it loads: a group heading and rows of avatars with names, in the
+/// member rows' own geometry, so the real list replaces it without moving anything.
+fn loading_people(ui: &mut egui::Ui, label: &str) {
+	const NAMES: [f32; 12] = [
+		0.62, 0.44, 0.7, 0.52, 0.38, 0.66, 0.48, 0.58, 0.4, 0.68, 0.5, 0.36,
+	];
+	let height = (ui.available_height() - 8.0).max(0.0);
+	let (rect, response) = ui.allocate_exact_size(
+		egui::vec2(ui.available_width(), height),
+		egui::Sense::hover(),
+	);
+	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, false, label));
+	if !ui.is_rect_visible(rect) {
+		return;
+	}
+	let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
+	let heading = design::placeholder_fill(ui, 0.24);
+	let fill = design::placeholder_fill(ui, 0.2);
+	let faint = design::placeholder_fill(ui, 0.12);
+	let width = (rect.width() - 56.0).max(0.0);
+	painter.rect_filled(
+		egui::Rect::from_min_size(rect.min + egui::vec2(8.0, 8.0), egui::vec2(88.0, 8.0)),
+		4.0,
+		heading,
+	);
+	for (index, share) in NAMES.iter().enumerate() {
+		let top = rect.top() + 26.0 + index as f32 * 42.0;
+		if top > rect.bottom() {
+			break;
+		}
+		painter.circle_filled(egui::pos2(rect.left() + 24.0, top + 21.0), 16.0, faint);
+		painter.rect_filled(
+			egui::Rect::from_min_size(
+				egui::pos2(rect.left() + 48.0, top + 16.0),
+				egui::vec2(width * share, 10.0),
+			),
+			5.0,
+			fill,
+		);
+	}
+}

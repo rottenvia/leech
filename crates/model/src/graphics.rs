@@ -1,12 +1,12 @@
 //! Device-local GPU selection; independent of Discord accounts.
 
-/// Which GPU Serein renders on, mirroring the three choices desktop platforms already offer.
+/// Which GPU Leech renders on, mirroring the three choices desktop platforms already offer.
 ///
 /// A preference only orders the adapters that can actually present to the window, so it can
 /// never select a device the compositor refuses to read from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GpuPreference {
-	/// Serein picks: presentable adapters first, then the discrete GPU that usually drives
+	/// Leech picks: presentable adapters first, then the discrete GPU that usually drives
 	/// the display. Honors `WGPU_POWER_PREF` for diagnostics.
 	#[default]
 	Automatic,
@@ -26,7 +26,7 @@ impl GpuPreference {
 	}
 	pub fn description(self) -> &'static str {
 		match self {
-			Self::Automatic => "Let Serein choose the GPU that can draw this window.",
+			Self::Automatic => "Let Leech choose the GPU that can draw this window.",
 			Self::HighPerformance => "Use the discrete graphics card when one is available.",
 			Self::PowerSaving => "Use integrated graphics to save battery.",
 		}

@@ -1,4 +1,4 @@
-//! Phosphor Icons (MIT), Simple Icons brand marks (CC0) and the Serein mark rasterized once
+//! Phosphor Icons (MIT), Simple Icons brand marks (CC0) and the Leech mark rasterized once
 //! into one bundled atlas and tinted at draw time.
 //!
 //! `assets/icons/atlas.png` holds white glyphs on transparency in fixed 64px cells;
@@ -75,7 +75,7 @@ pub enum Icon {
 	Copy,
 	Verified,
 	Calendar,
-	Serein,
+	Leech,
 	File,
 	FileImage,
 	FilePdf,
@@ -124,13 +124,36 @@ pub enum Icon {
 	/// Stacked servers, for mutual-server counts.
 	Servers,
 	Fullscreen,
+	/// Noise suppression on: voice bars under a spark.
+	Noise,
+	NoiseOff,
+	/// An application window, as a share source.
+	Window,
+	User,
+	IdCard,
+	ShieldCheck,
+	Database,
+	Palette,
+	ChatText,
+	Keyboard,
+	ArrowCircleUp,
+	Swatches,
+	PuzzlePiece,
+	SignOut,
+	BellSlash,
+	Envelope,
+	Prohibit,
+	UserMinus,
+	At,
+	Signal,
+	Sticker,
 	/// Horizontally mirrored reply glyph from the shared atlas.
 	Forward,
 }
 
 impl Icon {
 	/// Canonical atlas cells; Forward reuses the mirrored Reply cell.
-	pub const ALL: [Icon; 107] = [
+	pub const ALL: [Icon; 128] = [
 		Icon::ChevronDown,
 		Icon::ChevronRight,
 		Icon::Gear,
@@ -190,7 +213,7 @@ impl Icon {
 		Icon::Copy,
 		Icon::Verified,
 		Icon::Calendar,
-		Icon::Serein,
+		Icon::Leech,
 		Icon::File,
 		Icon::FileImage,
 		Icon::FilePdf,
@@ -238,6 +261,27 @@ impl Icon {
 		Icon::DeviceMobile,
 		Icon::Servers,
 		Icon::Fullscreen,
+		Icon::Noise,
+		Icon::NoiseOff,
+		Icon::Window,
+		Icon::User,
+		Icon::IdCard,
+		Icon::ShieldCheck,
+		Icon::Database,
+		Icon::Palette,
+		Icon::ChatText,
+		Icon::Keyboard,
+		Icon::ArrowCircleUp,
+		Icon::Swatches,
+		Icon::PuzzlePiece,
+		Icon::SignOut,
+		Icon::BellSlash,
+		Icon::Envelope,
+		Icon::Prohibit,
+		Icon::UserMinus,
+		Icon::At,
+		Icon::Signal,
+		Icon::Sticker,
 	];
 	/// Upstream icon name recorded in `index.tsv`.
 	fn asset(self) -> &'static str {
@@ -261,7 +305,28 @@ impl Icon {
 			Icon::Bell => "bell",
 			Icon::Phone => "phone",
 			Icon::InCall => "phone-call",
-			Icon::HangUp => "phone-disconnect",
+			Icon::HangUp => "hang-up",
+			Icon::Noise => "noise",
+			Icon::NoiseOff => "noise-slash",
+			Icon::Window => "window",
+			Icon::Sticker => "sticker",
+			Icon::Signal => "signal",
+			Icon::BellSlash => "bell-slash",
+			Icon::Envelope => "envelope-simple",
+			Icon::Prohibit => "prohibit",
+			Icon::UserMinus => "user-minus",
+			Icon::At => "at",
+			Icon::User => "user",
+			Icon::IdCard => "identification-card",
+			Icon::ShieldCheck => "shield-check",
+			Icon::Database => "database",
+			Icon::Palette => "palette",
+			Icon::ChatText => "chat-circle-text",
+			Icon::Keyboard => "keyboard",
+			Icon::ArrowCircleUp => "arrow-circle-up",
+			Icon::Swatches => "swatches",
+			Icon::PuzzlePiece => "puzzle-piece",
+			Icon::SignOut => "sign-out",
 			Icon::Video => "video-camera",
 			Icon::VideoSlash => "video-camera-slash",
 			Icon::ScreenShare => "monitor-arrow-up",
@@ -304,7 +369,7 @@ impl Icon {
 			Icon::Copy => "copy",
 			Icon::Verified => "seal-check",
 			Icon::Calendar => "calendar-blank",
-			Icon::Serein => "serein-mark",
+			Icon::Leech => "leech-mark",
 			Icon::File => "file",
 			Icon::FileImage => "file-image",
 			Icon::FilePdf => "file-pdf",
@@ -408,6 +473,15 @@ fn texture(ctx: &egui::Context) -> TextureHandle {
 
 /// Paint `icon` centred in `rect` with `color`.
 pub fn paint(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
+	paint_oriented(painter, icon, rect, color, false);
+}
+
+/// `icon` upside down, for a chevron that points up while its list is open.
+pub fn paint_flipped(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
+	paint_oriented(painter, icon, rect, color, true);
+}
+
+fn paint_oriented(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32, flip: bool) {
 	let size = rect.width().min(rect.height());
 	let rect = Rect::from_center_size(rect.center(), Vec2::splat(size))
 		.round_to_pixels(painter.pixels_per_point());
@@ -422,6 +496,9 @@ pub fn paint(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
 	);
 	if icon == Icon::Forward {
 		std::mem::swap(&mut uv.min.x, &mut uv.max.x);
+	}
+	if flip {
+		std::mem::swap(&mut uv.min.y, &mut uv.max.y);
 	}
 	// Glyphs occupy 56 of every 64 cell pixels; draw the cell slightly larger so the visible
 	// glyph fills `rect` like the previous painted icons did.
@@ -450,12 +527,12 @@ pub fn channel(kind: u8) -> Icon {
 
 /// Square icon button that highlights on hover and exposes `label` to accessibility.
 pub fn button(ui: &mut egui::Ui, icon: Icon, size: f32, label: &str) -> Response {
-	button_with_tooltip(ui, icon, size, label, false)
+	button_with_tooltip(ui, icon, size, label, false, Face::Bare)
 }
 
 /// Message toolbar labels appear as soon as the pointer reaches the action.
 pub(crate) fn button_immediate(ui: &mut egui::Ui, icon: Icon, size: f32, label: &str) -> Response {
-	button_with_tooltip(ui, icon, size, label, true)
+	button_with_tooltip(ui, icon, size, label, true, Face::Bare)
 }
 
 pub(crate) fn immediate_tooltip(response: Response, label: &str) -> Response {
@@ -470,22 +547,82 @@ pub(crate) fn immediate_tooltip(response: Response, label: &str) -> Response {
 	response
 }
 
+/// Corner radius of every icon button plate; matches the shared 8px widget radius.
+pub const PLATE_RADIUS: u8 = 8;
+
+/// State fill behind an icon button. A veil of the strong text colour rather than a fixed
+/// surface tone, so hover and pressed read on every surface, `raised` cards included.
+pub(crate) fn plate(ui: &egui::Ui, response: &Response, active: bool) -> Color32 {
+	let veil = design::palette(ui).text_strong;
+	if response.is_pointer_button_down_on() {
+		veil.gamma_multiply(0.18)
+	} else if response.hovered() || response.has_focus() {
+		veil.gamma_multiply(0.11)
+	} else if active {
+		veil.gamma_multiply(0.07)
+	} else {
+		Color32::TRANSPARENT
+	}
+}
+
+/// How an icon button looks at rest.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Face {
+	/// Glyph only; the plate appears on hover.
+	Bare,
+	/// Filled with the accent while enabled: the one confirming action in a row.
+	Accent,
+}
+
+/// Icon button filled with the accent while enabled, for the one confirming action in a row.
+pub(crate) fn accent_button(ui: &mut egui::Ui, icon: Icon, size: f32, label: &str) -> Response {
+	button_with_tooltip(ui, icon, size, label, false, Face::Accent)
+}
+
 fn button_with_tooltip(
 	ui: &mut egui::Ui,
 	icon: Icon,
 	size: f32,
 	label: &str,
 	immediate: bool,
+	face: Face,
 ) -> Response {
 	let label = crate::i18n::translate_if_key(label);
 	let colors = design::palette(ui);
 	let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
-	if response.hovered() || response.has_focus() {
-		ui.painter().rect_filled(rect, 6, colors.hover);
+	let hot = response.hovered() || response.has_focus();
+	let filled = face == Face::Accent && ui.is_enabled();
+	if filled {
+		let fill = if response.is_pointer_button_down_on() {
+			design::mix(colors.accent, Color32::BLACK, 0.12)
+		} else if hot {
+			design::mix(colors.accent, Color32::WHITE, 0.14)
+		} else {
+			colors.accent
+		};
+		ui.painter().rect_filled(rect, PLATE_RADIUS, fill);
+	} else {
+		ui.painter()
+			.rect_filled(rect, PLATE_RADIUS, plate(ui, &response, false));
+		if face != Face::Bare {
+			ui.painter().rect_stroke(
+				rect,
+				PLATE_RADIUS,
+				egui::Stroke::new(
+					1.0,
+					colors
+						.text_strong
+						.gamma_multiply(if hot { 0.2 } else { 0.11 }),
+				),
+				egui::StrokeKind::Inside,
+			);
+		}
 	}
 	let color = if !ui.is_enabled() {
 		colors.muted.gamma_multiply(0.5)
-	} else if response.hovered() || response.has_focus() {
+	} else if filled {
+		colors.accent_text
+	} else if hot {
 		colors.text_strong
 	} else {
 		colors.muted
@@ -504,9 +641,8 @@ pub fn toggle(ui: &mut egui::Ui, icon: Icon, size: f32, active: bool, label: &st
 	let label = crate::i18n::translate_if_key(label);
 	let colors = design::palette(ui);
 	let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
-	if response.hovered() || response.has_focus() {
-		ui.painter().rect_filled(rect, 6, colors.hover);
-	}
+	ui.painter()
+		.rect_filled(rect, PLATE_RADIUS, plate(ui, &response, active));
 	let color = if active || response.hovered() || response.has_focus() {
 		colors.text_strong
 	} else {

@@ -196,8 +196,9 @@ impl ScreenUi {
 		egui::ScrollArea::vertical()
 			.id_salt("screen-sources")
 			.max_height(196.0)
+			.scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
 			.show(ui, |ui| self.source_list(ui));
-		ui.add_space(14.0);
+		ui.add_space(6.0);
 		ui.label(crate::design::eyebrow(
 			ui,
 			crate::i18n::translate("screen-body-quality"),
@@ -212,7 +213,7 @@ impl ScreenUi {
 				}
 			}
 		});
-		ui.add_space(8.0);
+		ui.add_space(14.0);
 		ui.label(crate::design::eyebrow(
 			ui,
 			crate::i18n::translate("screen-body-frame-rate"),
@@ -251,7 +252,7 @@ impl ScreenUi {
 				ui,
 				"screen-body-share-system-audio",
 				Some(if cfg!(target_os = "macos") {
-					"screen-body-send-what-your-mac-plays-along-with-the-screen-serein"
+					"screen-body-send-what-your-mac-plays-along-with-the-screen-leech"
 				} else {
 					"screen-body-share-sound-from-other-apps-even-when-sharing-one-window"
 				}),
@@ -337,7 +338,7 @@ impl ScreenUi {
 				if display {
 					crate::icons::Icon::Television
 				} else {
-					crate::icons::Icon::ScreenShare
+					crate::icons::Icon::Window
 				},
 				egui::Rect::from_center_size(
 					egui::pos2(rect.left() + 26.0, rect.center().y),

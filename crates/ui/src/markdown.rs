@@ -2029,8 +2029,6 @@ impl Formatted {
 			egui::Align::LEFT
 		};
 		let mut inlines: Vec<Inline> = Vec::new();
-		// Label overwrites the first section's leading space with the wrap indentation.
-		job.append("", 0.0, Self::format(ui, &Style::default()));
 		for (text, style) in spans {
 			let format = Self::format(ui, style);
 			let mut start = 0;
@@ -2108,6 +2106,12 @@ impl Formatted {
 			}
 			job.sections = sections;
 		}
+		// Label puts the wrap indentation (the widgets before this run) on the first
+		// section. epaint lays out each paragraph on its own and drops an empty section
+		// at a paragraph start, so with a newline in the run that indentation would be
+		// lost and the first row drawn over the preceding pill.
+		job.sections
+			.retain(|section| !section.byte_range.is_empty());
 		// In a message with inline artwork every row has the artwork's height, so text
 		// centred in it lines up across separately laid out runs and pills. Underlines
 		// and backgrounds follow a glyph's line height: those sections keep the text's
@@ -4655,7 +4659,7 @@ mod tests {
 	fn selecting_across_images_copies_unicode_and_custom_markup() {
 		let ctx = egui::Context::default();
 		crate::emoji::install(&ctx).unwrap();
-		let source = "A 👩🏽‍💻 ❤️ <:serein_wave:9001> Z";
+		let source = "A 👩🏽‍💻 ❤️ <:leech_wave:9001> Z";
 		let parsed = Formatted::parse(source);
 		let mut avatars = crate::avatars::Avatars::default();
 		let mut clock = 0.0;
@@ -4776,7 +4780,7 @@ mod tests {
 			assert!(
 				matches!(
 					copied.map(str::trim_end),
-					Some("<:serein_wave:9001> Z" | " Z")
+					Some("<:leech_wave:9001> Z" | " Z")
 				),
 				"partial emoji copied: {copied:?}"
 			);
@@ -4804,7 +4808,7 @@ mod tests {
 				),
 				(
 					"<:old_name:9001>",
-					":serein_wave:",
+					":leech_wave:",
 					"From Emoji source server",
 				),
 				(
@@ -5798,5 +5802,29 @@ mod tests {
 		}
 		assert_eq!(cache.entries.len(), 500);
 		assert!(cache.bytes <= 1024 * 1024);
+	}
+	#[test]
+	fn a_run_with_newlines_starts_after_the_pill_before_it() {
+		let parsed = Formatted::parse(
+			"Hello @everyone, thank you.
+Next line.",
+		);
+		let ctx = egui::Context::default();
+		let output = ctx.run_ui(Default::default(), |ui| parsed.show(ui, &mut None));
+		let mut pill = None;
+		let mut first_row = None;
+		for shape in &output.shapes {
+			match &shape.shape {
+				egui::Shape::Rect(rect) => pill = Some(rect.rect),
+				egui::Shape::Text(text) if text.galley.text().starts_with(", thank") => {
+					let row = &text.galley.rows[0];
+					first_row = Some(text.pos.x + row.pos.x + row.visuals.mesh_bounds.min.x);
+				}
+				_ => {}
+			}
+		}
+		let (pill, first_row) = (pill.expect("pill"), first_row.expect("text"));
+		assert!(first_row >= pill.right(), "{first_row} overlaps {pill:?}");
+		output.drop_without_applying_deltas();
 	}
 }

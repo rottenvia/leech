@@ -1202,6 +1202,55 @@ mod tests {
 		}
 	}
 
+	#[test]
+	fn gif_embeds_wear_discords_badge() {
+		let mut message = test_support::message(1, model::Id(2));
+		message.embeds = vec![Embed {
+			kind: "gifv".into(),
+			url: Some("https://example.org/cat".into()),
+			image: Some(model::EmbedMedia {
+				url: Some("https://media.discordapp.net/attachments/1/2/cat.gif".into()),
+				width: 320,
+				height: 240,
+				..Default::default()
+			}),
+			..Default::default()
+		}];
+		let ctx = egui::Context::default();
+		let mut images = Avatars::default();
+		let mut cache = FormatCache::default();
+		let mut opening = None;
+		let mut download = DownloadUi::default();
+		let output = ctx.run_ui(
+			egui::RawInput {
+				screen_rect: Some(egui::Rect::from_min_size(
+					egui::Pos2::ZERO,
+					egui::vec2(640.0, 700.0),
+				)),
+				..Default::default()
+			},
+			|ui| {
+				let mut profile = crate::profiles::ProfileSession::default();
+				show(
+					ui,
+					&message,
+					&mut cache,
+					&mut images,
+					&mut opening,
+					&mut download,
+					&mut profile,
+					&client_core::State::default(),
+					crate::design::MessageCardSurface::Conversation,
+				);
+			},
+		);
+		let badge = output.shapes.iter().any(
+			|shape| matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.job.text == "GIF"),
+		);
+		output.drop_without_applying_deltas();
+		assert!(badge, "a GIF embed paints its GIF badge");
+	}
+
 	/// Adjacent fields render through the same field-column code path with no explicit
 	/// id_salt of their own, so egui's auto-assigned widget ids can land on the same value
 	/// for two different fields (data-dependent on their wrapped line counts) unless each
@@ -1272,12 +1321,26 @@ mod tests {
 	}
 }
 
-/// Shared star overlay for message GIFs and uploaded GIF attachments.
+/// Shared overlay for message GIFs and uploaded GIF attachments, as in Discord: a GIF badge
+/// in the top-left corner, and a favourite star top-right while the pointer is over the media.
 pub(crate) fn favorite_star(
 	ui: &mut egui::Ui,
 	response: &egui::Response,
 	favorite: bool,
 ) -> egui::Response {
+	let badge = egui::Rect::from_min_size(
+		response.rect.left_top() + egui::vec2(6.0, 6.0),
+		egui::vec2(30.0, 18.0),
+	);
+	ui.painter()
+		.rect_filled(badge, 4, egui::Color32::from_black_alpha(160));
+	ui.painter().text(
+		badge.center(),
+		egui::Align2::CENTER_CENTER,
+		"GIF",
+		egui::FontId::new(11.0, crate::design::semibold_family(ui.ctx())),
+		egui::Color32::WHITE,
+	);
 	let star_rect = egui::Rect::from_min_size(
 		response.rect.right_top() + egui::vec2(-34.0, 4.0),
 		egui::Vec2::splat(30.0),
@@ -1287,6 +1350,9 @@ pub(crate) fn favorite_star(
 		response.id.with("favorite"),
 		egui::Sense::click(),
 	);
+	if !(ui.rect_contains_pointer(response.rect) || star.has_focus()) {
+		return star;
+	}
 	ui.painter()
 		.rect_filled(star_rect, 6, egui::Color32::from_black_alpha(190));
 	crate::icons::paint(

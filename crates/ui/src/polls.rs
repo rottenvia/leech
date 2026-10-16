@@ -728,7 +728,7 @@ fn emoji_button(
 	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), &label));
 	let hot = ui.is_enabled() && (response.hovered() || response.has_focus());
 	if hot || open {
-		ui.painter().rect_filled(rect, 6, p.hover);
+		ui.painter().rect_filled(rect, 8, p.hover);
 	}
 	let art = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(22.0));
 	match emoji {
@@ -825,7 +825,7 @@ fn duration_select(ui: &mut egui::Ui, duration: &mut u16) {
 			widget.corner_radius = 8.into();
 			widget.expansion = 0.0;
 		}
-		egui::ComboBox::from_id_salt("poll-duration")
+		crate::design::combo("poll-duration")
 			.width(ui.available_width().min(220.0))
 			.selected_text(RichText::new(duration_label(*duration)).color(p.text_strong))
 			.show_ui(ui, |ui| {
@@ -856,13 +856,13 @@ fn multiple_answers(ui: &mut egui::Ui, checked: &mut bool, enabled: bool) {
 				egui::Color32::TRANSPARENT
 			};
 		}
-		ui.add_enabled(
-			enabled,
-			egui::Checkbox::new(
+		ui.add_enabled_ui(enabled, |ui| {
+			crate::design::checkbox(
+				ui,
 				checked,
 				RichText::new(translate("polls-creator-multiple-answers")).size(14.0),
-			),
-		);
+			)
+		});
 	});
 }
 
