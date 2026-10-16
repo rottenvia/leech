@@ -115,7 +115,8 @@ soft halo spreads around it. Someone picking up springs and glows the same way, 
 once the call is up nothing circles again, not while media re-secures for a newcomer nor during
 a reconnect. Leaving plays no sound of Leech's own. The outgoing ring
 starts once the call connects, after the chime has rung out, and keeps a fixed three-second
-cadence; the ringing seat pulses on each burst of the ring sound. A seat whose person leaves
+cadence; the ringing seat pulses on each burst of the ring sound, and on a plate its "Ringing"
+status sits just above the avatar, its dots ebbing and refilling once per cycle. A seat whose person leaves
 fades out where it sat while the others glide to their places. The direct-message stage unfolds
 from the header when a call starts and folds back into it when the call ends, replaying its last
 frame as it fades. A call known to have nobody else in it shows no join stage, so hanging up on
