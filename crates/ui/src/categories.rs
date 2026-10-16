@@ -868,13 +868,18 @@ impl MessagingUi {
 								});
 							}
 							let hovered = enabled && (response.hovered() || response.has_focus());
+							let hover = if enabled {
+								crate::design::hover_motion(ui, &response)
+							} else {
+								0.0
+							};
 							if active {
 								ui.painter().rect_filled(row, 8, colors.selected);
-							} else if hovered {
+							} else if hover > 0.0 {
 								ui.painter().rect_filled(
 									row,
 									8,
-									crate::design::row_highlight(ui, colors.hover, 1.0),
+									crate::design::row_highlight(ui, colors.hover, hover),
 								);
 							}
 							if dm_list
@@ -1021,11 +1026,22 @@ impl MessagingUi {
 									egui::Sense::hover(),
 								);
 								glyph = Some(rect);
+								// Under the pointer the glyph grows a little, so the row answers
+								// before the click.
+								let grow = inner.ctx().animate_bool_with_time_and_easing(
+									egui::Id::unique(("channel-glyph", channel.id)),
+									hovered,
+									inner.style().animation_time,
+									egui::emath::easing::cubic_out,
+								);
 								channel_marks::paint_glyph(
 									inner.painter(),
 									access,
 									icon,
-									rect,
+									egui::Rect::from_center_size(
+										rect.center(),
+										rect.size() * (1.0 + 0.16 * grow),
+									),
 									name_color.gamma_multiply(
 										if (active || hovered) && !access.dim() {
 											1.0

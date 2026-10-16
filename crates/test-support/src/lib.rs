@@ -829,7 +829,6 @@ pub fn voice_demo_state() -> State {
 			.iter()
 			.map(|entry| entry.participant)
 			.collect(),
-		error: None,
 	});
 	state.select(Id(25));
 	load_page(&mut state, None);
@@ -866,7 +865,6 @@ pub fn call_demo_state() -> State {
 		server_muted: false,
 		server_deafened: false,
 		participants: vec![participant(1, false), participant(2, true)],
-		error: None,
 	});
 	state.status = "Offline call fixture · no microphone or network access";
 	state
@@ -1531,7 +1529,7 @@ mod tests {
 	use super::*;
 	#[test]
 	fn existing_dm_calls_survive_ringing_hangup_and_resume_but_not_deletion_or_logout() {
-		use client_core::voice::{Command as V, Event as E, MAX_DM_CALLS};
+		use client_core::voice::{Event as E, MAX_DM_CALLS};
 		let mut state = existing_call_demo_state();
 		state.demo = false;
 		let call = |channel, ringing, unavailable| E::Call {
@@ -1544,14 +1542,11 @@ mod tests {
 		assert!(state.voice.active.is_none());
 		assert!(state.voice.incoming.is_none());
 		state.apply_voice(call(Id(22), Some(vec![Id(1)]), false));
-		assert!(state.decline_call().is_some());
+		assert!(state.decline_call());
 		state.apply_voice(call(Id(22), Some(vec![]), false));
 		assert!(state.voice.has_dm_call(Id(22)));
 		assert!(state.voice.incoming.is_none());
-		assert!(matches!(
-			state.start_call(Id(22), true),
-			Some(client_core::Command::Voice(V::Join { ring: false, .. }))
-		));
+		assert!(state.start_call(Id(22), true));
 		state.leave_call();
 		assert!(state.voice.has_dm_call(Id(22)));
 		state.apply(Envelope {
@@ -1559,7 +1554,7 @@ mod tests {
 			event: Event::Disconnected,
 		});
 		assert!(state.voice.has_dm_call(Id(22)));
-		assert!(state.start_call(Id(22), false).is_none());
+		assert!(!state.start_call(Id(22), false));
 		state.apply(Envelope {
 			generation: state.generation,
 			event: Event::Resumed,
@@ -1572,10 +1567,7 @@ mod tests {
 		assert!(state.voice.has_dm_call(Id(22)));
 		state.apply_voice(E::Deleted { channel: Id(22) });
 		assert!(!state.voice.has_dm_call(Id(22)));
-		assert!(matches!(
-			state.start_call(Id(22), true),
-			Some(client_core::Command::Voice(V::Join { ring: true, .. }))
-		));
+		assert!(state.start_call(Id(22), true));
 		state.leave_call();
 		state.apply_voice(call(Id(22), None, false));
 		state.apply_voice(call(Id(22), None, true));

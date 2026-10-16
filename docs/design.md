@@ -85,6 +85,55 @@ Row actions in lists (friends, roles) are the same rounded squares as every othe
 circles. A disabled filled button keeps a dimmed fill and takes the strong text colour, so its
 label stays legible.
 
+Motion is short and shared. `design::hover_motion` fades hover plates and ink in and out,
+and `design::press_motion` with `design::pressed_rect` dips a control by a few percent while
+it is held. Buttons, icon buttons, menu rows, segmented tabs, text actions, title bar
+captions, call controls and list rows all use them. Both run on egui's `animation_time`
+(1/12 s, like the server rail), so a zero turns all motion off. Switching conversations fades
+the new one in over 0.18 s from part-way, so the switch never flashes the bare background.
+
+Loading reads as alive without spinning, and each surface waits in its own shape and motion
+(`crates/ui/src/skeleton.rs`): a server channel's message groups rise from the composer under a
+soft light tinted with the accent; a direct conversation's short replies slide in turn by turn
+while the light passes from reply to reply; an app's replies unfold embed cards from their
+accent stripe and pop in their buttons; forum posts drop in as cards; search results and pins
+slide in from the pane's edge; people fill the member list with their presence dots popping in
+after them. No placeholder shows for a wait under 0.15 s, and none is cut off: when the content
+comes, the placeholder's last frame fades out under it while the content fades in over 0.22 s.
+Opening a conversation that is already loaded fades it in briefly, so the click visibly lands.
+Channel glyphs in the sidebar grow a little under the pointer. Restoring a saved login shows a compact screen:
+the app mark with a passing sheen, a determinate bar with a glowing head, and the stage with
+the time left under it. The estimate follows the last few restores on this device, reaches
+about 90% when that time has passed, stays under the current stage, and never fills before
+the account is ready.
+
+Calls follow their sounds. A seat waits at 92% size and faded while its own call first
+connects (a comet circles just inside the avatar edge) or while it is only being rung. It
+arrives in time with Discord's two-note join chime: the own comet closes into a ring on the
+first note, the avatar springs to full size with a two-percent overshoot on the second, and a
+soft halo spreads around it. Someone picking up springs and glows the same way, with no ring;
+once the call is up nothing circles again, not while media re-secures for a newcomer nor during
+a reconnect. Leaving plays no sound of Leech's own. The outgoing ring
+starts once the call connects, after the chime has rung out, and keeps a fixed three-second
+cadence; the ringing seat pulses on each burst of the ring sound, and on a plate its "Ringing"
+status sits just above the avatar, its dots ebbing and refilling once per cycle. A seat whose person leaves
+fades out where it sat while the others glide to their places. The direct-message stage unfolds
+from the header when a call starts and folds back into it when the call ends, replaying its last
+frame as it fades. A call known to have nobody else in it shows no join stage, so hanging up on
+an unanswered call never shows the person rung as if they had joined. Rings and halos use the
+call colour (Appearance, Accent): the theme accent lifted until it stands out on the dark stage,
+or the owner's pick. Halos spread up to 14 points but never past the stage, so they are never
+cut. Go Live uses the same motion on its button: while the share starts, the plate waits small
+and faint while a loading line runs round its rounded edge; once the share's tile is on the
+stage or Discord carries the share, whichever is first, the line closes round the plate, the
+plate fills and springs to full size with Discord's stream sound, and only then does LIVE pop in
+under the avatar. Stopping clears the button and LIVE on the click. The call options menu matches
+Discord's: Grid View, Show My Own Camera, Show Non-Video Participants, Voice & Video Settings
+and, for private calls, Region. Call animations repaint every frame while they run, like egui's own animations; a timer
+would round to every other vsync and look laggy. The voice-only stage is never shorter than its
+avatars and bar. While connecting, the voice panel's status tile breathes and eases from amber
+to green. Message rows keep instant hover so reading stays fast.
+
 Scroll bars stay out of the picture: nothing at rest, a faint 3px thread while the pointer is
 over the area, a soft handle only when the bar itself is pointed at. Dialog sheets and the
 share-source list hide the bar altogether; a cut-off last row says the sheet scrolls.
@@ -156,9 +205,9 @@ The bundled faces remain upstream's hinted TrueType builds. See `assets/README.m
   profile" link, then a search field and the pages with their icons under sentence-case
   section titles; the sections of an open page hang off a guide line. The page title and a
   plain close button sit in a slim bar above a centred column.
-- Loading: the timeline fills upwards from the composer with placeholder message groups of
-  varied length (an occasional attachment), and the member list shows a heading and avatar
-  rows in the real rows' geometry. Both breathe slowly and repaint only while shown.
+- Loading: the timeline fills upwards from the composer with placeholders shaped like the
+  conversation (channel groups, direct replies or app embeds), and the member list shows a
+  heading and avatar rows in the real rows' geometry. They repaint only while shown.
 
 Confirmed empty guild text, announcement and thread histories show a welcome above the
 composer: a circular channel-kind icon, a wrapped semibold channel heading and a short
@@ -199,10 +248,14 @@ voice-only DM call opens only as tall as its avatars and the bar) or hairlined 1
 name badges (guild channels), a bottom control bar of dark pills (mute with settings chevron,
 camera, screen share, more) and a red hang-up button, mute/deafen toggles in the account card,
 whose status line reads "In a call" with a green handset, and a "Voice Connected" panel above
-it while connected. Screen-share status is not shown on the stage; the share dialog and the button tooltip carry it. A DM call
+it while connected. As in Discord the panel's channel line sits a few points under its title,
+underlines from the left under the pointer, and opens the call's conversation when clicked. Screen-share status is not shown on the stage; the share dialog and the button tooltip carry it. A DM call
 that rings or runs without this device shows the same stage with whoever is in it and green
 buttons to join with video or voice (and a red decline while it rings here); a call ringing in
-another conversation keeps a slim banner. The header and the bar
+another conversation keeps a slim banner. When another device of the account takes the call
+over, the stage stays with that device's seat, and "Call continued on another device" unfolds
+as a pill at the top of the stage, rests five seconds and folds away; a toast says it only when
+the call's conversation is not open. The header and the bar
 stay visible beside the avatars or tiles and fade out only over an enlarged video, which keeps
 a slim 8px margin from the stage edges instead of touching the sidebar. In the channel list a
 voice channel's participants stand in the channel-icon column (24px avatars under the speaker

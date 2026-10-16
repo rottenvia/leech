@@ -57,6 +57,11 @@ impl Settings {
 			hide_window_decorations: ui.hide_window_decorations,
 			gpu_preference: ui.gpu_preference,
 			primary_color: ui.primary_color,
+			call_color: ui.call_color,
+			call_grid: ui.call_grid,
+			call_hide_own_camera: ui.call_hide_own_camera,
+			call_hide_non_video: ui.call_hide_non_video,
+			restore_ms: ui.restore_ms,
 			transparency_blur: ui.transparency_blur,
 			transparency: ui.transparency,
 			blur: ui.blur,
@@ -102,6 +107,11 @@ impl Settings {
 		ui.hide_window_decorations = value.hide_window_decorations;
 		ui.gpu_preference = value.gpu_preference;
 		ui.primary_color = value.primary_color;
+		ui.call_color = value.call_color;
+		ui.call_grid = value.call_grid;
+		ui.call_hide_own_camera = value.call_hide_own_camera;
+		ui.call_hide_non_video = value.call_hide_non_video;
+		ui.restore_ms = value.restore_ms;
 		ui.transparency_blur = value.transparency_blur;
 		ui.transparency = value.transparency;
 		ui.blur = value.blur;

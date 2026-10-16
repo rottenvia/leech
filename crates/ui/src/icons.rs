@@ -554,14 +554,13 @@ pub const PLATE_RADIUS: u8 = 8;
 /// surface tone, so hover and pressed read on every surface, `raised` cards included.
 pub(crate) fn plate(ui: &egui::Ui, response: &Response, active: bool) -> Color32 {
 	let veil = design::palette(ui).text_strong;
-	if response.is_pointer_button_down_on() {
-		veil.gamma_multiply(0.18)
-	} else if response.hovered() || response.has_focus() {
-		veil.gamma_multiply(0.11)
-	} else if active {
-		veil.gamma_multiply(0.07)
-	} else {
+	let rest = if active { 0.07 } else { 0.0 };
+	let hover = egui::lerp(rest..=0.11, design::hover_motion(ui, response));
+	let strength = egui::lerp(hover..=0.18, design::press_motion(ui, response));
+	if strength <= 0.0 {
 		Color32::TRANSPARENT
+	} else {
+		veil.gamma_multiply(strength)
 	}
 }
 
@@ -591,16 +590,17 @@ fn button_with_tooltip(
 	let colors = design::palette(ui);
 	let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
 	let hot = response.hovered() || response.has_focus();
+	let hover = design::hover_motion(ui, &response);
+	let press = design::press_motion(ui, &response);
 	let filled = face == Face::Accent && ui.is_enabled();
 	if filled {
-		let fill = if response.is_pointer_button_down_on() {
-			design::mix(colors.accent, Color32::BLACK, 0.12)
-		} else if hot {
-			design::mix(colors.accent, Color32::WHITE, 0.14)
-		} else {
-			colors.accent
-		};
-		ui.painter().rect_filled(rect, PLATE_RADIUS, fill);
+		let fill = design::mix(
+			design::mix(colors.accent, Color32::WHITE, 0.14 * hover),
+			Color32::BLACK,
+			0.12 * press,
+		);
+		ui.painter()
+			.rect_filled(design::pressed_rect(rect, press), PLATE_RADIUS, fill);
 	} else {
 		ui.painter()
 			.rect_filled(rect, PLATE_RADIUS, plate(ui, &response, false));
@@ -622,12 +622,15 @@ fn button_with_tooltip(
 		colors.muted.gamma_multiply(0.5)
 	} else if filled {
 		colors.accent_text
-	} else if hot {
-		colors.text_strong
 	} else {
-		colors.muted
+		colors.muted.lerp_to_gamma(colors.text_strong, hover)
 	};
-	paint(ui.painter(), icon, rect.shrink(size * 0.2), color);
+	paint(
+		ui.painter(),
+		icon,
+		design::pressed_rect(rect.shrink(size * 0.2), press),
+		color,
+	);
 	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), &label));
 	if immediate {
 		immediate_tooltip(response, &label)
@@ -643,12 +646,20 @@ pub fn toggle(ui: &mut egui::Ui, icon: Icon, size: f32, active: bool, label: &st
 	let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
 	ui.painter()
 		.rect_filled(rect, PLATE_RADIUS, plate(ui, &response, active));
-	let color = if active || response.hovered() || response.has_focus() {
+	let color = if active {
 		colors.text_strong
 	} else {
-		colors.muted
+		colors
+			.muted
+			.lerp_to_gamma(colors.text_strong, design::hover_motion(ui, &response))
 	};
-	paint(ui.painter(), icon, rect.shrink(size * 0.2), color);
+	let press = design::press_motion(ui, &response);
+	paint(
+		ui.painter(),
+		icon,
+		design::pressed_rect(rect.shrink(size * 0.2), press),
+		color,
+	);
 	response.widget_info(|| {
 		egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), active, &label)
 	});

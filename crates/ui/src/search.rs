@@ -787,7 +787,21 @@ impl SearchUi {
 			);
 		}
 		if let Some(view) = state.search.as_ref().filter(|view| view.pins) {
-			if view.loading {
+			let skeleton = egui::Id::unique("pins-skeleton");
+			if view.loading && view.page.is_none() {
+				let (rect, response) = ui.allocate_exact_size(
+					egui::vec2(ui.available_width(), 300.0),
+					egui::Sense::hover(),
+				);
+				response.widget_info(|| {
+					egui::WidgetInfo::labeled(
+						egui::Role::Label,
+						false,
+						crate::i18n::translate("search-pins-content-loading-pinned-messages"),
+					)
+				});
+				crate::skeleton::show(ui, skeleton, crate::skeleton::Kind::Results, rect, true);
+			} else if view.loading {
 				ui.label(
 					RichText::new(crate::i18n::translate_if_key(
 						if view.pin_before.is_some() {
@@ -827,6 +841,15 @@ impl SearchUi {
 					.clicked();
 			}
 			if let Some(page) = &view.page {
+				let rest = ui.available_rect_before_wrap();
+				let handed = crate::skeleton::show(
+					ui,
+					skeleton,
+					crate::skeleton::Kind::Results,
+					rest,
+					false,
+				);
+				ui.multiply_opacity(handed);
 				egui::ScrollArea::vertical()
 					.id_salt(("pins", view.request))
 					.auto_shrink([false, true])
@@ -1019,17 +1042,38 @@ impl SearchUi {
 		if let Some(error) = view.error {
 			design::notice(ui, design::Level::Error, error);
 		}
+		let skeleton = egui::Id::unique("search-results-skeleton");
 		match &view.page {
 			None if view.loading => {
-				design::empty_state(
-					ui,
-					icons::Icon::Search,
-					&crate::i18n::translate("search-pane-searching"),
-					&crate::i18n::translate("search-pane-looking-for-matching-messages"),
+				// The pager keeps its place at the pane's foot under the placeholder.
+				let (rect, response) = ui.allocate_exact_size(
+					egui::vec2(
+						ui.available_width(),
+						(ui.available_height() - PAGER_HEIGHT).max(0.0),
+					),
+					egui::Sense::hover(),
 				);
+				response.widget_info(|| {
+					egui::WidgetInfo::labeled(
+						egui::Role::Label,
+						false,
+						crate::i18n::translate("search-pane-looking-for-matching-messages"),
+					)
+				});
+				crate::skeleton::show(ui, skeleton, crate::skeleton::Kind::Results, rect, true);
 			}
 			None => {}
 			Some(page) => {
+				// Results replacing the placeholder fade in over its last frame.
+				let rest = ui.available_rect_before_wrap();
+				let handed = crate::skeleton::show(
+					ui,
+					skeleton,
+					crate::skeleton::Kind::Results,
+					rest,
+					false,
+				);
+				ui.multiply_opacity(handed);
 				let content_query = model::search_terms(&view.query)
 					.map(|(content, _)| content)
 					.unwrap_or_default();

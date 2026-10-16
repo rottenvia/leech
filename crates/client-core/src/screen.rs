@@ -1,6 +1,4 @@
-//! Bounded screen-share settings and ephemeral Gateway negotiation events.
-use crate::voice;
-use model::Id;
+//! Bounded screen-share settings.
 
 pub const MAX_SOURCES: usize = 64;
 pub const MAX_SOURCE_NAME_BYTES: usize = 256;
@@ -49,33 +47,5 @@ impl Settings {
 			_ => 4_000_000,
 		};
 		(base * if self.fps == 60 { 2 } else { 1 }).min(16_000_000)
-	}
-}
-
-#[derive(Debug)]
-pub enum Event {
-	Created {
-		rtc_server: Id,
-		rtc_channel: Id,
-	},
-	Server {
-		token: Option<voice::Secret>,
-		endpoint: Option<String>,
-	},
-	/// The stream is gone. `reason` names Discord's cause when it sent one we recognise.
-	Deleted {
-		reason: Option<&'static str>,
-	},
-	Failed(&'static str),
-}
-impl Event {
-	pub(crate) fn bytes(&self) -> usize {
-		match self {
-			Self::Server { token, endpoint } => {
-				token.as_ref().map_or(0, voice::Secret::bytes)
-					+ endpoint.as_ref().map_or(0, String::capacity)
-			}
-			_ => 0,
-		}
 	}
 }

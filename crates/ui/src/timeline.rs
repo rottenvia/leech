@@ -84,6 +84,9 @@ pub struct TimelineView {
 	pub(super) leave_read: Option<(Id, Id)>,
 	/// The reader dismissed the unread banner while this was the channel's latest message.
 	unread_dismissed: Option<Option<Id>>,
+	/// The conversation on screen, and when it opened, for its fade in.
+	shown_channel: Option<Id>,
+	opened_at: Option<f64>,
 	/// The unread banner asked to acknowledge this channel up to its latest message.
 	pub(super) mark_channel_read: Option<Id>,
 	pub(super) reaction_picker: Option<(Id, egui::Rect, egui::Id)>,
@@ -247,77 +250,22 @@ fn channel_welcome(ui: &mut egui::Ui, channel: &model::Channel, height: f32) {
 		});
 }
 
-fn loading_messages(ui: &mut egui::Ui) {
-	// Name width, line widths as a share of the text column, and an attachment: a fixed
-	// table, so the placeholder reads like a real conversation and never changes between frames.
-	const GROUPS: [(f32, &[f32], bool); 8] = [
-		(112.0, &[0.62], false),
-		(84.0, &[0.9, 0.48], false),
-		(136.0, &[0.34], true),
-		(96.0, &[0.76, 0.85, 0.3], false),
-		(72.0, &[0.55], false),
-		(124.0, &[0.82, 0.64], false),
-		(104.0, &[0.4], false),
-		(90.0, &[0.7, 0.92, 0.58], false),
-	];
-	let height = ui.available_height();
-	let (rect, response) = ui.allocate_exact_size(
-		egui::vec2(ui.available_width(), height),
-		egui::Sense::hover(),
-	);
-	response.widget_info(|| {
-		egui::WidgetInfo::labeled(
-			egui::Role::Label,
-			false,
-			crate::i18n::translate("timeline-loading-messages-loading-messages"),
-		)
-	});
-	if !ui.is_rect_visible(rect) {
-		return;
-	}
-	let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
-	let name = crate::design::placeholder_fill(ui, 0.32);
-	let fill = crate::design::placeholder_fill(ui, 0.2);
-	let faint = crate::design::placeholder_fill(ui, 0.12);
-	// Message rows put the avatar at 16 and the text at 72; long lines stop where a reader's
-	// eye would, as real paragraphs rarely span a very wide window.
-	let left = rect.left() + 72.0;
-	let column = (rect.right() - 16.0 - left).clamp(0.0, 760.0);
-	// The timeline is anchored to the composer, so the placeholder fills upwards from there
-	// and arriving messages land where the groups already were.
-	let mut bottom = rect.bottom() - 12.0;
-	for (name_width, lines, attachment) in GROUPS.iter().cycle().take(64) {
-		let block = 24.0 + lines.len() as f32 * 22.0 + if *attachment { 152.0 } else { 0.0 };
-		let top = bottom - block;
-		if bottom < rect.top() {
-			break;
+/// The loading look for the open conversation: a channel's, a direct one's, or an app's.
+fn skeleton_kind(state: &State) -> crate::skeleton::Kind {
+	use crate::skeleton::Kind;
+	match state.selected.and_then(|id| state.channel(id)) {
+		Some(channel)
+			if channel.guild.is_none()
+				&& channel.kind == 1
+				&& channel
+					.recipients
+					.iter()
+					.any(|user| user.kind != model::AccountKind::Human) =>
+		{
+			Kind::App
 		}
-		painter.circle_filled(egui::pos2(rect.left() + 36.0, top + 20.0), 20.0, faint);
-		let bar = |x: f32, y: f32, width: f32, height: f32, color| {
-			painter.rect_filled(
-				egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(width, height)),
-				height * 0.5,
-				color,
-			);
-		};
-		bar(left, top + 4.0, name_width.min(column), 12.0, name);
-		bar(left + name_width + 10.0, top + 6.0, 44.0, 8.0, faint);
-		let mut y = top + 30.0;
-		for share in *lines {
-			bar(left, y, (column * share).max(24.0).min(column), 10.0, fill);
-			y += 22.0;
-		}
-		if *attachment {
-			painter.rect_filled(
-				egui::Rect::from_min_size(
-					egui::pos2(left, y - 4.0),
-					egui::vec2(column.min(280.0), 140.0),
-				),
-				8.0,
-				faint,
-			);
-		}
-		bottom = top - 20.0;
+		Some(channel) if channel.guild.is_none() => Kind::Direct,
+		_ => Kind::Channel,
 	}
 }
 fn ease_out_cubic(t: f32) -> f32 {
@@ -2407,9 +2355,15 @@ impl TimelineView {
 				"timeline-show-with-scroll-message-history-is-unavailable-with-current-permission-information",
 			));
 		}
+		let skeleton = egui::Id::unique(("timeline-skeleton", state.selected));
 		if history_available && state.freshness == model::Freshness::Loading && empty {
 			let area = ui.available_rect_before_wrap().intersect(ui.clip_rect());
-			loading_messages(ui);
+			crate::skeleton::fill(
+				ui,
+				skeleton,
+				skeleton_kind(state),
+				&crate::i18n::translate("timeline-loading-messages-loading-messages"),
+			);
 			session.bind(ui, ui.scope_id().with(("timeline", state.selected)), area);
 			let latest = state
 				.selected
@@ -2447,10 +2401,36 @@ impl TimelineView {
 			}));
 		}
 		let area = ui.available_rect_before_wrap().intersect(ui.clip_rect());
+		// Messages that replace the loading placeholder fade in over its last frame, and a
+		// conversation opened already loaded fades in briefly, so a click visibly lands.
+		let now = ui.input(|input| input.time);
+		if self.shown_channel != state.selected {
+			// The first conversation arrives with the window; switching to another fades it in.
+			self.opened_at = self.shown_channel.is_some().then_some(now);
+			self.shown_channel = state.selected;
+		}
+		let opened = self.opened_at.map_or(1.0, |at| {
+			egui::emath::easing::cubic_out(((now - at) / 0.18).min(1.0) as f32)
+		});
+		if opened < 1.0 {
+			ui.ctx().request_repaint();
+		}
+		let handed = crate::skeleton::show(ui, skeleton, skeleton_kind(state), area, false);
+		ui.multiply_opacity(handed.min(0.35 + 0.65 * opened));
 		let autoscroll_delta =
 			session.bind(ui, ui.scope_id().with(("timeline", state.selected)), area);
-		if autoscroll_delta > 0.0 {
+		// Upward wheel or touchpad input over the messages leaves the live edge in the same
+		// frame. Otherwise a slow scroll that stays within the bottom tolerance is pinned back.
+		let upward = ui.input(|input| {
+			input.smooth_scroll_delta().y > 0.0
+				&& input
+					.pointer
+					.hover_pos()
+					.is_some_and(|pos| area.contains(pos))
+		});
+		if autoscroll_delta > 0.0 || upward {
 			self.following = false;
+			self.jump = false;
 		}
 		let total: f32 = self.rows.iter().map(|(_, height)| height).sum();
 		// The typing indicator floats in the reserved strip above the composer; the gap keeps

@@ -1,7 +1,15 @@
-//! Offline group-call check: cargo run --locked -p leech --example group_call
-use client_core::{Command, Envelope, Event, State, voice};
+//! Offline group-call check against the simulated Discord:
+//! cargo run --locked -p leech --features demo --example group_call
+use client_core::{
+	Command, Envelope, Event, State,
+	voice::{
+		self,
+		sim::{Config, Discord},
+	},
+};
 use eframe::egui;
 use model::Id;
+use std::time::Instant;
 
 fn participant(user: Id) -> voice::Participant {
 	voice::Participant {
@@ -31,7 +39,7 @@ fn render(state: &mut State, width: f32, required: &[&str]) {
 				..Default::default()
 			},
 			|ui| {
-				// No desktop/network adapter consumes any command or media request.
+				// Calls go through the controller; the view never queues voice commands itself.
 				assert!(
 					!view
 						.show(ui, state)
@@ -56,23 +64,38 @@ fn render(state: &mut State, width: f32, required: &[&str]) {
 	}
 }
 
+fn rang(discord: &Discord, recipient: Option<Id>, stop: bool) -> bool {
+	discord.log.iter().any(|command| {
+		*command
+			== voice::Command::Ring {
+				channel: Id(29),
+				recipient,
+				stop,
+			}
+	})
+}
+
 fn main() {
 	let mut state = test_support::demo_state();
 	let channel = Id(29);
 	let own = state.user.as_ref().unwrap().id;
 	state.select(channel);
-	assert!(!state.can_call(channel));
-	state.demo = false; // Synthetic state only; no connection, runtime or devices exist here.
+	assert!(
+		!state.can_call(channel),
+		"the plain offline preview never calls"
+	);
+	state.voice.simulated = true;
 	assert!(state.can_call(channel) && state.can_camera(channel) && state.can_stream(channel));
+	let mut discord = Discord::new(29, Config::default());
+	let mut now = Instant::now();
 	for width in [1400.0, 800.0] {
 		render(&mut state, width, &["Start voice call"]);
 	}
-	assert!(state.voice.active.is_none());
-	assert!(matches!(
-		state.start_call(channel, true),
-		Some(Command::Voice(voice::Command::Join { ring: true, .. }))
-	));
-	state.leave_call().unwrap();
+	assert!(state.start_call(channel, true));
+	now = discord.settle(&mut state, now);
+	assert!(state.voice.media_ready() && rang(&discord, None, false));
+	assert!(state.leave_call());
+	now = discord.settle(&mut state, now);
 
 	let mut peers: Vec<_> = state
 		.channel(channel)
@@ -92,25 +115,21 @@ fn main() {
 	assert!(state.voice.has_dm_call(channel) && state.voice.active.is_none());
 	assert_eq!(state.voice.incoming, Some(channel));
 	render(&mut state, 800.0, &["Answer", "Decline"]);
-	assert!(matches!(
-		state.decline_call(),
-		Some(Command::Voice(voice::Command::Decline { .. }))
-	));
-	assert!(matches!(
-		state.start_call(channel, true),
-		Some(Command::Voice(voice::Command::Join { ring: false, .. }))
-	));
-	let request = state.voice.active.as_ref().unwrap().request;
+	assert!(state.decline_call());
+	now = discord.settle(&mut state, now);
+	assert!(
+		rang(&discord, Some(own), true),
+		"declining stops ringing this account"
+	);
+	assert!(state.start_call(channel, true));
 	assert_eq!(state.voice.active.as_ref().unwrap().participants, peers);
-	state.apply_voice(voice::Event::Progress {
-		channel,
-		request,
-		phase: voice::Phase::Connected,
-	});
-	assert!(state.set_call_mute(true, true).is_some());
-	assert!(state.set_call_camera(true).is_some());
-	state.set_call_camera(false).unwrap();
-	state.set_call_mute(false, false).unwrap();
+	now = discord.settle(&mut state, now);
+	assert!(state.voice.media_ready());
+	assert!(state.set_call_mute(true, true));
+	assert!(state.set_call_camera(true));
+	assert!(state.set_call_camera(false));
+	assert!(state.set_call_mute(false, false));
+	now = discord.settle(&mut state, now);
 
 	let mut newcomer = state.channel(channel).unwrap().recipients[0].clone();
 	newcomer.id = Id(900);
@@ -122,15 +141,16 @@ fn main() {
 			user: newcomer,
 		},
 	});
-	let mut sharing = participant(Id(900));
-	sharing.streaming = true;
-	peers.push(sharing);
-	state.apply_voice(call(peers.clone()));
-	state.watch_stream(Id(900)).unwrap();
-	let mut invalid = peers.clone();
+	discord.other_state(&state, now, Id(900), Some(channel), true);
+	now = discord.settle(&mut state, now);
+	assert!(state.watch_stream(Id(900)));
+	now = discord.settle(&mut state, now);
+	assert!(state.voice.watch_live());
+	let mut invalid = state.voice.active.as_ref().unwrap().participants.clone();
 	invalid.push(participant(Id(9999)));
+	let before = state.voice.active.as_ref().unwrap().participants.clone();
 	state.apply_voice(call(invalid));
-	assert_eq!(state.voice.active.as_ref().unwrap().participants, peers);
+	assert_eq!(state.voice.active.as_ref().unwrap().participants, before);
 	state.apply(Envelope {
 		generation: state.generation,
 		event: Event::RecipientRemoved {
@@ -139,16 +159,8 @@ fn main() {
 		},
 	});
 	assert!(state.voice.active.as_ref().unwrap().watching.is_none());
-	assert!(
-		!state
-			.voice
-			.active
-			.as_ref()
-			.unwrap()
-			.participants
-			.iter()
-			.any(|p| p.user == Id(900))
-	);
+	now = discord.settle(&mut state, now);
+	assert!(!state.voice.watch_live());
 
 	// A ten-person group uses the shared bounded grid and all ordinary call controls.
 	let group = state.channels.iter_mut().find(|c| c.id == channel).unwrap();
@@ -176,21 +188,26 @@ fn main() {
 			],
 		);
 	}
-	state.leave_call().unwrap();
+	assert!(state.leave_call());
+	now = discord.settle(&mut state, now);
 	assert!(state.voice.has_dm_call(channel));
 	render(&mut state, 800.0, &["Join call"]);
-	state.start_call(channel, false).unwrap();
+	assert!(state.start_call(channel, false));
+	// The other nine show at once; this account appears once Discord confirms the join.
+	assert_eq!(state.voice.active.as_ref().unwrap().participants.len(), 9);
+	now = discord.settle(&mut state, now);
 	assert_eq!(state.voice.active.as_ref().unwrap().participants.len(), 10);
 	state.apply(Envelope {
 		generation: state.generation,
 		event: Event::RecipientRemoved { channel, user: own },
 	});
+	discord.settle(&mut state, now);
 	assert!(
 		!state.can_call(channel)
 			&& state.voice.active.is_none()
 			&& !state.voice.has_dm_call(channel)
 	);
 	println!(
-		"PASS: offline group start/ring, answer/decline/join, membership, media controls, removal and wide/narrow UI. No Discord or devices accessed."
+		"PASS: simulated group start/ring, answer/decline/join, membership, media controls, watching, removal and wide/narrow UI. No Discord or devices accessed."
 	);
 }

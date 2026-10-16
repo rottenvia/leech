@@ -10,7 +10,7 @@ development-data = ["local-store/development-data", "platform/development-data"]
 # No-op: token sign-in used to require this flag; it is now always built in.
 # Kept only so `--features developer-session` in older scripts keeps building.
 developer-session = []
-demo = ["dep:test-support", "ui/demo"]
+demo = ["dep:test-support", "ui/demo", "client-core/sim"]
 
 [dependencies]
 extensions.workspace = true
@@ -69,6 +69,10 @@ find-msvc-tools = "=0.1.12"
 
 [dev-dependencies]
 test-support.workspace = true
+
+[[example]]
+name = "group_call"
+required-features = ["demo"]
 
 [[example]]
 name = "profile_preview"

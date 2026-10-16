@@ -4073,11 +4073,7 @@ voice-call-bar-join-call = Dołącz do rozmowy
 # Context: call_controls
 voice-call-controls-disconnect = Odłączyć
 # Context: call_controls
-voice-call-controls-dismiss-call = Odrzuć połączenie
-# Context: call_controls
 voice-call-controls-leaving-is-unavailable-in-the-offline-preview = Opuszczenie nie jest możliwe w podglądzie offline.
-# Context: call_failure
-voice-call-failure-copy-failure-reason = Przyczyna niepowodzenia kopiowania
 # Context: camera_settings_content
 voice-camera-settings-content-camera-capture-is-unavailable-on-this-platform = Przechwytywanie kamerą jest niedostępne na tej platformie.
 # Context: camera_settings_content
@@ -4154,8 +4150,6 @@ voice-voice-audio-controls-speakers = Głośniki
 voice-voice-card-section-camera-settings = Ustawienia aparatu
 # Context: voice_card_section
 voice-voice-card-section-disconnect = Odłączyć
-# Context: voice_card_section
-voice-voice-card-section-dismiss-call = Odrzuć połączenie
 # Context: voice_card_section
 voice-voice-card-section-microphone-unavailable-a-still-connected-choose-another-input-in-audio = Mikrofon niedostępny · nadal podłączony. Wybierz inne wejście w Ustawieniach audio.
 # Context: voice_channel_button
@@ -4458,7 +4452,6 @@ voice-recipient-ringing = Dzwoni…
 voice-recipient-not-in-call = Poza rozmową
 reconnect-now = Połącz ponownie
 
-voice-call-moved-to-another-client = Sesja połączenia na tym urządzeniu została zastąpiona
 
 server-settings-page-safety = Konfiguracja bezpieczeństwa
 

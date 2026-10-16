@@ -58,55 +58,56 @@ gain perception, microphone/speaker hardware, native slider interaction and call
 remain unverified. Owner-controlled live checks should include 0/100/200% on each control,
 Reset levels, mute/deafen/PTT precedence and changing devices while custom levels are selected.
 
-Start calls the selected existing DM; incoming calls require Answer or Decline. One active call is retained while navigating text conversations. Start rings once after Discord voice transport allocation is confirmed; Answer never rings. Required DAVE group readiness and native device readiness precede the connected-audio state. An allocation with no endpoint waits within the deadline; incompatible states fail visibly. Hangup closes local audio immediately and sends departure; another call waits for the service's departure acknowledgment. No uncertain ring write or failed main Gateway session automatically starts another call.
+Start calls the selected existing DM; incoming calls require Answer or Decline. One active call is retained while navigating text conversations. A new private call rings its recipients once its media first connects; joining a call that already exists, or answering, never rings. Hanging up while recipients still ring stops their ringing.
 
-Before the local voice transport authenticates, own-user voice state frames are
-replaceable negotiation candidates: an existing client's state can arrive before the
-acknowledgment of this device's Join. Session, token and endpoint changes revise one
-bounded candidate. Only validated voice Transport Ready for that exact candidate,
-followed by the main Gateway's scoped confirmation acknowledgment, establishes the
-local transport session and enables media/ringing. Replacements retire local devices
-before trying current credentials, preserve the original 30-second deadline, and do
-not send another Join or a hangup. A failed unconfirmed candidate waits for changed
-credentials within that same deadline rather than repeatedly retrying it. Timeout,
-startup failure or scope loss abandons only this unconfirmed local negotiation;
-Gateway acknowledges its release without sending a service hangup. If its bounded
-control queue is full, one local release waits for queue space without ending text
-signaling; a fresh Join is rejected locally until the release is queued ahead of it.
-Stale release commands cannot displace cleanup for the current attempt. A later Join
-that encounters the still-full queue fails only that unsent attempt, keeping text
-signaling available.
+### Call lifecycle (rebuilt October 15, 2026)
 
-If local transport confirmation cannot enter the bounded control queue, its
-channel, attempt and candidate revision accompany a local failure. The desktop
-receives it through one fixed-size latest-report watch, independent of the reliable
-account event queue and its byte budget. Old-scope reports cannot replace the
-current attempt's failure; an older candidate revision cannot replace a newer one.
-The watch remains unread until queued reliable signaling is drained, including
-replacement candidates or acknowledgments beyond the current frame's event batch.
-The original negotiation deadline still bounds local failure under sustained load.
-The desktop
-consumes it only for the exact current unconfirmed candidate within its original
-deadline, then abandons that negotiation through the existing local release path.
-Old-candidate failures do not fail a replacement or established call. Text
-authentication and signaling remain available.
+One controller in `client_core::voice::phone` owns every call decision; the Gateway, the
+desktop media workers and the interface only carry its inputs and actions.
 
-After confirmation, a different owner session in the same voice channel, or movement
-to another non-null channel/guild, clears the local call and closes media without
-sending a hangup. A translated informational notice explains the move. Pending
-initial ringing is cancelled and queued old ring commands are rejected without
-disconnecting text signaling. Join explicitly after local device teardown to take the
-call back; no old-client departure acknowledgment is required. This applies to DM and
-guild calls. Secrets are bounded, redacted, zeroized and never persisted.
+- **Intent first.** Join, leave, switch, mute, deafen, camera, share and watch change the
+  wanted state at once and are never refused because older work is still finishing.
+  Leaving closes local media immediately; joining again, or joining another call, follows
+  without waiting for Discord's departure acknowledgment.
+- **One voice operation in flight.** Gateway opcode 4 always carries the newest wanted state.
+  The next operation goes out when Discord echoes the previous one, or after three seconds,
+  so bursts of joins, leaves and toggles collapse into the last choice. Switching channels
+  is a full leave followed by a fresh join, so every later event belongs to the new call.
+- **Media follows credentials.** A media run exists exactly while the wanted call, the
+  session and the voice server agree. Its id changes whenever any of them does, so the
+  desktop starts and stops workers by comparing ids and late reports from old runs are
+  ignored. The screen share and a watched stream are Discord stream keys with the same
+  one-operation pacing (unofficial opcodes 18, 19 and 20); they are created only while the
+  call's media is connected and are cleaned up when the call ends.
+- **Recovery.** A resumed main Gateway keeps the call and resends an operation that was
+  still unanswered. A fresh session joins the wanted call again. A voice server move, or a
+  dropped media connection, reconnects with fresh credentials (backoff 1, 2 and 4 seconds;
+  the call ends after a fourth failure). The same happens when an answered join still has
+  no voice server after 8 seconds, or when the voice connection is not secured within
+  20 seconds. Own voice states show what Discord holds; when one shows that an operation
+  was lost, such as a leave dropped in a burst of joins and leaves, it is sent again (at
+  most three times), and a join for a channel Discord still holds leaves first so Discord
+  sends a new voice server. A moderator move is followed. Another device of the
+  account joining a call ends it here without a hangup; joining again takes it back.
+  A disconnect by Discord or a moderator ends the call with a notice.
+- **Ownership.** Discord does not document that a voice state's session is the main Gateway
+  session that joined. Once an own voice state names this Gateway session, that alone
+  decides which device holds voice. Until then, a state counts as this device's when it
+  answers this device's own operation, names the voice session it already accepted, or is in
+  the channel it asked for. With `LEECH_VOICE_DIAGNOSTICS=1` the desktop prints
+  `voice_session_is_gateway_session=` once per call; the live gate records the value.
 
-The voice protocol does not document an equality with the main Gateway READY session
-ID or identify which physical client generated an own-user state frame. A server-accepted
-voice transport establishes only the submitted candidate: if an existing client's
-candidate authenticates before this device's newer Join acknowledgment arrives, its
-later replacement cannot be proven to be a different physical client's action. The
-informational notice describes an invalidated local transport, not verified actor
-identity. Synthetic ordering and confirmation transitions are tested; cross-client
-live takeover remains unverified.
+`client_core::voice::sim` is a simulated Discord: Gateway signaling, voice and stream
+servers, and media workers, with seeded latency and optional chaos (socket drops and
+resumes, fresh sessions, kicks, server moves, another device taking the call, media
+failures, recipients answering). It answers the controller as Discord would and refuses
+media whose credentials are not current, as a voice server would. Unit tests drive it
+through 1,500 random sessions with and without chaos (half of them in a world where voice
+states never name the Gateway session), plus 400 sessions with multi-second latency; after
+each step no two voice operations overlap and no media runs without its call, and once
+nobody acts, Discord and the client agree on the call, its flags, the share and the watched
+stream. `SIM_RUNS=n` runs more sessions, `SIM_SEED=n` replays one and `SIM_TRACE=1` prints
+its timeline. The offline demo runs its calls against the same simulator.
 
 Opening a one-to-one or group DM also requests its existing call state. An ongoing call shows a
 **Call in progress** banner and **Join call**, even after ringing stops or this device leaves.
@@ -120,14 +121,15 @@ on September 11, 2026. Local WebSocket and reducer/UI tests establish the implem
 discovery of a real existing Discord call remains unverified.
 
 `cargo run --locked -- --demo --demo-existing-call` shows a synthetic
-ongoing DM call with no local media session. The preview Join button is deliberately disabled.
+ongoing DM call with no local media session. In the demo, Join connects to the simulated
+Discord; nothing reaches a network or a device.
 For the owner-controlled live gate, leave the peer connected in a private DM call, open that
 DM in Leech, wait for the banner, then explicitly Join. Verify no new ring, actual two-way
 audio, leaving/rejoining while the peer stays, and disappearance after the peer ends the call.
 
 Mute/deafen, saved input/output selection and focused V push-to-talk are implemented. Remappable mute and deafen bindings use global native registration when supported and when a modifier is present; they fall back to focused input on Wayland or when registration is unavailable. Settings → Keybinds offers **Enable global keybinds**, saved on this device and enabled by default. Turning it off unregisters global voice shortcuts; mute, deafen and push-to-talk still work while Leech is focused, with the existing text-entry guards. Push-to-talk releases when focus is lost and is disabled while text entry has focus. It remains focused-only by default. Push to Mute is unassigned by default; once bound, holding it mutes the microphone during a call and releasing it restores the previous state, and it registers globally like push-to-talk. Voice and other remappable actions can also use mouse 3, 4 or 5, optionally with modifiers; left and right click cancel recording instead. A bound mouse button no longer starts middle-click autoscroll or back/forward navigation. Mouse bindings work while Leech is focused on every platform and, with global keybinds enabled, are polled globally on Windows only; macOS, X11 and the Wayland portal have no global mouse-button registration. Devices are initialized only following an explicit call with authenticated empty-room waiting or encrypted readiness, or an explicit local microphone test; no microphone test runs at startup. Acoustic echo cancellation follows the selected input profile; see below for its limits. A microphone that fails to open or start, reports a fatal callback error, or delivers no audio callbacks for five seconds is disabled with a visible warning. The call and speaker playback remain connected, and the client periodically retries microphone setup in the background while selecting another input immediately retries. Transient buffer discontinuities and non-fatal stream glitches do not disable the microphone. Ordinary silence does not trigger the warning. Selected speaker failures can fall back to the default output; an unusable output can still fail the call.
 
-One-to-one DM calls accept only their expected peer. Group DM and server calls support up to 64 total participants, with independent bounded decoder/jitter state and mixed mono playback. Only DAVE version 1 is accepted; encryption downgrades and group identities outside the authenticated participant roster fail closed. Stage channels and recording are unsupported. Outgoing screen sharing and macOS camera support is described below. Voice WebSocket resumption has a finite retry budget; failed resumption or main Gateway disconnect requires an explicit new call. Voice credentials, ephemeral DAVE identities and audio stay in bounded session memory. The displayed privacy code applies to the current group epoch; identities are not remembered across calls. Comparing codes does not establish long-term identity verification or text-message encryption.
+One-to-one DM calls accept only their expected peer. Group DM and server calls support up to 64 total participants, with independent bounded decoder/jitter state and mixed mono playback. Only DAVE version 1 is accepted; encryption downgrades and group identities outside the authenticated participant roster fail closed. Stage channels and recording are unsupported. Outgoing screen sharing and macOS camera support is described below. Voice WebSocket resumption has a finite retry budget; after that the call reconnects as described under Call lifecycle. Voice credentials, ephemeral DAVE identities and audio stay in bounded session memory. The displayed privacy code applies to the current group epoch; identities are not remembered across calls. Comparing codes does not establish long-term identity verification or text-message encryption.
 
 ## Group DM calls
 
@@ -156,7 +158,7 @@ only this account and known group recipients, rejects duplicate participants, an
 to 64 participants per call. Recipient removal drops stale participant/watch UI state; removal
 of this account closes local media and revokes subsequent call actions.
 
-The offline debug command is `cargo run --locked -p leech --example group_call`.
+The offline debug command is `cargo run --locked -p leech --features demo --example group_call`.
 Group signaling remains unofficial and live-unverified. For owner-controlled verification,
 repeat the one-to-one gate below in a private group whose participating clients the owner
 controls, including simultaneous speech, additions/removals, ringing/decline/join, camera,
@@ -190,9 +192,9 @@ Until actual two-way official-client audio and the relevant encryption/teardown 
 
 ## Server channel workflow and live gate
 
-Select an existing server voice channel to inspect its roster, then explicitly Join. Browsing alone never opens media devices. Participant rows show names/avatars and separate mute/deafen states; the connected channel shows elapsed local connection time. Mute/deafen, audio settings and Leave remain available while reading other channels. Server-enforced mute/deafen cannot be overridden locally. To switch rooms, select the next room and Join, then confirm **Switch call**. The current call closes immediately; the new call waits for the matching service departure acknowledgment and local audio teardown. Cancelling keeps the current call. The pending switch expires after 12 seconds and is cancelled on disconnect, account change or lost target access; it never retries automatically. A rejected/full/inaccessible room fails visibly after the bounded allocation deadline.
+Select an existing server voice channel to inspect its roster, then explicitly Join. Browsing alone never opens media devices. Participant rows show names/avatars and separate mute/deafen states; the connected channel shows elapsed local connection time. Mute/deafen, audio settings and Leave remain available while reading other channels. Server-enforced mute/deafen cannot be overridden locally. To switch rooms, select the next room and Join, then confirm **Switch call**. The current call closes immediately and the new one joins right after it, without waiting for Discord's departure acknowledgment. Cancelling keeps the current call. A pending choice is dropped on disconnect, account change or lost target access. A rejected/full/inaccessible room fails visibly after the bounded allocation deadline.
 
-An authenticated empty room displays “Connected · waiting for others”; audio devices open for local microphone detection, respecting mute, deafen, push-to-talk and SPEAK permission. Captured audio is consumed locally while alone; transmission waits until another participant joins and DAVE is secured. The client does not transmit unencrypted microphone audio to make an empty room appear connected. A server move, changed voice endpoint/session or main Gateway failure requires an explicit rejoin. The roster is session-only, bounded to 4,096 entries and 1 MiB, and is cleared on fresh login/resync and relevant access invalidation; during a resumable disconnect it is labeled last-known until missed events replay. Missing user details use a fallback identity rather than fetching a whole guild directory.
+An authenticated empty room displays “Connected · waiting for others”; audio devices open for local microphone detection, respecting mute, deafen, push-to-talk and SPEAK permission. Captured audio is consumed locally while alone; transmission waits until another participant joins and DAVE is secured. The client does not transmit unencrypted microphone audio to make an empty room appear connected. A voice server move, a changed session or a fresh main Gateway session reconnects the call; see Call lifecycle. The roster is session-only, bounded to 4,096 entries and 1 MiB, and is cleared on fresh login/resync and relevant access invalidation; during a resumable disconnect it is labeled last-known until missed events replay. Missing user details use a fallback identity rather than fetching a whole guild directory.
 
 Hovering a participant marked LIVE opens a compact still preview when Discord supplies one.
 **Watch Stream** joins that voice channel when no call is active, then starts the existing
