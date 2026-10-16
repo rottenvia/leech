@@ -92,10 +92,16 @@ captions, call controls and list rows all use them. Both run on egui's `animatio
 (1/12 s, like the server rail), so a zero turns all motion off. Switching conversations fades
 the new one in over 0.18 s from part-way, so the switch never flashes the bare background.
 
-Loading reads as alive without spinning. Message and member placeholders cascade in one group
-after another (45 ms apart) while a soft light, faintly tinted with the accent, sweeps through
-them at an even pace: up from the composer in a conversation, down the member list. Messages
-that replace the placeholder fade in over it. Restoring a saved login shows a compact screen:
+Loading reads as alive without spinning, and each surface waits in its own shape and motion
+(`crates/ui/src/skeleton.rs`): a server channel's message groups rise from the composer under a
+soft light tinted with the accent; a direct conversation's short replies slide in turn by turn
+while the light passes from reply to reply; an app's replies unfold embed cards from their
+accent stripe and pop in their buttons; forum posts drop in as cards; search results and pins
+slide in from the pane's edge; people fill the member list with their presence dots popping in
+after them. No placeholder shows for a wait under 0.15 s, and none is cut off: when the content
+comes, the placeholder's last frame fades out under it while the content fades in over 0.22 s.
+Opening a conversation that is already loaded fades it in briefly, so the click visibly lands.
+Channel glyphs in the sidebar grow a little under the pointer. Restoring a saved login shows a compact screen:
 the app mark with a passing sheen, a determinate bar with a glowing head, and the stage with
 the time left under it. The estimate follows the last few restores on this device, reaches
 about 90% when that time has passed, stays under the current stage, and never fills before
@@ -198,9 +204,9 @@ The bundled faces remain upstream's hinted TrueType builds. See `assets/README.m
   profile" link, then a search field and the pages with their icons under sentence-case
   section titles; the sections of an open page hang off a guide line. The page title and a
   plain close button sit in a slim bar above a centred column.
-- Loading: the timeline fills upwards from the composer with placeholder message groups of
-  varied length (an occasional attachment), and the member list shows a heading and avatar
-  rows in the real rows' geometry. Both breathe slowly and repaint only while shown.
+- Loading: the timeline fills upwards from the composer with placeholders shaped like the
+  conversation (channel groups, direct replies or app embeds), and the member list shows a
+  heading and avatar rows in the real rows' geometry. They repaint only while shown.
 
 Confirmed empty guild text, announcement and thread histories show a welcome above the
 composer: a circular channel-kind icon, a wrapped semibold channel heading and a short
@@ -241,10 +247,14 @@ voice-only DM call opens only as tall as its avatars and the bar) or hairlined 1
 name badges (guild channels), a bottom control bar of dark pills (mute with settings chevron,
 camera, screen share, more) and a red hang-up button, mute/deafen toggles in the account card,
 whose status line reads "In a call" with a green handset, and a "Voice Connected" panel above
-it while connected. Screen-share status is not shown on the stage; the share dialog and the button tooltip carry it. A DM call
+it while connected. As in Discord the panel's channel line sits a few points under its title,
+underlines from the left under the pointer, and opens the call's conversation when clicked. Screen-share status is not shown on the stage; the share dialog and the button tooltip carry it. A DM call
 that rings or runs without this device shows the same stage with whoever is in it and green
 buttons to join with video or voice (and a red decline while it rings here); a call ringing in
-another conversation keeps a slim banner. The header and the bar
+another conversation keeps a slim banner. When another device of the account takes the call
+over, the stage stays with that device's seat, and "Call continued on another device" unfolds
+as a pill at the top of the stage, rests five seconds and folds away; a toast says it only when
+the call's conversation is not open. The header and the bar
 stay visible beside the avatars or tiles and fade out only over an enlarged video, which keeps
 a slim 8px margin from the stage edges instead of touching the sidebar. In the channel list a
 voice channel's participants stand in the channel-icon column (24px avatars under the speaker

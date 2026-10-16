@@ -324,10 +324,22 @@ fn another_device_taking_the_call_ends_it_here_without_a_hangup() {
 		"the other device keeps the call"
 	);
 	assert_eq!(world.discord.truth.voice.unwrap().holder, Holder::Elsewhere);
+	assert_eq!(world.state.voice.moved, Some(DM), "its stage stays");
+	let own = world.state.user.as_ref().map(|user| user.id);
+	assert!(
+		world
+			.state
+			.voice
+			.dm_participants(DM)
+			.iter()
+			.any(|participant| Some(participant.user) == own),
+		"the other device keeps a seat on that stage"
+	);
 	assert!(
 		world.state.start_call(DM, false),
 		"taking it back is a normal join"
 	);
+	assert_eq!(world.state.voice.moved, None);
 	world.settle();
 	assert!(world.connected_to(DM));
 }

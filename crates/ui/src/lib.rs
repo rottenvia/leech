@@ -116,6 +116,7 @@ mod server_settings;
 mod server_stickers;
 mod settings;
 mod shortcuts;
+mod skeleton;
 mod switcher;
 mod thumbhash;
 #[cfg(feature = "demo")]
@@ -465,6 +466,10 @@ pub struct MessagingUi {
 	pub voice_refresh_devices: bool,
 	pub voice_device_status: &'static str,
 	pub voice_microphone_unavailable: bool,
+	/// The call panel's label was clicked: open the call's channel this frame.
+	open_call: bool,
+	/// The call another device took over, and when this interface first saw it.
+	voice_moved_at: Option<(Id, f64)>,
 	pub voice_push_to_talk: bool,
 	/// Device-local voice intent, retained between calls and restarts.
 	pub voice_muted: bool,
@@ -1432,7 +1437,13 @@ impl MessagingUi {
 					.on_hover_text(&text);
 				});
 		}
-		if !has_entry {
+		let skeleton = egui::Id::unique(("people-skeleton", list.channel));
+		if has_entry {
+			// People replacing the placeholder fade in over its last frame.
+			let rect = ui.available_rect_before_wrap();
+			let handed = skeleton::show(ui, skeleton, skeleton::Kind::People, rect, false);
+			ui.multiply_opacity(handed);
+		} else {
 			ui.add_space(8.0);
 			if list.freshness == Freshness::Unavailable {
 				ui.label(
@@ -1441,7 +1452,12 @@ impl MessagingUi {
 						.color(colors.muted),
 				);
 			} else if list.freshness != Freshness::Fresh {
-				loading_people(ui, &language.text("loading-people"));
+				skeleton::fill(
+					ui,
+					skeleton,
+					skeleton::Kind::People,
+					&language.text("loading-people"),
+				);
 			} else {
 				ui.label(
 					RichText::new(language.text("no-people"))
@@ -2017,6 +2033,12 @@ impl MessagingUi {
 				}
 				if in_call {
 					self.voice_card_section(ui, state);
+					if std::mem::take(&mut self.open_call)
+						&& let Some(channel) = state.voice.active.as_ref().map(|call| call.channel)
+						&& let Some(command) = state.select(channel)
+					{
+						commands.push(command);
+					}
 					divider(ui);
 				}
 				egui::Frame::new()
@@ -5530,6 +5552,7 @@ impl MessagingUi {
 			}
 		}
 		self.show_call_switch(&ctx, state);
+		self.track_moved_call(&ctx, state);
 		self.apply_ring_request(state);
 		if let Some((guild, channel, user, change)) = self.voice_moderation.take()
 			&& let Some(command) = state.request_server_admin(
@@ -9844,52 +9867,3 @@ pub fn debug_pr565(mut state: State, mut user: model::User) {
 
 #[cfg(all(debug_assertions, feature = "demo"))]
 pub use timeline::debug_copy_feedback_check;
-
-/// The member list while it loads: a group heading and rows of avatars with names, in the
-/// member rows' own geometry, so the real list replaces it without moving anything.
-fn loading_people(ui: &mut egui::Ui, label: &str) {
-	const NAMES: [f32; 12] = [
-		0.62, 0.44, 0.7, 0.52, 0.38, 0.66, 0.48, 0.58, 0.4, 0.68, 0.5, 0.36,
-	];
-	let height = (ui.available_height() - 8.0).max(0.0);
-	let (rect, response) = ui.allocate_exact_size(
-		egui::vec2(ui.available_width(), height),
-		egui::Sense::hover(),
-	);
-	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, false, label));
-	if !ui.is_rect_visible(rect) {
-		return;
-	}
-	let shown = design::shown_for(ui, response.id);
-	let shimmer = design::shimmer(ui, rect, false);
-	let mut painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
-	let width = (rect.width() - 56.0).max(0.0);
-	painter.set_opacity(design::cascade(shown, 0));
-	painter.rect_filled(
-		egui::Rect::from_min_size(rect.min + egui::vec2(8.0, 8.0), egui::vec2(88.0, 8.0)),
-		4.0,
-		shimmer(rect.top() + 12.0, 0.24),
-	);
-	// Rows drop in one after another while a light sweeps down the list.
-	for (index, share) in NAMES.iter().enumerate() {
-		let rise = design::cascade(shown, index + 1);
-		let top = rect.top() + 26.0 + index as f32 * 42.0 - 6.0 * (1.0 - rise);
-		if top > rect.bottom() {
-			break;
-		}
-		painter.set_opacity(rise);
-		painter.circle_filled(
-			egui::pos2(rect.left() + 24.0, top + 21.0),
-			16.0,
-			shimmer(top + 21.0, 0.12),
-		);
-		painter.rect_filled(
-			egui::Rect::from_min_size(
-				egui::pos2(rect.left() + 48.0, top + 16.0),
-				egui::vec2(width * share, 10.0),
-			),
-			5.0,
-			shimmer(top + 21.0, 0.2),
-		);
-	}
-}

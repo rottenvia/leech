@@ -462,11 +462,18 @@ impl MessagingUi {
 			row.left_center() + egui::vec2(18.0, 0.0),
 			egui::Vec2::splat(20.0),
 		);
+		// The glyph grows a little under the pointer, as text channels' do.
+		let grow = ui.ctx().animate_bool_with_time_and_easing(
+			egui::Id::unique(("channel-glyph", channel.id)),
+			hovered,
+			ui.style().animation_time,
+			egui::emath::easing::cubic_out,
+		);
 		channel_marks::paint_glyph(
 			ui.painter(),
 			access,
 			crate::icons::Icon::Speaker,
-			glyph,
+			egui::Rect::from_center_size(glyph.center(), glyph.size() * (1.0 + 0.16 * grow)),
 			text_color,
 		);
 		channel_marks::paint(ui.painter(), access, row, glyph, text_color);
@@ -898,6 +905,15 @@ impl MessagingUi {
 		// A short stage clips notices and tiles instead of drawing them over the call bar.
 		body_ui.set_clip_rect(body.intersect(ui.clip_rect()));
 		stage_notices(&mut body_ui, &notices);
+		let notice = self.moved_notice(ui, state, channel);
+		if notice > 0.0 {
+			moved_chip(
+				&body_ui,
+				egui::pos2(body.center().x, body_ui.cursor().top()),
+				notice,
+			);
+			body_ui.add_space((NOTICE_HEIGHT + TILE_GAP) * notice);
+		}
 		if !state.can_view(channel) {
 			body_ui.label(
 				RichText::new(crate::i18n::translate(
@@ -1563,6 +1579,40 @@ impl MessagingUi {
 			None => {}
 		}
 	}
+	/// Notes when another device took a call over, so its stage notice runs from then.
+	pub(super) fn track_moved_call(&mut self, ctx: &egui::Context, state: &State) {
+		if state.voice.moved != self.voice_moved_at.map(|(channel, _)| channel) {
+			self.voice_moved_at = state
+				.voice
+				.moved
+				.map(|channel| (channel, ctx.input(|input| input.time)));
+			ctx.request_repaint();
+		}
+	}
+
+	/// How far "Call continued on another device" shows on `channel`'s stage, 0 to 1: it
+	/// unfolds when another device takes the call, rests, then folds away.
+	fn moved_notice(&self, ui: &egui::Ui, state: &State, channel: Id) -> f32 {
+		let Some((_, since)) = self
+			.voice_moved_at
+			.filter(|(id, _)| *id == channel && state.voice.moved == Some(channel))
+		else {
+			return 0.0;
+		};
+		let age = ui.input(|input| input.time) - since;
+		let left = MOVED_REST - age;
+		if left <= 0.0 {
+			return 0.0;
+		}
+		if age < MOVED_FOLD || left < MOVED_FOLD {
+			ui.ctx().request_repaint();
+		} else {
+			ui.ctx()
+				.request_repaint_after_secs((left - MOVED_FOLD) as f32);
+		}
+		egui::emath::easing::cubic_in_out((age.min(left) / MOVED_FOLD).min(1.0) as f32)
+	}
+
 	pub(super) fn apply_ring_request(&mut self, state: &mut State) {
 		if let Some((channel, request, recipient, stop)) = self.ring_request.take()
 			&& state
@@ -4047,9 +4097,11 @@ impl MessagingUi {
 		let unavailable = self.call_unavailable(state, channel);
 		let entries = join_participants(state, channel);
 		let header_height = if header.is_some() { 48.0 } else { 0.0 };
+		let notice = self.moved_notice(ui, state, channel);
+		let band = (NOTICE_HEIGHT + TILE_GAP) * notice;
 		let full = header_height
 			+ STAGE_MARGIN
-			+ FRAMELESS_HEIGHT
+			+ band + FRAMELESS_HEIGHT
 			+ TILE_GAP
 			+ CONTROL_HEIGHT
 			+ STAGE_MARGIN;
@@ -4069,10 +4121,17 @@ impl MessagingUi {
 				self.stage_header(ui, state, rect, header, 1.0, commands);
 				let first = ui.painter().add(egui::Shape::Noop);
 				let bar_top = rect.bottom() - STAGE_MARGIN - CONTROL_HEIGHT;
+				if notice > 0.0 {
+					moved_chip(
+						ui,
+						egui::pos2(rect.center().x, rect.top() + header_height + STAGE_MARGIN),
+						notice * content,
+					);
+				}
 				let body = egui::Rect::from_min_max(
 					egui::pos2(
 						rect.left() + STAGE_MARGIN,
-						rect.top() + header_height + STAGE_MARGIN,
+						rect.top() + header_height + STAGE_MARGIN + band,
 					),
 					egui::pos2(rect.right() - STAGE_MARGIN, bar_top - TILE_GAP),
 				);
@@ -4604,23 +4663,47 @@ impl MessagingUi {
 							));
 						self.noise_popup(&suppression);
 						ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-							ui.vertical(|ui| {
-								ui.spacing_mut().item_spacing.y = 0.0;
-								ui.add(
-									egui::Label::new(
-										design::semibold(ui, title, 15.0).color(color),
+							// As in Discord the whole label opens the call's channel; the
+							// channel line underlines under the pointer.
+							let area = ui.available_rect_before_wrap();
+							let line = ui
+								.vertical(|ui| {
+									ui.spacing_mut().item_spacing.y = 3.0;
+									ui.add(
+										egui::Label::new(
+											design::semibold(ui, title, 15.0).color(color),
+										)
+										.truncate()
+										.selectable(false),
+									);
+									ui.add(
+										egui::Label::new(
+											design::semibold(ui, &detail, 12.0).color(colors.muted),
+										)
+										.truncate()
+										.selectable(false),
 									)
-									.truncate()
-									.selectable(false),
+									.rect
+								})
+								.inner;
+							let open = ui
+								.interact(area, egui::Id::unique("voice-card-open"), egui::Sense::click())
+								.on_hover_cursor(egui::CursorIcon::PointingHand);
+							let hover = design::hover_motion(ui, &open);
+							if hover > 0.0 {
+								// The line grows from the left as the pointer arrives.
+								ui.painter().hline(
+									line.left()..=line.left() + line.width() * hover,
+									line.bottom() + 1.0,
+									egui::Stroke::new(1.0, colors.muted.gamma_multiply(hover)),
 								);
-								ui.add(
-									egui::Label::new(
-										RichText::new(detail).size(12.0).color(colors.muted),
-									)
-									.truncate()
-									.selectable(false),
-								);
+							}
+							open.widget_info(|| {
+								egui::WidgetInfo::labeled(egui::Role::Link, true, &detail)
 							});
+							if open.clicked() {
+								self.open_call = true;
+							}
 						});
 					});
 				});
@@ -4881,6 +4964,10 @@ const STAGE_EDGE: egui::Stroke = egui::Stroke {
 	color: egui::Color32::from_rgba_premultiplied(18, 18, 18, 18),
 };
 const STAGE_MARGIN: f32 = 16.0;
+/// The takeover notice's pill height, and how long it rests on the stage and folds.
+const NOTICE_HEIGHT: f32 = 30.0;
+const MOVED_REST: f64 = 5.0;
+const MOVED_FOLD: f64 = 0.3;
 const TILE_GAP: f32 = 8.0;
 /// Frameless DM tile height (an 80-point avatar) and the extra gap between avatars.
 const FRAMELESS_HEIGHT: f32 = 88.0;
@@ -5477,6 +5564,39 @@ fn stage_notices(ui: &mut egui::Ui, notices: &[(String, bool)]) {
 	ui.spacing_mut().item_spacing.y = 8.0;
 }
 
+/// The takeover notice: a pill hanging from `top` (its top centre) on the stage, sliding in
+/// as `shown` grows.
+fn moved_chip(ui: &egui::Ui, top: egui::Pos2, shown: f32) {
+	let mut painter = ui.painter().clone();
+	painter.set_opacity(shown);
+	let galley = painter.layout_no_wrap(
+		crate::i18n::translate_if_key("Call continued on another device"),
+		egui::FontId::proportional(13.0),
+		STAGE_TEXT,
+	);
+	let size = egui::vec2(12.0 + 16.0 + 8.0 + galley.size().x + 14.0, NOTICE_HEIGHT);
+	let rect = egui::Rect::from_min_size(
+		egui::pos2(top.x - size.x * 0.5, top.y - 6.0 * (1.0 - shown)),
+		size,
+	);
+	painter.rect(rect, 15, PILL_FILL, STAGE_EDGE, egui::StrokeKind::Inside);
+	let icon = egui::Rect::from_center_size(
+		egui::pos2(rect.left() + 12.0 + 8.0, rect.center().y),
+		egui::Vec2::splat(16.0),
+	);
+	crate::icons::paint(
+		&painter,
+		crate::icons::Icon::DeviceMobile,
+		icon,
+		STAGE_MUTED,
+	);
+	painter.galley(
+		egui::pos2(icon.right() + 8.0, rect.center().y - galley.size().y * 0.5),
+		galley,
+		STAGE_TEXT,
+	);
+}
+
 /// Rounded dark group holding several call controls. Every pill is exactly `CONTROL_HEIGHT`
 /// tall and `width` wide so the groups and the hang-up button share one baseline.
 fn pill<R>(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
@@ -5617,9 +5737,12 @@ fn join_stage(state: &State) -> Option<Id> {
 						.dm_call_participants()
 						.find(|(id, _)| id == channel)
 						.is_none_or(|(_, participants)| {
+							// After another device took the call over, its own seat keeps
+							// the stage as Discord does.
+							let moved = state.voice.moved == Some(*channel);
 							participants
 								.iter()
-								.any(|participant| Some(participant.user) != own)
+								.any(|participant| moved || Some(participant.user) != own)
 						}))) && state
 			.voice
 			.active
@@ -5630,14 +5753,15 @@ fn join_stage(state: &State) -> Option<Id> {
 
 /// Who a join stage shows: the call's known members, else the people it would ring. This
 /// device is not in that call, so its own seat is only Discord's echo of a leave still on the
-/// way; it fades out instead of lingering.
+/// way; it fades out instead of lingering. After a takeover the seat is the other device's.
 fn join_participants(state: &State, channel: Id) -> Vec<RosterEntry> {
 	let own = state.user.as_ref().map(|user| user.id);
+	let moved = state.voice.moved == Some(channel);
 	let known: Vec<Participant> = state
 		.voice
 		.dm_participants(channel)
 		.iter()
-		.filter(|participant| Some(participant.user) != own)
+		.filter(|participant| moved || Some(participant.user) != own)
 		.copied()
 		.collect();
 	let participants: Vec<Participant> = if known.is_empty() {

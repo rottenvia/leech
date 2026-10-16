@@ -383,6 +383,9 @@ pub struct State {
 	pub simulated: bool,
 	/// Why the call, share or watch last ended or reconnected, for the interface to show once.
 	pub notice: Option<&'static str>,
+	/// The call another device of this account continued, ending ours. Its stage stays, with
+	/// that device's seat, until this device starts a call again.
+	pub moved: Option<Id>,
 	pub(crate) phone: phone::Phone,
 	/// The controller's clock: the latest time it was given. Actions run on it, so deadlines
 	/// never mix it with another clock.
@@ -643,6 +646,7 @@ impl ClientState {
 			&& !participants.iter().any(|p| Some(p.user) != self.owner());
 		self.voice.phone.ring = ring.then_some(request);
 		self.voice.ring_error = None;
+		self.voice.moved = None;
 		self.voice.active = Some(Call {
 			channel,
 			guild,
