@@ -5,6 +5,10 @@ use client_core::{
 };
 use model::Id;
 
+/// Seconds after going live before the LIVE badge appears: the button's ring has closed and
+/// Discord's stream sound has sounded.
+const LIVE_BADGE_DELAY: f32 = 0.35;
+
 pub enum Request {
 	Start(Settings),
 	Stop,
@@ -17,7 +21,14 @@ pub struct ScreenUi {
 	pub selected: Option<SourceId>,
 	pub refresh_requested: bool,
 	pub request: Option<Request>,
+	/// A share is starting or live. Stopping already reads as off.
 	pub busy: bool,
+	/// Discord carries the share: frames are flowing.
+	pub live: bool,
+	/// When the share last started and went live, on the interface clock, for the Go Live
+	/// button's loading ring and the LIVE badge that follows it.
+	started_at: Option<f64>,
+	live_at: Option<f64>,
 	pub status: &'static str,
 	pub capture_status: Option<&'static str>,
 	pub supported: bool,
@@ -37,6 +48,9 @@ impl Default for ScreenUi {
 			refresh_requested: false,
 			request: None,
 			busy: false,
+			live: false,
+			started_at: None,
+			live_at: None,
 			status: "",
 			capture_status: None,
 			supported: false,
@@ -55,6 +69,11 @@ impl ScreenUi {
 		};
 		if self.busy {
 			self.request = Some(Request::Stop);
+			// Stopping clears the button and LIVE on the click, before Discord confirms.
+			self.busy = false;
+			self.live = false;
+			self.started_at = None;
+			self.live_at = None;
 			return;
 		}
 		self.context = Some((state.generation, call.channel, call.request));
@@ -104,7 +123,40 @@ impl ScreenUi {
 		};
 		settings.valid().then_some(settings)
 	}
+	/// Seconds since the share started (while it is starting) and since it went live.
+	pub(crate) fn since(&self, ctx: &egui::Context) -> (Option<f32>, Option<f32>) {
+		let now = ctx.input(|input| input.time);
+		// Recorded at the end of the frame, so a state seen first this frame has just begun.
+		let since = |on: bool, at: Option<f64>| on.then(|| at.map_or(0.0, |at| (now - at) as f32));
+		(
+			since(self.busy && !self.live, self.started_at),
+			since(self.live, self.live_at),
+		)
+	}
+	/// Appearance (0 to 1) of this device's LIVE badge. It shows only once the share is live,
+	/// after Discord's stream sound and the button's closing ring, and clears with the stop.
+	pub(crate) fn live_reveal(&self, ctx: &egui::Context) -> f32 {
+		let Some(live) = self.since(ctx).1 else {
+			return 0.0;
+		};
+		let t = ((live - LIVE_BADGE_DELAY) / 0.2).clamp(0.0, 1.0);
+		if t < 1.0 {
+			ctx.request_repaint();
+		}
+		egui::emath::easing::cubic_out(t)
+	}
 	pub(super) fn show(&mut self, ctx: &egui::Context, state: &State) {
+		let now = ctx.input(|input| input.time);
+		if !self.busy {
+			self.started_at = None;
+		} else if self.started_at.is_none() {
+			self.started_at = Some(now);
+		}
+		if !self.live {
+			self.live_at = None;
+		} else if self.live_at.is_none() {
+			self.live_at = Some(now);
+		}
 		let current = state
 			.voice
 			.active

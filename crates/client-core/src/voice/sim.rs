@@ -516,7 +516,20 @@ impl Discord {
 					}
 				}
 			}
-			Command::Sync { .. } | Command::ChannelInfo { .. } => {}
+			Command::Regions => {
+				let regions = [
+					("rotterdam", "Rotterdam", true),
+					("madrid", "Madrid", false),
+				]
+				.map(|(id, name, optimal)| super::Region {
+					id: id.into(),
+					name: name.into(),
+					optimal,
+				});
+				self.gateway(now, Event::Regions(Ok(regions.into())));
+			}
+			// The simulated call keeps its one voice server wherever it is asked to run.
+			Command::SetRegion { .. } | Command::Sync { .. } | Command::ChannelInfo { .. } => {}
 		}
 	}
 
@@ -828,6 +841,18 @@ impl Discord {
 			.is_some_and(|voice| voice.holder == Holder::Ours)
 		{
 			self.drop_own_streams(state, now, true);
+			// The voice server closes our socket at once, usually before the Gateway tells
+			// us which device holds the call now.
+			if let Some(run) = &self.media {
+				let id = run.id;
+				self.push(
+					now + Duration::from_millis(5),
+					Delivery::Media(
+						id,
+						Report::Failed("Discord voice connection closed; rejoin the call"),
+					),
+				);
+			}
 		}
 		let voice = Voice {
 			holder: Holder::Elsewhere,

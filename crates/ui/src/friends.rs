@@ -841,10 +841,12 @@ fn person_row(
 	let colors = design::palette(ui);
 	let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), sense);
 	let hot = response.contains_pointer() || response.has_focus();
-	if hot {
+	let hover = design::hover_motion(ui, &response);
+	if hover > 0.0 {
 		ui.painter()
-			.rect_filled(rect, 8, design::row_highlight(ui, colors.hover, 1.0));
-	} else if !after_hot {
+			.rect_filled(rect, 8, design::row_highlight(ui, colors.hover, hover));
+	}
+	if !hot && !after_hot {
 		ui.painter().hline(
 			egui::Rangef::new(rect.left() + 10.0, rect.right() - 10.0),
 			rect.top(),

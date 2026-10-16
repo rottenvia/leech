@@ -324,10 +324,22 @@ fn another_device_taking_the_call_ends_it_here_without_a_hangup() {
 		"the other device keeps the call"
 	);
 	assert_eq!(world.discord.truth.voice.unwrap().holder, Holder::Elsewhere);
+	assert_eq!(world.state.voice.moved, Some(DM), "its stage stays");
+	let own = world.state.user.as_ref().map(|user| user.id);
+	assert!(
+		world
+			.state
+			.voice
+			.dm_participants(DM)
+			.iter()
+			.any(|participant| Some(participant.user) == own),
+		"the other device keeps a seat on that stage"
+	);
 	assert!(
 		world.state.start_call(DM, false),
 		"taking it back is a normal join"
 	);
+	assert_eq!(world.state.voice.moved, None);
 	world.settle();
 	assert!(world.connected_to(DM));
 }
@@ -384,6 +396,56 @@ fn media_failures_retry_with_fresh_credentials_then_end_the_call() {
 	world.run(Duration::from_secs(30));
 	assert!(world.idle(), "repeated failures end the call");
 	assert_eq!(world.state.status, "Voice connection failed");
+}
+
+#[test]
+fn private_calls_list_regions_once_and_move_only_to_a_listed_one() {
+	let mut world = World::quiet();
+	assert!(
+		!world.state.set_call_region(None),
+		"no call, nothing to move"
+	);
+	world.state.start_call(DM, false);
+	world.settle();
+	world.state.request_voice_regions();
+	world.state.request_voice_regions();
+	world.settle();
+	let asked = world
+		.sent()
+		.iter()
+		.filter(|c| matches!(c, Command::Regions))
+		.count();
+	assert_eq!(asked, 1);
+	assert!(
+		world
+			.state
+			.voice
+			.regions
+			.as_ref()
+			.is_some_and(|r| r.len() == 2)
+	);
+	assert!(!world.state.set_call_region(Some("nowhere".into())));
+	assert!(world.state.set_call_region(Some("madrid".into())));
+	assert_eq!(world.state.call_region(DM), Some("madrid"));
+	world.settle();
+	assert!(world.sent().contains(&Command::SetRegion {
+		channel: DM,
+		region: Some("madrid".into()),
+	}));
+	world.state.apply_voice_at(
+		Event::RegionFailed {
+			channel: DM,
+			message: "Region change failed",
+		},
+		world.now,
+	);
+	assert_eq!(
+		world.state.call_region(DM),
+		None,
+		"a failed move reads automatic"
+	);
+	world.state.leave_call();
+	assert!(world.state.voice.region_choice.is_none());
 }
 
 #[test]

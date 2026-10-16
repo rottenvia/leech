@@ -3452,6 +3452,12 @@ settings-appearance-settings-blur = Размытие
 # Context: appearance_settings
 settings-appearance-settings-choose-primary-color = Выберите основной цвет
 # Context: appearance_settings
+settings-appearance-settings-call-color = Цвет анимации звонка
+# Context: appearance_settings
+settings-appearance-settings-call-color-description = Кольца и свечение вокруг аватаров в звонке. По умолчанию — более светлый оттенок акцента, чтобы он выделялся на тёмном фоне звонка.
+# Context: appearance_settings
+settings-appearance-settings-choose-call-color = Выберите цвет анимации звонка
+# Context: appearance_settings
 # Context: appearance_settings
 settings-appearance-settings-primary-color = Основной цвет
 # Context: appearance_settings
