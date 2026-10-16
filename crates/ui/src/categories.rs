@@ -1026,11 +1026,22 @@ impl MessagingUi {
 									egui::Sense::hover(),
 								);
 								glyph = Some(rect);
+								// Under the pointer the glyph grows a little, so the row answers
+								// before the click.
+								let grow = inner.ctx().animate_bool_with_time_and_easing(
+									egui::Id::unique(("channel-glyph", channel.id)),
+									hovered,
+									inner.style().animation_time,
+									egui::emath::easing::cubic_out,
+								);
 								channel_marks::paint_glyph(
 									inner.painter(),
 									access,
 									icon,
-									rect,
+									egui::Rect::from_center_size(
+										rect.center(),
+										rect.size() * (1.0 + 0.16 * grow),
+									),
 									name_color.gamma_multiply(
 										if (active || hovered) && !access.dim() {
 											1.0

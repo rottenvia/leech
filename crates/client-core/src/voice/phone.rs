@@ -442,7 +442,13 @@ impl ClientState {
 				phone.link.reset();
 				phone.share.stream.doomed(now);
 				phone.watch.stream.doomed(now);
+				let moved = self.voice.active.as_ref().map(|call| call.channel);
 				self.end_call(Some("Call continued on another device"));
+				self.voice.moved = moved;
+				if moved.is_some() && moved == self.selected {
+					// The open call's stage says so itself.
+					self.voice.notice = None;
+				}
 				self.pump(now);
 			}
 			return;
@@ -597,7 +603,6 @@ impl ClientState {
 			phone.retry.at = Some(now + Duration::from_secs(1 << (phone.retry.count - 1)));
 			phone.wire.rejoin = true;
 			self.status = message;
-			self.voice.notice = Some("Call connection lost; reconnecting…");
 		}
 	}
 
@@ -678,6 +683,11 @@ impl ClientState {
 		}
 		if phone.retry.at.is_some_and(|at| now >= at) {
 			phone.retry.at = None;
+			// Said as the rejoin starts, not when the socket drops: another device taking the
+			// call drops it too, and ends the call before then.
+			if self.voice.active.is_some() {
+				self.voice.notice = Some("Call connection lost; reconnecting…");
+			}
 		}
 		let mut lost = [false; 2];
 		for (stream, lost) in [&mut phone.share.stream, &mut phone.watch.stream]

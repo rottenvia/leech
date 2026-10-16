@@ -1024,6 +1024,14 @@ struct Desktop {
 	/// `--demo-reply`: keeps two synthetic typists active on the selected fixture channel.
 	#[cfg(feature = "demo")]
 	demo_typing: bool,
+	/// `--demo-slow-load`: the history page still on its way, and when it lands.
+	#[cfg(feature = "demo")]
+	demo_history: Option<(
+		std::time::Instant,
+		model::Id,
+		Option<model::Id>,
+		Option<model::Id>,
+	)>,
 	variant_changed: bool,
 	pending_save: Option<Arc<SessionSecret>>,
 	/// Written under the account's own entry on every READY, including a launch restore, so
@@ -2336,6 +2344,8 @@ impl Desktop {
 			tray_error: None,
 			#[cfg(feature = "demo")]
 			demo_typing,
+			#[cfg(feature = "demo")]
+			demo_history: None,
 			variant_changed: false,
 			pending_save: None,
 			pending_account_save: None,
@@ -4033,6 +4043,10 @@ impl Desktop {
 					request,
 					..
 				} => {
+					// `--demo-loading` keeps searches waiting too.
+					if std::env::args().any(|arg| arg == "--demo-loading") {
+						return;
+					}
 					let mut hits = Vec::new();
 					let mut total = 0;
 					let (content, filters) = match model::search_terms(&query) {
@@ -4245,6 +4259,20 @@ impl Desktop {
 					before,
 					after,
 				} => {
+					// `--demo-loading` keeps every conversation waiting for its history;
+					// `--demo-slow-load` delivers it about a second later.
+					if std::env::args().any(|arg| arg == "--demo-loading") {
+						return;
+					}
+					if std::env::args().any(|arg| arg == "--demo-slow-load") {
+						self.demo_history = Some((
+							std::time::Instant::now() + std::time::Duration::from_millis(900),
+							channel,
+							before,
+							after,
+						));
+						return;
+					}
 					if std::env::args().any(|arg| arg == "--demo-message-links") {
 						test_support::load_message_link_page(
 							&mut self.state,
@@ -5464,6 +5492,20 @@ impl Desktop {
 			.poll(&self.runtime, &mut self.state, &mut self.messaging, ctx);
 		#[cfg(feature = "demo")]
 		if let Some(sim) = &mut self.sim {
+			// `--demo-takeover`: a few seconds into a call, another device of the account
+			// takes it over.
+			if let Some(call) = self.state.voice.active.as_ref()
+				&& call.connected_at.is_some_and(|at| {
+					now.saturating_duration_since(at) > std::time::Duration::from_secs(4)
+				}) && sim
+				.truth
+				.voice
+				.is_some_and(|voice| voice.holder == client_core::voice::sim::Holder::Ours)
+				&& std::env::args().any(|arg| arg == "--demo-takeover")
+			{
+				let channel = call.channel;
+				sim.other_device_joins(&self.state, now, channel);
+			}
 			sim.step(&mut self.state, now);
 			if let Some(due) = sim.next_due() {
 				ctx.request_repaint_after(due.saturating_duration_since(now));
@@ -6386,6 +6428,18 @@ impl eframe::App for Desktop {
 			});
 		}
 		self.sync_customization(ctx);
+		#[cfg(feature = "demo")]
+		if let Some((due, channel, before, after)) = self.demo_history {
+			let now = std::time::Instant::now();
+			if now < due {
+				ctx.request_repaint_after(due - now);
+			} else {
+				self.demo_history = None;
+				if self.state.selected == Some(channel) {
+					test_support::load_page_with_cursors(&mut self.state, before, after);
+				}
+			}
+		}
 		#[cfg(feature = "demo")]
 		if self.demo_typing
 			&& let Some(channel) = self.state.selected

@@ -741,27 +741,6 @@ pub fn shimmer(ui: &egui::Ui, rect: egui::Rect, upward: bool) -> impl Fn(f32, f3
 	}
 }
 
-/// How far (0 to 1) placeholder part `index` has risen into view, `elapsed` seconds after the
-/// placeholder first showed: parts cascade in one after another.
-pub fn cascade(elapsed: f32, index: usize) -> f32 {
-	egui::emath::easing::cubic_out(((elapsed - index as f32 * 0.045) / 0.3).clamp(0.0, 1.0))
-}
-
-/// Seconds since the placeholder `id` began showing, restarting whenever it was not drawn in
-/// the previous pass.
-pub fn shown_for(ui: &egui::Ui, id: egui::Id) -> f32 {
-	let now = ui.input(|input| input.time);
-	let pass = ui.ctx().cumulative_pass_nr();
-	ui.data_mut(|data| {
-		let (since, last) = data.get_temp_mut_or_insert_with(id, || (now, pass));
-		if *last + 1 < pass {
-			*since = now;
-		}
-		*last = pass;
-		(now - *since) as f32
-	})
-}
-
 /// Fill the notches outside a rounded corner at `corner`, for surfaces that cannot paint a
 /// shared coat underneath. `inward` points from the corner into the rounded rect.
 pub fn paint_corner_notch(

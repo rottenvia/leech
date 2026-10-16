@@ -197,6 +197,41 @@ impl ForumUi {
 								);
 							});
 						}
+						// Posts replacing the placeholder fade in over its last frame.
+						let skeleton = egui::Id::unique(("forum-skeleton", forum));
+						let rest = egui::Rect::from_min_max(
+							ui.cursor().min,
+							egui::pos2(
+								ui.max_rect().right(),
+								ui.clip_rect().bottom().max(ui.cursor().top()),
+							),
+						);
+						if active.is_empty() && archived.is_empty() && loading {
+							ui.allocate_rect(rest, egui::Sense::hover())
+								.widget_info(|| {
+									egui::WidgetInfo::labeled(
+										egui::Role::Label,
+										false,
+										crate::i18n::translate("forum-posts-footer-loading-posts"),
+									)
+								});
+							crate::skeleton::show(
+								ui,
+								skeleton,
+								crate::skeleton::Kind::Forum,
+								rest,
+								true,
+							);
+						} else {
+							let handed = crate::skeleton::show(
+								ui,
+								skeleton,
+								crate::skeleton::Kind::Forum,
+								rest,
+								false,
+							);
+							ui.multiply_opacity(handed);
+						}
 						let active: Vec<&Channel> = active
 							.into_iter()
 							.filter(|post| !archived.iter().any(|row| row.id == post.id))
