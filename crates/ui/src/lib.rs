@@ -116,6 +116,7 @@ mod server_settings;
 mod server_stickers;
 mod settings;
 mod shortcuts;
+mod skeleton;
 mod switcher;
 mod thumbhash;
 #[cfg(feature = "demo")]
@@ -389,7 +390,6 @@ pub struct MessagingUi {
 	pending_upload: Option<pending::Upload>,
 	pub clear_cache_requested: bool,
 	pub voice_available: bool,
-	pub voice_switch_ready: bool,
 	voice_switch: Option<voice::CallSwitch>,
 	pub screen: screen::ScreenUi,
 	pub voice_camera_available: bool,
@@ -424,6 +424,28 @@ pub struct MessagingUi {
 	voice_chrome_hidden: f32,
 	/// DM call joined with "Join with video": the camera starts once it connects.
 	voice_camera_on_join: Option<Id>,
+	/// Seats on call stages, remembered so arrivals glide and departures fade.
+	voice_seats: Vec<voice::Seat>,
+	/// Opening and closing of the direct-message call stage.
+	voice_stage: voice::StageMotion,
+	/// Clip for avatar halos while a stage draws its seats, so they spread past a tile's edge.
+	voice_halo_clip: Option<egui::Rect>,
+	/// Start of the outgoing ring cycle in egui time, set by the desktop's ring timer so the
+	/// ringing seat pulses with the sound.
+	pub voice_ring_epoch: Option<f64>,
+	/// Custom colour of call rings and halos; unset lifts the theme accent for the dark stage.
+	pub call_color: Option<[u8; 3]>,
+	/// The call options' view choices, as in Discord: every tile the same size even while
+	/// watching, this device's own camera hidden from itself, and people without video
+	/// hidden while someone shows some.
+	pub call_grid: bool,
+	pub call_hide_own_camera: bool,
+	pub call_hide_non_video: bool,
+	/// How long restoring a saved login took lately, in milliseconds; the restore screen's
+	/// bar and time left follow it. Zero until one has been measured.
+	pub restore_ms: u32,
+	/// The conversation shown and when the switch to it began, for the content fade.
+	conversation_fade: Option<(Option<Id>, f64)>,
 	/// Session-only visibility of the selected guild voice channel's chat.
 	pub voice_chat_open: bool,
 	/// Tile click to start (`Some(user)`) or stop (`None`) watching, applied by the stage.
@@ -444,6 +466,10 @@ pub struct MessagingUi {
 	pub voice_refresh_devices: bool,
 	pub voice_device_status: &'static str,
 	pub voice_microphone_unavailable: bool,
+	/// The call panel's label was clicked: open the call's channel this frame.
+	open_call: bool,
+	/// The call another device took over, and when this interface first saw it.
+	voice_moved_at: Option<(Id, f64)>,
 	pub voice_push_to_talk: bool,
 	/// Device-local voice intent, retained between calls and restarts.
 	pub voice_muted: bool,
@@ -494,6 +520,29 @@ pub struct MessagingUi {
 	pub transparency_blur: bool,
 	pub transparency: u8,
 	pub blur: u8,
+}
+
+/// Content opacity just after switching conversations: a short fade, so the new messages
+/// settle in instead of popping. It starts part-way, so a switch never flashes the bare
+/// background; the first conversation after startup just appears.
+fn conversation_fade(
+	ui: &egui::Ui,
+	shown: &mut Option<(Option<Id>, f64)>,
+	selected: Option<Id>,
+) -> f32 {
+	const SECS: f64 = 0.18;
+	let now = ui.input(|input| input.time);
+	let (conversation, since) = shown.get_or_insert((selected, now - SECS));
+	if *conversation != selected {
+		*conversation = selected;
+		*since = now;
+	}
+	let t = ((now - *since) / SECS) as f32;
+	if t >= 1.0 {
+		return 1.0;
+	}
+	ui.ctx().request_repaint();
+	0.3 + 0.7 * egui::emath::easing::cubic_out(t)
 }
 
 /// Context strip (reply/edit) drawn as the rounded top of the composer block.
@@ -1388,7 +1437,13 @@ impl MessagingUi {
 					.on_hover_text(&text);
 				});
 		}
-		if !has_entry {
+		let skeleton = egui::Id::unique(("people-skeleton", list.channel));
+		if has_entry {
+			// People replacing the placeholder fade in over its last frame.
+			let rect = ui.available_rect_before_wrap();
+			let handed = skeleton::show(ui, skeleton, skeleton::Kind::People, rect, false);
+			ui.multiply_opacity(handed);
+		} else {
 			ui.add_space(8.0);
 			if list.freshness == Freshness::Unavailable {
 				ui.label(
@@ -1397,7 +1452,12 @@ impl MessagingUi {
 						.color(colors.muted),
 				);
 			} else if list.freshness != Freshness::Fresh {
-				loading_people(ui, &language.text("loading-people"));
+				skeleton::fill(
+					ui,
+					skeleton,
+					skeleton::Kind::People,
+					&language.text("loading-people"),
+				);
 			} else {
 				ui.label(
 					RichText::new(language.text("no-people"))
@@ -1550,11 +1610,12 @@ impl MessagingUi {
 							});
 							let row = rect.shrink2(egui::vec2(0.0, 1.0));
 							let focused = response.hovered() || response.has_focus();
-							if focused {
+							let hover = design::hover_motion(ui, &response);
+							if hover > 0.0 {
 								ui.painter().rect_filled(
 									row,
 									6,
-									design::row_highlight(ui, colors.hover, 1.0),
+									design::row_highlight(ui, colors.hover, hover),
 								);
 							}
 							self.avatars.paint_nameplate(
@@ -1816,20 +1877,20 @@ impl MessagingUi {
 						egui::Sense::click(),
 					);
 					let row = rect.shrink2(egui::vec2(0.0, 1.0));
-					let hovered = response.hovered() || response.has_focus();
+					let hover = design::hover_motion(ui, &response);
 					if selected {
 						ui.painter().rect_filled(row, 8, colors.selected);
-					} else if hovered {
+					} else if hover > 0.0 {
 						ui.painter().rect_filled(
 							row,
 							8,
-							design::row_highlight(ui, colors.hover, 1.0),
+							design::row_highlight(ui, colors.hover, hover),
 						);
 					}
-					let ink = if selected || hovered {
+					let ink = if selected {
 						colors.text_strong
 					} else {
-						colors.muted
+						colors.muted.lerp_to_gamma(colors.text_strong, hover)
 					};
 					icons::paint(
 						ui.painter(),
@@ -1860,7 +1921,15 @@ impl MessagingUi {
 						self.guild = None;
 						self.search.open = false;
 					}
-					ui.add_space(8.0);
+					// Discord's hairline between Friends and the conversations. The first list
+					// row centres its text, so the rule sits in that row's empty top part,
+					// about midway between the two labels.
+					ui.add_space(4.0);
+					ui.painter().hline(
+						rect.x_range().shrink(8.0),
+						rect.bottom() + 12.5,
+						egui::Stroke::new(1.0, colors.border),
+					);
 				}
 				if let Some(guild) = self.guild
 					&& state.can_open_member_settings(guild)
@@ -1963,7 +2032,13 @@ impl MessagingUi {
 					divider(ui);
 				}
 				if in_call {
-					self.voice_card_section(ui, state, commands);
+					self.voice_card_section(ui, state);
+					if std::mem::take(&mut self.open_call)
+						&& let Some(channel) = state.voice.active.as_ref().map(|call| call.channel)
+						&& let Some(command) = state.select(channel)
+					{
+						commands.push(command);
+					}
 					divider(ui);
 				}
 				egui::Frame::new()
@@ -2019,15 +2094,18 @@ impl MessagingUi {
 										self.settings.open = true;
 										egui::Popup::close_all(ui.ctx());
 									}
-									self.mute_toggle_with_settings(ui, state, commands, true);
+									self.mute_toggle_with_settings(ui, state, true);
 									ui.add_space(4.0);
-									self.mute_toggle_with_settings(ui, state, commands, false);
+									self.mute_toggle_with_settings(ui, state, false);
 									ui.with_layout(
 										egui::Layout::left_to_right(egui::Align::Center),
 										|ui| {
 											let identity = ui
 												.vertical(|ui| {
 													ui.spacing_mut().item_spacing.y = 0.0;
+													// A horizontal row is at least this tall, which
+													// pushed "In a call" below the status line.
+													ui.spacing_mut().interact_size.y = 0.0;
 													ui.add(
 														egui::Label::new(
 															design::semibold(
@@ -2061,7 +2139,6 @@ impl MessagingUi {
 													if in_call {
 														ui.horizontal(|ui| {
 															ui.spacing_mut().item_spacing.x = 4.0;
-															ui.spacing_mut().interact_size.y = 0.0;
 															icons::inline(
 																ui,
 																icons::Icon::InCall,
@@ -4613,6 +4690,11 @@ impl MessagingUi {
 					}),
 			)
 			.show(ui, |ui| {
+				ui.set_opacity(conversation_fade(
+					ui,
+					&mut self.conversation_fade,
+					state.selected,
+				));
 				let message_surface =
 					design::section_surface(ui, background.chat, design::ImageSection::MessageList);
 				if design::has_section_background(ui)
@@ -4655,7 +4737,9 @@ impl MessagingUi {
 					return;
 				}
 				// In a DM call the header moves onto the call stage, shown while hovered.
-				let header_in_call = !search_open && self.dm_call_stage(state).is_some();
+				let header_in_call = !search_open
+					&& (self.dm_call_stage(state).is_some()
+						|| self.stage_closing(ui, state.selected));
 				if !search_open && !header_in_call {
 					self.channel_header(
 						ui,
@@ -5467,8 +5551,9 @@ impl MessagingUi {
 				None => {}
 			}
 		}
-		self.show_call_switch(&ctx, state, &mut commands);
-		self.apply_ring_request(state, &mut commands);
+		self.show_call_switch(&ctx, state);
+		self.track_moved_call(&ctx, state);
+		self.apply_ring_request(state);
 		if let Some((guild, channel, user, change)) = self.voice_moderation.take()
 			&& let Some(command) = state.request_server_admin(
 				guild,
@@ -9782,45 +9867,3 @@ pub fn debug_pr565(mut state: State, mut user: model::User) {
 
 #[cfg(all(debug_assertions, feature = "demo"))]
 pub use timeline::debug_copy_feedback_check;
-
-/// The member list while it loads: a group heading and rows of avatars with names, in the
-/// member rows' own geometry, so the real list replaces it without moving anything.
-fn loading_people(ui: &mut egui::Ui, label: &str) {
-	const NAMES: [f32; 12] = [
-		0.62, 0.44, 0.7, 0.52, 0.38, 0.66, 0.48, 0.58, 0.4, 0.68, 0.5, 0.36,
-	];
-	let height = (ui.available_height() - 8.0).max(0.0);
-	let (rect, response) = ui.allocate_exact_size(
-		egui::vec2(ui.available_width(), height),
-		egui::Sense::hover(),
-	);
-	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, false, label));
-	if !ui.is_rect_visible(rect) {
-		return;
-	}
-	let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
-	let heading = design::placeholder_fill(ui, 0.24);
-	let fill = design::placeholder_fill(ui, 0.2);
-	let faint = design::placeholder_fill(ui, 0.12);
-	let width = (rect.width() - 56.0).max(0.0);
-	painter.rect_filled(
-		egui::Rect::from_min_size(rect.min + egui::vec2(8.0, 8.0), egui::vec2(88.0, 8.0)),
-		4.0,
-		heading,
-	);
-	for (index, share) in NAMES.iter().enumerate() {
-		let top = rect.top() + 26.0 + index as f32 * 42.0;
-		if top > rect.bottom() {
-			break;
-		}
-		painter.circle_filled(egui::pos2(rect.left() + 24.0, top + 21.0), 16.0, faint);
-		painter.rect_filled(
-			egui::Rect::from_min_size(
-				egui::pos2(rect.left() + 48.0, top + 16.0),
-				egui::vec2(width * share, 10.0),
-			),
-			5.0,
-			fill,
-		);
-	}
-}

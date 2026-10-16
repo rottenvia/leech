@@ -31,6 +31,9 @@ use tokio_tungstenite::{
 };
 use zeroize::Zeroizing;
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+/// A connection not secured by then fails, and the call controller reconnects with fresh
+/// credentials. Healthy joins finish in a few seconds; a stalled one should not hold the call.
+const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(20);
 /// Time a sole member gives the roster announcement before waiting for a peer.
 const PEER_GRACE: Duration = Duration::from_millis(500);
 
@@ -357,7 +360,7 @@ async fn run_inner(
 	let mut heartbeat_at = Instant::now();
 	let mut awaiting_ack = None;
 	let mut heartbeat_nonce = 0u64;
-	let mut deadline = Some(Instant::now() + Duration::from_secs(90));
+	let mut deadline = Some(Instant::now() + NEGOTIATION_TIMEOUT);
 	let mut ready_announced = false;
 	let mut waiting_announced = false;
 	let mut resuming = false;
@@ -626,7 +629,7 @@ async fn run_inner(
 										dave.ready=true;
 									} else {
 										video.clear();
-										deadline=Some(Instant::now()+Duration::from_secs(90));
+										deadline=Some(Instant::now()+NEGOTIATION_TIMEOUT);
 										capture_reset=true;
 										mixer.clear();
 									}
@@ -1110,7 +1113,7 @@ async fn run_stream_inner(
 	let mut heartbeat_nonce = 0u64;
 	let mut awaiting_ack = None;
 	let mut seq_ack = -1i64;
-	let mut deadline = Some(Instant::now() + Duration::from_secs(90));
+	let mut deadline = Some(Instant::now() + NEGOTIATION_TIMEOUT);
 	let mut announced = false;
 	let mut waiting_announced = false;
 	let mut awaiting_keyframe = true;
@@ -1371,7 +1374,7 @@ async fn run_stream_inner(
 								let mut key=Zeroizing::new([0;32]);for(out,value)in key.iter_mut().zip(values){*out=value.as_u64().and_then(|value|u8::try_from(value).ok()).ok_or("Invalid stream transport key")?;}
 								encryption=Some(Encryption::new(&key));secured_at=Some(Instant::now());send(&mut ws,Message::Binary(dave.key_package()?.into())).await?;metrics.signal(Signal::KeyPackageSent,1);emit(Status::TransportReady).map_err(|_|"Stream interface closed")?;emit(Status::Securing).map_err(|_|"Stream interface closed")?;
 							},
-							11=>{let ids=data["user_ids"].as_array().ok_or("Missing stream participants")?;if ids.len()>crate::crypto::MAX_PARTICIPANTS{return Err("Too many stream participants");}let ids=ids.iter().map(|value|value.as_str().and_then(|value|value.parse().ok()).filter(|id|*id!=0).ok_or("Malformed stream participant")).collect::<Result<Vec<_>,_>>()?;let was_ready=dave.ready;if dave.connect(&ids)?{if was_ready{dave.ready=true;}else{deadline=Some(Instant::now()+Duration::from_secs(90));announced=false;awaiting_keyframe=true;invalidate_stream(&mut video, &mut share_audio);}}},
+							11=>{let ids=data["user_ids"].as_array().ok_or("Missing stream participants")?;if ids.len()>crate::crypto::MAX_PARTICIPANTS{return Err("Too many stream participants");}let ids=ids.iter().map(|value|value.as_str().and_then(|value|value.parse().ok()).filter(|id|*id!=0).ok_or("Malformed stream participant")).collect::<Result<Vec<_>,_>>()?;let was_ready=dave.ready;if dave.connect(&ids)?{if was_ready{dave.ready=true;}else{deadline=Some(Instant::now()+NEGOTIATION_TIMEOUT);announced=false;awaiting_keyframe=true;invalidate_stream(&mut video, &mut share_audio);}}},
 							5=>{let user=id(data,"user_id")?;if user!=credentials.user.0 && audio.is_some() && dave.contains(user) {let value=u32::try_from(number(data,"ssrc")?).map_err(|_|"Invalid stream SSRC")?;mixer.announce(user,value)?;}},
 							12=>{
 								let user=id(data,"user_id")?;

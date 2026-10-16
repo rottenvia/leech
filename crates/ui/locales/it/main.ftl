@@ -4070,11 +4070,7 @@ voice-call-bar-join-call = Partecipa alla chiamata
 # Context: call_controls
 voice-call-controls-disconnect = Disconnetti
 # Context: call_controls
-voice-call-controls-dismiss-call = Ignora chiamata
-# Context: call_controls
 voice-call-controls-leaving-is-unavailable-in-the-offline-preview = L'uscita non è disponibile nell'anteprima offline.
-# Context: call_failure
-voice-call-failure-copy-failure-reason = Motivo dell'errore di copia
 # Context: camera_settings_content
 voice-camera-settings-content-camera-capture-is-unavailable-on-this-platform = L'acquisizione tramite fotocamera non è disponibile su questa piattaforma.
 # Context: camera_settings_content
@@ -4151,8 +4147,6 @@ voice-voice-audio-controls-speakers = Altoparlanti
 voice-voice-card-section-camera-settings = Impostazioni della fotocamera
 # Context: voice_card_section
 voice-voice-card-section-disconnect = Disconnetti
-# Context: voice_card_section
-voice-voice-card-section-dismiss-call = Ignora chiamata
 # Context: voice_card_section
 voice-voice-card-section-microphone-unavailable-a-still-connected-choose-another-input-in-audio = Microfono non disponibile · ancora connesso. Scegli un altro ingresso nelle impostazioni Audio.
 # Context: voice_channel_button
@@ -4453,7 +4447,6 @@ voice-recipient-ringing = Sta squillando…
 voice-recipient-not-in-call = Non nella chiamata
 reconnect-now = Riconnetti ora
 
-voice-call-moved-to-another-client = La sessione di chiamata di questo dispositivo è stata sostituita
 
 server-settings-page-safety = Configurazione sicurezza
 

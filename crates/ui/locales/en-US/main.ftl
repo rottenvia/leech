@@ -3465,6 +3465,12 @@ settings-appearance-settings-blur = Blur
 # Context: appearance_settings
 settings-appearance-settings-choose-primary-color = Choose primary color
 # Context: appearance_settings
+settings-appearance-settings-call-color = Call animation color
+# Context: appearance_settings
+settings-appearance-settings-call-color-description = Rings and halos around avatars in calls. By default a brighter shade of the accent, so it stands out on the dark call stage.
+# Context: appearance_settings
+settings-appearance-settings-choose-call-color = Choose call animation color
+# Context: appearance_settings
 # Context: appearance_settings
 settings-appearance-settings-primary-color = Primary color
 # Context: appearance_settings
@@ -4084,11 +4090,7 @@ voice-call-bar-join-call = Join call
 # Context: call_controls
 voice-call-controls-disconnect = Disconnect
 # Context: call_controls
-voice-call-controls-dismiss-call = Dismiss call
-# Context: call_controls
 voice-call-controls-leaving-is-unavailable-in-the-offline-preview = Leaving is unavailable in the offline preview.
-# Context: call_failure
-voice-call-failure-copy-failure-reason = Copy failure reason
 # Context: camera_settings_content
 voice-camera-settings-content-camera-capture-is-unavailable-on-this-platform = Camera capture is unavailable on this platform.
 # Context: camera_settings_content
@@ -4165,8 +4167,6 @@ voice-voice-audio-controls-speakers = Speakers
 voice-voice-card-section-camera-settings = Camera settings
 # Context: voice_card_section
 voice-voice-card-section-disconnect = Disconnect
-# Context: voice_card_section
-voice-voice-card-section-dismiss-call = Dismiss call
 # Context: voice_card_section
 voice-voice-card-section-microphone-unavailable-a-still-connected-choose-another-input-in-audio = Microphone unavailable · still connected. Choose another input in Audio settings.
 # Context: voice_channel_button
@@ -4528,7 +4528,6 @@ public-upload-error-conversation = Return to the original conversation and revie
 public-upload-error-selection = Selection changed; review the file again before uploading publicly
 public-upload-error-missing = Select the file again before uploading publicly
 
-voice-call-moved-to-another-client = This device's call session was replaced
 
 # Synchronized favorite GIFs (unofficial account settings).
 gif-favorites-sync-refresh = Refresh from Discord

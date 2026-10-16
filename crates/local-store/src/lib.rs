@@ -52,6 +52,15 @@ pub struct AppPreferences {
 	pub hide_title_bar: bool,
 	pub hide_window_decorations: bool,
 	pub primary_color: Option<[u8; 3]>,
+	/// Rings and halos on the call stage; unset follows the theme accent.
+	pub call_color: Option<[u8; 3]>,
+	/// Call view options (Grid View, Show My Own Camera, Show Non-Video Participants),
+	/// stored so older preferences read as Discord's defaults.
+	pub call_grid: bool,
+	pub call_hide_own_camera: bool,
+	pub call_hide_non_video: bool,
+	/// Recent saved-login restore time in milliseconds, for the restore screen's estimate.
+	pub restore_ms: u32,
 	pub transparency_blur: bool,
 	pub transparency: u8,
 	pub blur: u8,
@@ -97,6 +106,11 @@ impl Default for AppPreferences {
 			hide_title_bar: false,
 			hide_window_decorations: false,
 			primary_color: None,
+			call_color: None,
+			call_grid: false,
+			call_hide_own_camera: false,
+			call_hide_non_video: false,
+			restore_ms: 0,
 			transparency_blur: false,
 			transparency: 15,
 			blur: 50,

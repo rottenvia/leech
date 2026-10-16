@@ -3452,6 +3452,12 @@ settings-appearance-settings-blur = Размытие
 # Context: appearance_settings
 settings-appearance-settings-choose-primary-color = Выберите основной цвет
 # Context: appearance_settings
+settings-appearance-settings-call-color = Цвет анимации звонка
+# Context: appearance_settings
+settings-appearance-settings-call-color-description = Кольца и свечение вокруг аватаров в звонке. По умолчанию — более светлый оттенок акцента, чтобы он выделялся на тёмном фоне звонка.
+# Context: appearance_settings
+settings-appearance-settings-choose-call-color = Выберите цвет анимации звонка
+# Context: appearance_settings
 # Context: appearance_settings
 settings-appearance-settings-primary-color = Основной цвет
 # Context: appearance_settings
@@ -4074,11 +4080,7 @@ voice-call-bar-join-call = Присоединиться к звонку
 # Context: call_controls
 voice-call-controls-disconnect = Отключить
 # Context: call_controls
-voice-call-controls-dismiss-call = Отклонить вызов
-# Context: call_controls
 voice-call-controls-leaving-is-unavailable-in-the-offline-preview = Выход недоступен в предварительном просмотре в автономном режиме.
-# Context: call_failure
-voice-call-failure-copy-failure-reason = Причина сбоя копирования
 # Context: camera_settings_content
 voice-camera-settings-content-camera-capture-is-unavailable-on-this-platform = Захват камеры недоступен на этой платформе.
 # Context: camera_settings_content
@@ -4155,8 +4157,6 @@ voice-voice-audio-controls-speakers = Спикеры
 voice-voice-card-section-camera-settings = Настройки камеры
 # Context: voice_card_section
 voice-voice-card-section-disconnect = Отключить
-# Context: voice_card_section
-voice-voice-card-section-dismiss-call = Отклонить вызов
 # Context: voice_card_section
 voice-voice-card-section-microphone-unavailable-a-still-connected-choose-another-input-in-audio = Микрофон недоступен · все еще подключен. Выберите другой вход в настройках звука.
 # Context: voice_channel_button
@@ -4459,7 +4459,6 @@ voice-recipient-ringing = Вызов…
 voice-recipient-not-in-call = Не в звонке
 reconnect-now = Переподключиться
 
-voice-call-moved-to-another-client = Сеанс звонка на этом устройстве был заменён
 
 server-settings-page-safety = Настройка безопасности
 

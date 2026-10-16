@@ -1,7 +1,9 @@
-//! Desktop ownership for one explicitly authorized voice session.
+//! Desktop media for calls: audio, the voice transport, camera, screen share and watched
+//! streams, each started and stopped to match the call controller's plans by id. Nothing here
+//! decides whether a call exists; reports flow back to the controller.
 use client_core::{
-	Command, Event, State,
-	voice::{self, Phase, Secret},
+	State,
+	voice::{self, Phase, Report},
 };
 use discord_voice::{
 	Controls, Status,
@@ -14,7 +16,9 @@ use std::{
 	time::{Duration, Instant},
 };
 use tokio::{runtime::Runtime, sync::watch, task::JoinHandle};
-use zeroize::Zeroizing;
+
+/// Audio pipelines allowed to finish closing in the background at once.
+const MAX_RETIRING: usize = 4;
 
 fn permission_mutes_microphone(
 	state: &State,
@@ -25,25 +29,6 @@ fn permission_mutes_microphone(
 	!state.can_speak(channel)
 		|| (state.permission(channel, model::permissions::USE_VAD) != Some(true)
 			&& !(push_to_talk && ptt_active))
-}
-
-fn negotiated_media(confirmed: bool, media_ready: bool) -> bool {
-	confirmed && media_ready
-}
-fn negotiated_phase(confirmed: bool, phase: Phase) -> Phase {
-	if !confirmed && matches!(phase, Phase::Waiting | Phase::Connected) {
-		Phase::Securing
-	} else {
-		phase
-	}
-}
-
-fn end_negotiation(channel: Id, request: u64, established: bool) -> voice::Command {
-	if established {
-		voice::Command::Leave { channel, request }
-	} else {
-		voice::Command::AbandonSession { channel, request }
-	}
 }
 
 const DEVICE_OPEN_TIMEOUT: Duration = Duration::from_secs(20);
@@ -67,119 +52,20 @@ fn device_wait(
 		)
 }
 
-struct Pending {
-	generation: u64,
-	channel: Id,
-	request: u64,
-	ring: bool,
-	user: Id,
-	peer: Option<Id>,
-	guild: Option<Id>,
-	session: Option<Secret>,
-	negotiation_revision: Option<u64>,
-	server: Option<(Secret, String)>,
-	started: Instant,
-	failed_candidate: bool,
-}
-impl Pending {
-	fn confirm_transport(&self, revision: u64) -> Option<Command> {
-		(!self.failed_candidate
-			&& self.session.is_some()
-			&& self.server.is_some()
-			&& self.negotiation_revision == Some(revision)
-			&& self.started.elapsed() < Duration::from_secs(30))
-		.then_some(Command::Voice(voice::Command::ConfirmSession {
-			channel: self.channel,
-			request: self.request,
-			revision,
-		}))
-	}
-	fn accepts_confirmation(&self, channel: Id, request: u64, revision: u64) -> bool {
-		self.channel == channel
-			&& self.request == request
-			&& self.confirm_transport(revision).is_some()
-	}
-	fn changed(&self, event: &voice::Event) -> bool {
-		match event {
-			voice::Event::State {
-				request: Some(request),
-				channel: Some(channel),
-				user,
-				session: Some(session),
-				..
-			} => {
-				*request == self.request
-					&& *channel == self.channel
-					&& *user == self.user
-					&& self
-						.session
-						.as_ref()
-						.is_some_and(|old| old.expose() != session.expose())
-			}
-			voice::Event::Server {
-				request,
-				channel,
-				token,
-				endpoint,
-				..
-			} => {
-				*request == self.request
-					&& *channel == self.channel
-					&& self.server.as_ref().is_none_or(|(old, address)| {
-						token
-							.as_ref()
-							.is_none_or(|token| token.expose() != old.expose())
-							|| endpoint.as_ref() != Some(address)
-					})
-			}
-			_ => false,
-		}
-	}
-}
 enum Notice {
-	TransportReady(u64),
-	CameraAvailable(bool),
-	WaitingForPeer,
+	Camera(bool),
+	Connected {
+		others: bool,
+		privacy_code: Option<String>,
+	},
 	Progress(Phase),
-	MediaReady(String),
 	DeviceReady,
 	RemoteAudio,
-}
-struct Live {
-	generation: u64,
-	channel: Id,
-	request: u64,
-	user: Id,
-	peer: Option<Id>,
-	ring_pending: bool,
-	cues: CallCues,
-	session: Zeroizing<String>,
-	negotiation_revision: u64,
-	// Retained only until Gateway acknowledges the server-accepted local transport candidate.
-	negotiation: Option<Pending>,
-	media_ready: bool,
-	waiting_for_peer: bool,
-	identity: Arc<discord_voice::Identity>,
-	audio: Audio,
-	controls: watch::Sender<Controls>,
-	events: mpsc::Receiver<Notice>,
-	// Terminal errors must survive a full progress queue; retain the first safe reason.
-	failure: Arc<OnceLock<&'static str>>,
-	speakers: watch::Receiver<[u64; 64]>,
-	task: JoinHandle<()>,
-	devices: Devices,
-	device_deadline: Option<Instant>,
-	camera_frames: mpsc::SyncSender<discord_voice::camera_video::Frame>,
-	camera_negotiated: bool,
-	camera_clock: Instant,
-	/// Latest decoded camera picture per remote user, replaced (never queued) by the decoder.
-	remote_video: Arc<std::sync::Mutex<RemotePictures>>,
-	/// Decoded audio of a watched stream, mixed into this call's playback.
-	stream_audio: mpsc::SyncSender<discord_voice::Frame>,
 }
 
 #[derive(Default)]
 struct CallCues {
+	request: Option<u64>,
 	joined: bool,
 	peers: Option<[u64; voice::MAX_PARTICIPANTS]>,
 }
@@ -293,25 +179,55 @@ struct CameraTest {
 	picture: Arc<std::sync::Mutex<CameraPicture>>,
 }
 
+/// The call's running media: one audio pipeline and one transport for one plan id.
+struct CallMedia {
+	id: u64,
+	identity: Arc<discord_voice::Identity>,
+	audio: Audio,
+	controls: watch::Sender<Controls>,
+	events: mpsc::Receiver<Notice>,
+	// Terminal errors must survive a full progress queue; retain the first safe reason.
+	failure: Arc<OnceLock<&'static str>>,
+	speakers: watch::Receiver<[u64; 64]>,
+	task: JoinHandle<()>,
+	devices: Devices,
+	device_deadline: Option<Instant>,
+	camera_frames: mpsc::SyncSender<discord_voice::camera_video::Frame>,
+	camera_clock: Instant,
+	/// Latest decoded camera picture per remote user, replaced (never queued) by the decoder.
+	remote_video: Arc<std::sync::Mutex<RemotePictures>>,
+	/// Decoded audio of a watched stream, mixed into this call's playback.
+	stream_audio: mpsc::SyncSender<discord_voice::Frame>,
+	/// The transport is connected: `Some(true)` with others, `Some(false)` alone.
+	connected: Option<bool>,
+	privacy_code: Option<String>,
+	/// Last report given to the controller, so each change is reported once.
+	reported: Option<Report>,
+}
+
 #[derive(Default)]
 pub struct Voice {
 	camera_test: Option<CameraTest>,
 	mic_preview: Option<MicPreview>,
 	screen: crate::screen::Screen,
 	watch: crate::watch::Watch,
+	call: Option<CallMedia>,
+	/// Audio pipelines still closing. New calls never wait for them.
+	retiring: Vec<mpsc::Receiver<()>>,
 	camera: Option<discord_voice::camera::Camera>,
 	camera_device: Option<String>,
 	camera_generation: u64,
 	camera_preview: Option<std::sync::Arc<std::sync::Mutex<CameraPicture>>>,
-	pending: Option<Pending>,
-	live: Option<Live>,
-	retiring: Option<mpsc::Receiver<()>>,
+	cues: CallCues,
+	/// Whether Discord's voice states name this Gateway session, reported once per run.
+	sessions_reported: bool,
 	device_scan: Option<mpsc::Receiver<Result<discord_voice::audio::DeviceList, &'static str>>>,
 	camera_scan: Option<mpsc::Receiver<Result<discord_voice::camera::DeviceList, &'static str>>>,
 	/// Remote camera textures behind `ui.voice_remote_video`, by user.
 	remote_textures: Vec<(Id, crate::gpu_video::VideoTexture)>,
 }
 impl Voice {
+	/// Sign-out or a new login: stop every worker now.
 	pub fn stop(&mut self) {
 		self.camera_test = None;
 		self.mic_preview = None;
@@ -320,12 +236,17 @@ impl Voice {
 		self.remote_textures.clear();
 		self.screen.stop();
 		self.watch.stop();
-		self.pending = None;
 		self.stop_camera();
-		if let Some(live) = self.live.take() {
-			live.audio.set_ready(false);
-			live.task.abort();
-			self.retiring = Some(live.audio.shutdown());
+		self.stop_call();
+		self.cues = CallCues::default();
+	}
+	fn stop_call(&mut self) {
+		if let Some(call) = self.call.take() {
+			call.audio.set_ready(false);
+			call.task.abort();
+			if self.retiring.len() < MAX_RETIRING {
+				self.retiring.push(call.audio.shutdown());
+			}
 		}
 	}
 	pub fn stop_camera(&mut self) {
@@ -333,8 +254,8 @@ impl Voice {
 			camera.stop();
 		}
 		self.camera_preview = None;
-		if let Some(live) = &self.live {
-			live.controls.send_if_modified(|controls| {
+		if let Some(call) = &self.call {
+			call.controls.send_if_modified(|controls| {
 				let changed = controls.camera != 0;
 				controls.camera = 0;
 				changed
@@ -347,276 +268,80 @@ impl Voice {
 		{
 			self.camera = None;
 		}
-		if self
-			.retiring
-			.as_ref()
-			.is_some_and(|done| !matches!(done.try_recv(), Err(mpsc::TryRecvError::Empty)))
-		{
-			self.retiring = None;
-		}
+		self.retiring
+			.retain(|done| matches!(done.try_recv(), Err(mpsc::TryRecvError::Empty)));
 	}
-	pub fn begin(&mut self, state: &State, ring: bool) -> Result<(), &'static str> {
-		self.camera_test = None;
-		self.mic_preview = None;
-		self.reap();
-		if self.retiring.is_some() {
-			return Err("Previous audio devices are still closing; try again shortly");
-		}
-		if self.pending.is_some() || self.live.is_some() {
-			return Err("A voice call is already active");
-		}
-		let call = state.voice.active.as_ref().ok_or("No call was requested")?;
-		if !state.can_call(call.channel) {
-			return Err("Select an existing DM or server voice channel");
-		}
-		let user = state.user.as_ref().ok_or("Sign in before calling")?.id;
-		let channel = state
-			.channels
-			.iter()
-			.find(|c| c.id == call.channel)
-			.ok_or("The voice channel is unavailable")?;
-		// Only one-to-one DMs pin a peer; group calls use the authenticated voice roster.
-		let peer = (channel.guild.is_none() && channel.kind == 1)
-			.then(|| channel.recipients.first().map(|u| u.id))
-			.flatten();
-		if channel.kind == 1 && peer.is_none() {
-			return Err("The DM recipient is unavailable");
-		}
-		self.pending = Some(Pending {
-			generation: state.generation,
-			channel: call.channel,
-			request: call.request,
-			user,
-			peer,
-			guild: channel.guild,
-			ring: ring && channel.guild.is_none(),
-			session: None,
-			negotiation_revision: None,
-			server: None,
-			started: Instant::now(),
-			failed_candidate: false,
-		});
-		Ok(())
-	}
-	/// Take negotiation secrets before reducing the UI event. Nothing is persisted.
-	pub fn observe(&mut self, state: &State, event: &mut Event) -> Option<&'static str> {
-		self.screen.observe(state, event);
-		self.watch.observe(state, event);
-		let Event::Voice(event) = event else {
-			return None;
-		};
-		if let voice::Event::TakenOver { channel, request } = event {
-			let current = self
-				.live
-				.as_ref()
-				.map(|call| (call.generation, call.channel, call.request))
-				.or_else(|| {
-					self.pending
-						.as_ref()
-						.map(|call| (call.generation, call.channel, call.request))
-				});
-			if current == Some((state.generation, *channel, *request)) {
-				// The established local transport was invalidated; stop only local media.
-				self.stop();
-			}
-			return None;
-		}
-		if let voice::Event::SessionConfirmationFailed {
-			channel,
-			request,
-			revision,
-			message,
-		} = event
-		{
-			let pending = self.pending.as_ref().or_else(|| {
-				self.live
-					.as_ref()
-					.and_then(|live| live.negotiation.as_ref())
-			});
-			let current = pending.is_some_and(|pending| {
-				pending.generation == state.generation
-					&& pending.accepts_confirmation(*channel, *request, *revision)
-					&& state.can_call(*channel)
-					&& state.voice.active.as_ref().is_some_and(|call| {
-						(call.channel, call.request) == (*channel, *request)
-							&& matches!(
-								call.phase,
-								Phase::Connecting
-									| Phase::ConnectingTransport
-									| Phase::Discovering | Phase::Securing
-							)
-					})
-			});
-			// The caller uses fail/end_control; unconfirmed negotiation selects local Abandon.
-			return current.then_some(*message);
-		}
-		if let voice::Event::SessionConfirmed {
-			channel,
-			request,
-			revision,
-		} = event
-		{
-			if let Some(live) = &mut self.live
-				&& live.generation == state.generation
-				&& live.channel == *channel
-				&& live.request == *request
-				&& live.negotiation_revision == *revision
-				&& state.can_call(live.channel)
-				&& state.voice.active.as_ref().is_some_and(|call| {
-					call.channel == live.channel
-						&& call.request == live.request
-						&& call.phase != Phase::Failed
-				}) && live
-				.negotiation
-				.as_ref()
-				.is_some_and(|pending| pending.accepts_confirmation(*channel, *request, *revision))
-			{
-				live.negotiation = None; // Zeroize the extra negotiation credentials now.
-				live.audio
-					.set_ready(negotiated_media(true, live.media_ready));
-			}
-			return None;
-		}
-		// A new candidate during an unconfirmed handshake replaces local negotiation only.
-		// Abort and retire the old devices before opening another worker; keep the original deadline.
-		let restart = self.live.as_ref().is_some_and(|live| {
-			live.generation == state.generation
-				&& state.voice.active.as_ref().is_some_and(|call| {
-					call.channel == live.channel
-						&& call.request == live.request
-						&& call.phase != Phase::Failed
-				}) && live
-				.negotiation
-				.as_ref()
-				.is_some_and(|pending| pending.changed(event))
-		});
-		if restart {
-			let pending = self.live.as_mut().unwrap().negotiation.take();
-			self.stop();
-			self.pending = pending;
-		}
-		if let Some(live) = &self.live {
-			match event {
-				voice::Event::State {
-					request: Some(request),
-					user,
-					channel: Some(channel),
-					session: Some(session),
-					..
-				} if live.generation == state.generation
-					&& *request == live.request
-					&& *channel == live.channel
-					&& state.user.as_ref().is_some_and(|owner| owner.id == *user) =>
-				{
-					if session.expose() != live.session.as_str() {
-						let (channel, request) = (live.channel, live.request);
-						self.stop();
-						*event = voice::Event::TakenOver { channel, request };
-						return None;
-					}
-				}
-				voice::Event::Server {
-					request, channel, ..
-				} if live.generation == state.generation
-					&& *request == live.request
-					&& *channel == live.channel
-					&& live.negotiation.is_none() =>
-				{
-					return Some("Voice server changed; start a new encrypted call");
-				}
-				_ => {}
-			}
-		}
-		let pending = self.pending.as_mut()?;
-		if pending.generation != state.generation
-			|| state.voice.active.as_ref().is_none_or(|c| {
-				c.channel != pending.channel
-					|| c.request != pending.request
-					|| c.phase == Phase::Failed
-			}) {
-			return None;
-		}
-		let changed = pending.changed(event);
-		if changed {
-			pending.failed_candidate = false;
-		}
-		match event {
-			voice::Event::State {
-				request: Some(request),
-				channel: Some(channel),
-				user,
-				session,
-				negotiation_revision,
-				..
-			} if *channel == pending.channel
-				&& *request == pending.request
-				&& *user == pending.user =>
-			{
-				if let Some(session) = session.take() {
-					// Own-user updates may first describe an existing client. Keep the latest
-					// candidate until our voice socket authenticates it; never infer actor from order.
-					pending.session = Some(session);
-					pending.negotiation_revision = *negotiation_revision;
-				}
-			}
-			voice::Event::Server {
-				request,
-				channel,
-				token,
-				endpoint,
-				negotiation_revision,
-			} if *request == pending.request && *channel == pending.channel => {
-				pending.negotiation_revision = *negotiation_revision;
-				let Some(endpoint) = endpoint.take() else {
-					pending.server = None;
-					let _ = token.take();
-					return None;
-				};
-				let Some(token) = token.take() else {
-					return Some("Discord omitted the voice connection token");
-				};
-				pending.server = Some((token, endpoint));
-			}
-			_ => {}
-		}
-		None
-	}
-	fn end_control(&self, channel: Id, request: u64) -> Command {
-		let established = self.live.as_ref().is_some_and(|live| {
-			live.channel == channel && live.request == request && live.negotiation.is_none()
-		});
-		Command::Voice(end_negotiation(channel, request, established))
-	}
-	pub fn fail(&mut self, state: &mut State, message: &'static str) -> Option<Command> {
-		let call = state.voice.active.as_ref()?;
-		let (channel, request) = (call.channel, call.request);
-		let command = self.end_control(channel, request);
-		self.stop();
-		state.apply_voice(voice::Event::Failed {
-			channel,
-			request,
-			message,
-		});
-		Some(command)
-	}
+
+	/// Keeps every worker in line with the call controller's plans; reports go back to it.
 	pub fn poll(
 		&mut self,
 		runtime: &Runtime,
 		state: &mut State,
 		ui: &mut ui::MessagingUi,
 		ctx: &egui::Context,
-	) -> Option<Command> {
+	) {
 		self.reap();
-		ui.voice_switch_ready =
-			self.pending.is_none() && self.live.is_none() && self.retiring.is_none();
 		self.poll_mic_preview(state, ui, ctx);
 		self.poll_camera_test(state, ui, ctx);
 		ui.voice_speaking.clear();
 		ui.voice_microphone_unavailable = false;
 		self.poll_camera_devices(state.demo, ui, ctx);
+		self.poll_audio_devices(state.demo, ui, ctx);
+		self.poll_cues(state, ui, ctx);
+		if !self.sessions_reported
+			&& state.voice.media_plan().is_some()
+			&& std::env::var_os("LEECH_VOICE_DIAGNOSTICS").is_some_and(|value| value == "1")
+		{
+			self.sessions_reported = true;
+			eprintln!(
+				"[Leech voice Call] voice_session_is_gateway_session={}",
+				state.voice.sessions_verified()
+			);
+		}
+		if state.voice.simulated {
+			// The simulated Discord runs pretend media itself; nothing real opens.
+			ui.voice_camera_available = state.voice.camera_negotiated();
+			self.screen.poll_simulated(state, ui);
+			self.watch.poll_simulated(state, ui);
+			return;
+		}
+		let plan = state.voice.media_plan();
+		if self.call.as_ref().map(|call| call.id) != plan.map(|plan| plan.id) {
+			self.stop_camera();
+			ui.voice_camera_preview = None;
+			ui.voice_remote_video.clear();
+			self.remote_textures.clear();
+			ui.voice_privacy_code = None;
+			self.stop_call();
+			if let Some(plan) = plan
+				&& let Err(error) = self.start_media(runtime, state, plan.id, ui, ctx)
+			{
+				state.apply_voice(voice::Event::Media {
+					id: plan.id,
+					report: Report::Failed(error),
+				});
+			}
+		}
+		if state.voice.active.is_none() {
+			ui.voice_camera_available = false;
+			ui.voice_camera_preview = None;
+			ui.voice_camera_status = "";
+		}
+		if self.call.is_some() {
+			self.poll_call(state, ui, ctx);
+			self.poll_camera(state, ui, ctx);
+		}
+		let identity = self.call.as_ref().map(|call| call.identity.clone());
+		let stream_audio = self.call.as_ref().map(|call| call.stream_audio.clone());
+		self.screen.poll(runtime, state, ui, ctx, identity.clone());
+		self.watch
+			.poll(runtime, state, ui, ctx, identity, stream_audio);
+	}
+
+	fn poll_audio_devices(&mut self, demo: bool, ui: &mut ui::MessagingUi, ctx: &egui::Context) {
 		if ui.voice_refresh_devices {
 			ui.voice_refresh_devices = false;
-			if !state.demo && self.device_scan.is_none() {
+			if !demo && self.device_scan.is_none() {
 				let (send, receive) = mpsc::sync_channel(1);
 				let wake = ctx.clone();
 				match std::thread::Builder::new()
@@ -653,401 +378,278 @@ impl Voice {
 				Err(mpsc::TryRecvError::Empty) => {}
 			}
 		}
-		let expected = state
-			.voice
-			.active
-			.as_ref()
-			.filter(|call| call.phase != Phase::Failed)
-			.map(|call| (state.generation, call.channel, call.request));
-		if expected.is_none() {
-			ui.voice_camera_available = false;
-			ui.voice_camera_preview = None;
-			ui.voice_camera_status = "";
-			ui.voice_privacy_code = None;
-		}
-		// Remote camera textures exist only for live media and are always dropped together
-		// with the ids the view borrows, so no tile can draw a freed texture.
-		if expected.is_none() || self.live.is_none() {
-			ui.voice_remote_video.clear();
-			self.remote_textures.clear();
-		}
-		let current = self
-			.live
-			.as_ref()
-			.map(|c| (c.generation, c.channel, c.request))
-			.or_else(|| {
-				self.pending
-					.as_ref()
-					.map(|c| (c.generation, c.channel, c.request))
-			});
-		if current.is_some() && current != expected {
-			// Leaving a call this account had joined mirrors its local join cue.
-			if self
-				.live
-				.as_ref()
-				.is_some_and(|live| live.cues.joined && live.generation == state.generation)
-				&& ui.notification_options.allows(Sound::UserLeave)
-			{
-				ui.notification_preview = Some(Sound::UserLeave);
+	}
+
+	/// Join and leave sounds for the wanted call, whichever media runs it. This device
+	/// leaving is silent by design: a leave cue of our own only doubled the sound the owner
+	/// already hears when they hang up.
+	fn poll_cues(&mut self, state: &State, ui: &mut ui::MessagingUi, ctx: &egui::Context) {
+		let Some(call) = state.voice.active.as_ref() else {
+			self.cues = CallCues::default();
+			return;
+		};
+		if self.cues.request != Some(call.request) {
+			self.cues = CallCues {
+				request: Some(call.request),
+				..CallCues::default()
+			};
+			// A soft tick acknowledges the click; the join sound follows once connected.
+			if !call.phase.connected() && ui.notification_options.allows(Sound::Joining) {
+				ui.notification_preview = Some(Sound::Joining);
 				ctx.request_repaint();
 			}
-			let command = current.map(|(_, channel, request)| self.end_control(channel, request));
-			self.stop();
-			ui.voice_remote_video.clear();
-			self.remote_textures.clear();
-			// Permission/removal failures must leave the service too; never target a new account.
-			return current
-				.filter(|(generation, _, _)| *generation == state.generation)
-				.and(command);
 		}
-		if let Some(pending) = self.pending.as_ref().or_else(|| {
-			self.live
-				.as_ref()
-				.and_then(|live| live.negotiation.as_ref())
-		}) {
-			if pending.started.elapsed() >= Duration::from_secs(30) {
-				return self.fail(
-                    state,
-                    "Discord did not provide voice connection details; check Connect permission and channel capacity",
-                );
-			}
-			ctx.request_repaint_after(
-				Duration::from_secs(30).saturating_sub(pending.started.elapsed()),
-			);
+		let Some(owner) = state.user.as_ref().map(|user| user.id) else {
+			return;
+		};
+		if let Some(cue) = self.cues.poll(
+			call.phase.connected(),
+			state.gateway_connected,
+			owner,
+			&call.participants,
+		) && ui.notification_options.allows(cue)
+		{
+			ui.notification_preview = Some(cue);
+			ctx.request_repaint();
 		}
-		if self.retiring.is_none()
-			&& self.pending.as_ref().is_some_and(|p| {
-				!p.failed_candidate
-					&& p.session.is_some()
-					&& p.negotiation_revision.is_some()
-					&& p.server.is_some()
-			}) {
-			let pending = self.pending.take().expect("pending negotiation");
-			let listen_only = permission_mutes_microphone(
+	}
+
+	/// Controls in, transport and device progress out.
+	fn poll_call(&mut self, state: &mut State, ui: &mut ui::MessagingUi, ctx: &egui::Context) {
+		let Some(media) = self.call.as_mut() else {
+			return;
+		};
+		let Some(call) = state.voice.active.as_ref() else {
+			return;
+		};
+		let deafened = call.deafened || call.server_deafened;
+		let muted = call.muted
+			|| permission_mutes_microphone(
 				state,
-				pending.channel,
+				call.channel,
 				ui.voice_push_to_talk,
 				ui.voice_ptt_active,
-			) || ui.voice_ptm_active;
-			let input_enabled = state.can_speak(pending.channel);
-			if let Err(error) =
-				self.start_media(runtime, pending, ui, ctx, listen_only, input_enabled)
-			{
-				return self.fail(state, error);
+			) || call.server_muted
+			|| deafened
+			|| (ui.voice_push_to_talk && !ui.voice_ptt_active)
+			|| ui.voice_ptm_active;
+		media.audio.set_controls(muted, deafened);
+		media.audio.set_processing(ui.voice_processing.effective());
+		media.audio.set_input_enabled(state.can_speak(call.channel));
+		media
+			.audio
+			.set_gain(ui.voice_gain.input_percent, ui.voice_gain.output_percent);
+		let user_volumes = ui.voice_user_volumes();
+		let stream_volume = ui.voice_stream_volume();
+		let activity_threshold_db = ui
+			.voice_processing
+			.effective()
+			.sensitivity_db
+			.unwrap_or(-70);
+		media.controls.send_if_modified(|control| {
+			let next = (
+				muted,
+				deafened,
+				user_volumes,
+				stream_volume,
+				activity_threshold_db,
+			);
+			let current = (
+				control.muted,
+				control.deafened,
+				control.user_volumes,
+				control.stream_volume,
+				control.activity_threshold_db,
+			);
+			if next == current {
+				return false;
+			}
+			control.muted = muted;
+			control.deafened = deafened;
+			control.user_volumes = user_volumes;
+			control.stream_volume = stream_volume;
+			control.activity_threshold_db = activity_threshold_db;
+			true
+		});
+		if ui.voice_input != media.devices.input || ui.voice_output != media.devices.output {
+			let devices = Devices {
+				input: ui.voice_input.clone(),
+				output: ui.voice_output.clone(),
+			};
+			media.audio.set_devices(devices.clone());
+			media.devices = devices;
+			media.device_deadline = None;
+		}
+		let mut progress = None;
+		let mut camera = None;
+		for _ in 0..16 {
+			let Ok(notice) = media.events.try_recv() else {
+				break;
+			};
+			match notice {
+				Notice::Camera(available) => camera = Some(available),
+				Notice::Connected {
+					others,
+					privacy_code,
+				} => {
+					media.connected = Some(others);
+					if privacy_code.is_some() {
+						media.privacy_code = privacy_code;
+					}
+					media.audio.set_ready(true);
+				}
+				Notice::Progress(phase) => {
+					media.connected = None;
+					media.privacy_code = None;
+					media.audio.set_ready(false);
+					media.device_deadline = None;
+					progress = Some(phase);
+				}
+				// Notices wake the UI; only the current device configuration can be ready.
+				Notice::DeviceReady | Notice::RemoteAudio => {}
 			}
 		}
-		if self.pending.is_some() && self.retiring.is_some() {
+		ui.voice_privacy_code = media.privacy_code.clone();
+		ui.voice_microphone_unavailable = media.audio.microphone_unavailable();
+		if ui.voice_settings_open() {
+			ui.voice_preview_level = Some(media.audio.preview_level_db());
 			ctx.request_repaint_after(Duration::from_millis(50));
 		}
-		let mut failure = None;
-		let mut command = None;
-		if let Some(live) = &mut self.live {
-			let call = state.voice.active.as_ref().expect("matching active call");
-			let deafened = call.deafened || call.server_deafened;
-			let muted = call.muted
-				|| permission_mutes_microphone(
-					state,
-					call.channel,
-					ui.voice_push_to_talk,
-					ui.voice_ptt_active,
-				) || call.server_muted
-				|| deafened || (ui.voice_push_to_talk && !ui.voice_ptt_active)
-				|| ui.voice_ptm_active;
-			live.audio.set_controls(muted, deafened);
-			live.audio.set_processing(ui.voice_processing.effective());
-			live.audio.set_input_enabled(state.can_speak(call.channel));
-			live.audio
-				.set_gain(ui.voice_gain.input_percent, ui.voice_gain.output_percent);
-			let user_volumes = ui.voice_user_volumes();
-			let stream_volume = ui.voice_stream_volume();
-			let activity_threshold_db = ui
-				.voice_processing
-				.effective()
-				.sensitivity_db
-				.unwrap_or(-70);
-			live.controls.send_if_modified(|control| {
-				if control.muted == muted
-					&& control.deafened == deafened
-					&& control.user_volumes == user_volumes
-					&& control.stream_volume == stream_volume
-					&& control.activity_threshold_db == activity_threshold_db
-				{
-					false
-				} else {
-					control.muted = muted;
-					control.deafened = deafened;
-					control.user_volumes = user_volumes;
-					control.stream_volume = stream_volume;
-					control.activity_threshold_db = activity_threshold_db;
-					true
-				}
-			});
-			if ui.voice_input != live.devices.input || ui.voice_output != live.devices.output {
-				let devices = Devices {
-					input: ui.voice_input.clone(),
-					output: ui.voice_output.clone(),
-				};
-				live.audio.set_devices(devices.clone());
-				live.devices = devices;
-				live.device_deadline = None;
-			}
-			for _ in 0..8 {
-				let Ok(event) = live.events.try_recv() else {
-					break;
-				};
-				match event {
-					Notice::CameraAvailable(available) => live.camera_negotiated = available,
-					Notice::TransportReady(revision) => {
-						command = live
-							.negotiation
-							.as_ref()
-							.and_then(|pending| pending.confirm_transport(revision));
-					}
-					Notice::WaitingForPeer => {
-						live.waiting_for_peer = true;
-						ui.voice_privacy_code = None;
-						live.media_ready = true;
-						live.audio.set_ready(negotiated_media(
-							live.negotiation.is_none(),
-							live.media_ready,
-						));
-						live.device_deadline = None;
-						state.apply_voice(voice::Event::Progress {
-							channel: live.channel,
-							request: live.request,
-							phase: negotiated_phase(live.negotiation.is_none(), Phase::Waiting),
-						});
-					}
-					Notice::Progress(phase) => {
-						live.waiting_for_peer = false;
-						live.media_ready = false;
-						ui.voice_privacy_code = None;
-						live.audio.set_ready(false);
-						live.device_deadline = None;
-						state.apply_voice(voice::Event::Progress {
-							channel: live.channel,
-							request: live.request,
-							phase,
-						});
-					}
-					Notice::MediaReady(code) => {
-						live.waiting_for_peer = false;
-						ui.voice_privacy_code = Some(code);
-						live.media_ready = true;
-						live.audio.set_ready(negotiated_media(
-							live.negotiation.is_none(),
-							live.media_ready,
-						));
-					}
-					// Notices wake the UI; only the current device configuration can be ready.
-					Notice::DeviceReady | Notice::RemoteAudio => {}
-				}
-			}
-			if live.negotiation.is_none() && live.waiting_for_peer {
-				state.apply_voice(voice::Event::Progress {
-					channel: live.channel,
-					request: live.request,
-					phase: Phase::Waiting,
-				});
-			}
-			if live.negotiation.is_none() && live.ring_pending && command.is_none() {
-				live.ring_pending = false;
-				command = Some(Command::Voice(voice::Command::Ring {
-					channel: live.channel,
-					request: live.request,
-				}));
-			}
-			failure = live.failure.get().copied();
-			let devices_ready = live.audio.is_ready();
-			ui.voice_microphone_unavailable = live.audio.microphone_unavailable();
-			if ui.voice_settings_open() {
-				ui.voice_preview_level = Some(live.audio.preview_level_db());
-				ctx.request_repaint_after(Duration::from_millis(50));
-			}
-			if failure.is_none() {
-				let pending = live
-					.audio
-					.gate
-					.ready
-					.load(std::sync::atomic::Ordering::Acquire)
-					&& !devices_ready;
-				match device_wait(&mut live.device_deadline, pending, Instant::now()) {
-					Ok(Some(remaining)) => {
-						state.apply_voice(voice::Event::Progress {
-							channel: live.channel,
-							request: live.request,
-							phase: if ui.voice_privacy_code.is_some() {
-								Phase::OpeningAudio
-							} else {
-								Phase::Waiting
-							},
-						});
-						ctx.request_repaint_after(remaining);
-					}
-					Ok(None) => {}
-					Err(error) => failure = Some(error),
-				}
-			}
-			if failure.is_none() && devices_ready && ui.voice_privacy_code.is_some() {
-				state.apply_voice(voice::Event::Progress {
-					channel: live.channel,
-					request: live.request,
-					phase: Phase::Connected,
-				});
-			}
-			if live.audio.is_stopped() && failure.is_none() {
-				failure =
-					Some("Audio devices stopped; check microphone permission and device selection");
-			}
-			if live.task.is_finished() && failure.is_none() {
-				failure = Some("Voice connection ended; start a new call explicitly");
-			}
-			// A worker can finish between draining notices and checking its lifecycle.
-			failure = live.failure.get().copied().or(failure);
-			if failure.is_none()
-				&& !state.demo
-				&& state.auth == client_core::auth::AuthState::Authenticated
-				&& let Some(call) = &state.voice.active
-			{
-				// Waiting alone still joins voice, but its audio devices may not be open yet.
-				let ready =
-					devices_ready && matches!(call.phase, Phase::Connected | Phase::Waiting);
-				if let Some(cue) = live.cues.poll(
-					ready,
-					state.gateway_connected,
-					live.user,
-					&call.participants,
-				) && ui.notification_options.allows(cue)
-				{
-					ui.notification_preview = Some(cue);
-					ctx.request_repaint();
-				}
-			}
-			// Uploading is a plane copy into GPU staging, so it runs under the slot lock
-			// instead of cloning each picture out first.
-			if let Ok(mut slot) = live.remote_video.try_lock() {
-				for (user, picture, dirty) in slot.iter_mut() {
-					if !std::mem::take(dirty) {
-						continue;
-					}
-					let user = Id(*user);
-					let index = match self.remote_textures.iter().position(|(id, _)| *id == user) {
-						Some(index) => index,
-						None if self.remote_textures.len() < MAX_REMOTE_VIDEO => {
-							self.remote_textures.push((user, Default::default()));
-							self.remote_textures.len() - 1
+		let devices_ready = media.audio.is_ready();
+		let mut failure = media.failure.get().copied();
+		let report = match media.connected {
+			Some(_) if !devices_ready => {
+				match device_wait(&mut media.device_deadline, true, Instant::now()) {
+					Ok(remaining) => {
+						if let Some(remaining) = remaining {
+							ctx.request_repaint_after(remaining);
 						}
-						None => continue,
-					};
-					let name = format!("remote-camera-{}", user.0);
-					let Some(texture) =
-						self.remote_textures[index]
-							.1
-							.upload(ctx, &name, picture.borrow())
-					else {
-						continue;
-					};
-					match ui.voice_remote_video.iter_mut().find(|(id, _)| *id == user) {
-						Some((_, shown)) => *shown = texture,
-						None => ui.voice_remote_video.push((user, texture)),
+						Report::Progress(Phase::OpeningAudio)
+					}
+					Err(error) => {
+						failure = failure.or(Some(error));
+						Report::Progress(Phase::OpeningAudio)
 					}
 				}
 			}
-			// Cameras announced off, or participants who left, release their textures.
-			let visible: Vec<Id> = state
-				.voice
-				.active
-				.as_ref()
-				.map(|call| {
-					call.participants
-						.iter()
-						.filter(|participant| participant.video)
-						.map(|participant| participant.user)
-						.collect()
-				})
-				.unwrap_or_default();
-			ui.voice_remote_video.retain(|(id, _)| visible.contains(id));
-			self.remote_textures.retain(|(id, _)| visible.contains(id));
-			if let Ok(mut pictures) = live.remote_video.try_lock() {
-				pictures.retain(|(id, _, _)| visible.contains(&Id(*id)));
+			Some(others) => {
+				media.device_deadline = None;
+				if others {
+					Report::Ready
+				} else {
+					Report::Waiting
+				}
 			}
+			None => Report::Progress(progress.unwrap_or(match media.reported {
+				Some(Report::Progress(phase)) => phase,
+				_ => Phase::ConnectingTransport,
+			})),
+		};
+		if media.audio.is_stopped() && failure.is_none() {
+			failure =
+				Some("Audio devices stopped; check microphone permission and device selection");
 		}
-		if failure.is_none()
-			&& let Some(live) = &self.live
+		if media.task.is_finished() && failure.is_none() {
+			// A worker can finish between draining notices and checking its lifecycle.
+			failure = media
+				.failure
+				.get()
+				.copied()
+				.or(Some("Voice connection ended"));
+		}
+		let id = media.id;
+		let mut reports = Vec::new();
+		if let Some(available) = camera {
+			reports.push(Report::CameraAvailable(available));
+		}
+		let report = failure.map_or(report, Report::Failed);
+		if media.reported != Some(report) {
+			media.reported = Some(report);
+			reports.push(report);
+		}
+		if !matches!(report, Report::Failed(_))
 			&& let Some(call) = &state.voice.active
-			&& matches!(call.phase, Phase::Connected | Phase::Waiting)
+			&& call.phase.connected()
 			&& !call.deafened
 			&& !call.server_deafened
 		{
-			let controls = *live.controls.borrow();
+			let controls = *media.controls.borrow();
+			let own = state.user.as_ref().map(|user| user.id.0);
 			ui.voice_speaking.extend(
-				live.speakers
+				media
+					.speakers
 					.borrow()
 					.iter()
 					.copied()
-					.filter(|user| {
-						*user != 0
-							&& !(controls.muted
-								&& state.user.as_ref().is_some_and(|own| own.id.0 == *user))
-					})
+					.filter(|user| *user != 0 && !(controls.muted && own == Some(*user)))
 					.map(Id),
 			);
 		}
-		if failure.is_some()
-			&& self
-				.live
-				.as_ref()
-				.is_some_and(|live| live.negotiation.is_some())
-		{
-			let mut pending = self.live.as_mut().unwrap().negotiation.take().unwrap();
-			pending.failed_candidate = true;
-			self.stop();
-			self.pending = Some(pending);
-			// Only new service credentials can retry. Do not hang up another client's candidate.
-			state.status = "Waiting for current voice connection details";
-			ctx.request_repaint_after(Duration::from_millis(50));
-			return None;
+		self.poll_remote_video(state, ui, ctx);
+		for report in reports {
+			state.apply_voice(voice::Event::Media { id, report });
 		}
-		let command = if let Some(error) = failure {
-			self.fail(state, error)
-		} else {
-			command.or_else(|| self.poll_camera(state, ui, ctx))
+	}
+
+	fn poll_remote_video(&mut self, state: &State, ui: &mut ui::MessagingUi, ctx: &egui::Context) {
+		let Some(media) = &self.call else {
+			return;
 		};
-		if command.is_some() {
-			return command;
+		// Uploading is a plane copy into GPU staging, so it runs under the slot lock
+		// instead of cloning each picture out first.
+		if let Ok(mut slot) = media.remote_video.try_lock() {
+			for (user, picture, dirty) in slot.iter_mut() {
+				if !std::mem::take(dirty) {
+					continue;
+				}
+				let user = Id(*user);
+				let index = match self.remote_textures.iter().position(|(id, _)| *id == user) {
+					Some(index) => index,
+					None if self.remote_textures.len() < MAX_REMOTE_VIDEO => {
+						self.remote_textures.push((user, Default::default()));
+						self.remote_textures.len() - 1
+					}
+					None => continue,
+				};
+				let name = format!("remote-camera-{}", user.0);
+				let Some(texture) =
+					self.remote_textures[index]
+						.1
+						.upload(ctx, &name, picture.borrow())
+				else {
+					continue;
+				};
+				match ui.voice_remote_video.iter_mut().find(|(id, _)| *id == user) {
+					Some((_, shown)) => *shown = texture,
+					None => ui.voice_remote_video.push((user, texture)),
+				}
+			}
 		}
-		let call = self.live.as_ref().map(|live| crate::screen::Call {
-			generation: live.generation,
-			channel: live.channel,
-			request: live.request,
-			user: live.user,
-			peer: live.peer,
-			session: live.session.as_str(),
-			identity: live.identity.clone(),
-		});
-		let watched = self.live.as_ref().map(|live| crate::screen::Call {
-			generation: live.generation,
-			channel: live.channel,
-			request: live.request,
-			user: live.user,
-			peer: live.peer,
-			session: live.session.as_str(),
-			identity: live.identity.clone(),
-		});
-		let stream_audio = self.live.as_ref().map(|live| live.stream_audio.clone());
-		if let Some(command) = self.screen.poll(runtime, state, ui, ctx, call) {
-			return Some(command);
+		// Cameras announced off, or participants who left, release their textures.
+		let visible: Vec<Id> = state
+			.voice
+			.active
+			.as_ref()
+			.map(|call| {
+				call.participants
+					.iter()
+					.filter(|participant| participant.video)
+					.map(|participant| participant.user)
+					.collect()
+			})
+			.unwrap_or_default();
+		ui.voice_remote_video.retain(|(id, _)| visible.contains(id));
+		self.remote_textures.retain(|(id, _)| visible.contains(id));
+		if let Ok(mut pictures) = media.remote_video.try_lock() {
+			pictures.retain(|(id, _, _)| visible.contains(&Id(*id)));
 		}
-		self.watch
-			.poll(runtime, state, ui, ctx, watched, stream_audio)
 	}
 	fn poll_mic_preview(&mut self, state: &State, ui: &mut ui::MessagingUi, ctx: &egui::Context) {
 		if state.demo
 			|| !ui.voice_available
 			|| !ui.voice_settings_open()
 			|| state.voice.active.is_some()
-			|| self.pending.is_some()
-			|| self.live.is_some()
+			|| self.call.is_some()
 		{
 			ui.voice_preview_requested = false;
 			ui.voice_preview_status = "";
@@ -1146,8 +748,7 @@ impl Voice {
 			&& ui.voice_available
 			&& discord_voice::camera::SUPPORTED
 			&& state.voice.active.is_none()
-			&& self.pending.is_none()
-			&& self.live.is_none();
+			&& self.call.is_none();
 		if !ui.camera_test_available || !ui.voice_settings_open() {
 			ui.camera_test_requested = false;
 			ui.camera_test_status = "";
@@ -1267,50 +868,49 @@ impl Voice {
 			}
 		}
 	}
-	fn poll_camera(
-		&mut self,
-		state: &mut State,
-		ui: &mut ui::MessagingUi,
-		ctx: &egui::Context,
-	) -> Option<Command> {
+	/// The local camera follows the call's camera choice while its media is connected.
+	fn poll_camera(&mut self, state: &mut State, ui: &mut ui::MessagingUi, ctx: &egui::Context) {
 		let supported = discord_voice::camera::SUPPORTED;
-		ui.voice_camera_available = supported
-			&& self
-				.live
-				.as_ref()
-				.is_some_and(|live| live.camera_negotiated);
+		ui.voice_camera_available = supported && state.voice.camera_negotiated();
 		let requested = state.voice.active.as_ref().is_some_and(|call| call.camera);
 		if requested && self.camera.is_some() && self.camera_device != ui.voice_camera_device {
 			self.stop_camera();
 			ui.voice_camera_preview = None;
 			ui.voice_camera_status =
 				"Camera device changed. Turn on the camera to use the selected device.";
-			return state.set_call_camera(false);
+			state.set_call_camera(false);
+			return;
 		}
-		let preview_allowed = camera_preview_allowed(state);
 		let error = self.camera.as_ref().and_then(|camera| camera.error());
-		if !requested || !preview_allowed || !ui.voice_camera_available || error.is_some() {
+		if !requested
+			|| !camera_preview_allowed(state)
+			|| !ui.voice_camera_available
+			|| error.is_some()
+		{
 			self.stop_camera();
 			ui.voice_camera_preview = None;
-			if requested {
-				ui.voice_camera_status =
-					error.unwrap_or("Camera stopped; reconnect securely before turning it on");
-				return state.set_call_camera(false);
+			if requested && let Some(error) = error {
+				ui.voice_camera_status = error;
+				state.set_call_camera(false);
 			}
-			return None;
+			return;
 		}
 		if self.camera_preview.is_none() {
 			if self.camera.is_some() {
-				ui.voice_camera_status = "Camera is still closing; try again shortly";
-				return state.set_call_camera(false);
+				// The previous camera is still closing; it opens again on a later frame.
+				ui.voice_camera_status = "Opening camera…";
+				ctx.request_repaint_after(Duration::from_millis(50));
+				return;
 			}
-			let live = self.live.as_ref()?;
+			let Some(media) = self.call.as_ref() else {
+				return;
+			};
 			self.camera_generation = self.camera_generation.checked_add(1).unwrap_or(1);
 			let generation = self.camera_generation;
-			let send = live.camera_frames.clone();
+			let send = media.camera_frames.clone();
 			let receive = std::sync::Arc::new(std::sync::Mutex::new(None));
 			let preview = receive.clone();
-			let start = live.camera_clock;
+			let start = media.camera_clock;
 			let wake = ctx.clone();
 			let on_frame = std::sync::Arc::new(move |frame: discord_voice::camera::Frame| {
 				let data = frame.h264;
@@ -1339,12 +939,14 @@ impl Voice {
 					self.camera = Some(camera);
 					self.camera_preview = Some(receive);
 					ui.voice_camera_status = "Opening camera…";
-					live.controls
+					media
+						.controls
 						.send_modify(|controls| controls.camera = generation);
 				}
 				Err(error) => {
 					ui.voice_camera_status = error;
-					return state.set_call_camera(false);
+					state.set_call_camera(false);
+					return;
 				}
 			}
 		}
@@ -1367,22 +969,29 @@ impl Voice {
 			}
 			ui.voice_camera_status = "Camera on · local preview";
 		}
-		None
 	}
+
+	/// Opens audio and the voice transport for media run `id`.
 	fn start_media(
 		&mut self,
 		runtime: &Runtime,
-		pending: Pending,
+		state: &State,
+		id: u64,
 		ui: &ui::MessagingUi,
 		ctx: &egui::Context,
-		listen_only: bool,
-		input_enabled: bool,
 	) -> Result<(), &'static str> {
+		let credentials = state
+			.media_credentials(id)
+			.ok_or("Voice connection details expired")?;
+		let channel = credentials.channel;
+		let listen_only =
+			permission_mutes_microphone(state, channel, ui.voice_push_to_talk, ui.voice_ptt_active)
+				|| ui.voice_ptm_active;
 		let (capture_send, capture) = mpsc::sync_channel(8);
 		let (camera_frames, camera_receive) = mpsc::sync_channel(1);
 		let (stream_audio, stream_audio_receive) = mpsc::sync_channel(8);
 		let (playback, playback_receive) = mpsc::sync_channel(8);
-		let (send, events) = mpsc::sync_channel(8);
+		let (send, events) = mpsc::sync_channel(16);
 		let failure = Arc::new(OnceLock::new());
 		let audio_failure = failure.clone();
 		let (speaking, speakers) = watch::channel([0; 64]);
@@ -1433,35 +1042,9 @@ impl Voice {
 			}
 		});
 		audio.set_controls(listen_only || ui.voice_push_to_talk, false);
-		audio.set_input_enabled(input_enabled);
+		audio.set_input_enabled(state.can_speak(channel));
 		audio.set_processing(ui.voice_processing.effective());
 		audio.set_gain(ui.voice_gain.input_percent, ui.voice_gain.output_percent);
-		let session = Secret::new(
-			pending
-				.session
-				.as_ref()
-				.ok_or("Missing voice session")?
-				.expose()
-				.to_owned(),
-		)
-		.map_err(|_| "Invalid voice session")?;
-		let negotiation_revision = pending
-			.negotiation_revision
-			.ok_or("Missing voice negotiation revision")?;
-		let session_copy = Zeroizing::new(session.expose().to_owned());
-		let (token, endpoint) = pending.server.as_ref().ok_or("Missing voice server")?;
-		let token = Secret::new(token.expose().to_owned()).map_err(|_| "Invalid voice token")?;
-		let endpoint = endpoint.clone();
-		let credentials = voice::VoiceConnection {
-			channel: pending.channel,
-			request: pending.request,
-			user: pending.user,
-			peer: pending.peer,
-			guild: pending.guild,
-			session,
-			token,
-			endpoint,
-		};
 		let identity = discord_voice::Identity::generate();
 		let media_identity = identity.clone();
 		let transport_failure = failure.clone();
@@ -1483,17 +1066,23 @@ impl Voice {
 				Some(stream_audio_receive),
 				move |event| {
 					let notice = match event {
-						Status::TransportReady => Notice::TransportReady(negotiation_revision),
-						Status::CameraAvailable(available) => Notice::CameraAvailable(available),
+						Status::TransportReady => return Ok(()),
+						Status::CameraAvailable(available) => Notice::Camera(available),
 						Status::Connecting => Notice::Progress(Phase::ConnectingTransport),
 						Status::Discovering => Notice::Progress(Phase::Discovering),
 						Status::Securing => Notice::Progress(Phase::Securing),
-						Status::WaitingForPeer => Notice::WaitingForPeer,
+						Status::WaitingForPeer => Notice::Connected {
+							others: false,
+							privacy_code: None,
+						},
 						Status::Ready { privacy_code } => {
 							if privacy_code.len() > 256 {
 								return Err(());
 							}
-							Notice::MediaReady(privacy_code)
+							Notice::Connected {
+								others: true,
+								privacy_code: Some(privacy_code),
+							}
 						}
 						Status::RemoteAudio => Notice::RemoteAudio,
 						Status::Speaking(users) => {
@@ -1514,19 +1103,9 @@ impl Voice {
 			}
 			wake.request_repaint();
 		});
-		self.live = Some(Live {
-			generation: pending.generation,
-			channel: pending.channel,
-			request: pending.request,
-			user: pending.user,
-			peer: pending.peer,
-			session: session_copy,
-			negotiation_revision,
-			media_ready: false,
-			waiting_for_peer: false,
+		self.call = Some(CallMedia {
+			id,
 			identity,
-			ring_pending: pending.ring,
-			cues: CallCues::default(),
 			audio,
 			controls,
 			events,
@@ -1536,11 +1115,12 @@ impl Voice {
 			devices,
 			device_deadline: None,
 			camera_frames,
-			camera_negotiated: false,
 			camera_clock: Instant::now(),
 			remote_video,
 			stream_audio,
-			negotiation: Some(pending),
+			connected: None,
+			privacy_code: None,
+			reported: None,
 		});
 		Ok(())
 	}
@@ -1551,20 +1131,17 @@ impl Drop for Voice {
 	}
 }
 
-// A peer joining/leaving rekeys media without revoking the local camera gesture.
 fn camera_preview_allowed(state: &State) -> bool {
-	state.voice.active.as_ref().is_some_and(|call| {
-		(matches!(call.phase, Phase::Connected | Phase::Waiting)
-			|| (call.connected_at.is_some()
-				&& matches!(call.phase, Phase::Securing | Phase::OpeningAudio)))
-			&& state.can_camera(call.channel)
-	})
+	state.voice.media_ready()
+		&& state
+			.voice
+			.active
+			.as_ref()
+			.is_some_and(|call| state.can_camera(call.channel))
 }
 
-/// Device-free check of preview rendering and the guards that prevent automatic capture.
 #[cfg(all(debug_assertions, feature = "demo"))]
 pub fn debug_mic_preview_check() {
-	ui::MessagingUi::debug_call_switch_check(test_support::existing_call_demo_state());
 	discord_voice::audio::debug_processing_check();
 	let ctx = egui::Context::default();
 	ui::design::apply(&ctx);
@@ -1705,19 +1282,6 @@ pub fn debug_call_cues_check() {
 	);
 }
 
-/// A service takeover is informational and only belongs to the current local call.
-pub fn takeover_notice(state: &State, event: &Event) -> Option<&'static str> {
-	let Event::Voice(voice::Event::TakenOver { channel, request }) = event else {
-		return None;
-	};
-	state
-		.voice
-		.active
-		.as_ref()
-		.is_some_and(|call| call.channel == *channel && call.request == *request)
-		.then_some("voice-call-moved-to-another-client")
-}
-
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -1803,744 +1367,5 @@ mod tests {
 			"Demo must not consume a real device scan"
 		);
 		assert!(voice.camera_scan.is_none());
-	}
-	#[test]
-	fn local_camera_survives_peer_rekeys_but_requires_join_and_permission() {
-		for mut state in [
-			test_support::call_demo_state(),
-			test_support::voice_demo_state(),
-		] {
-			state.demo = false;
-			let mut role = state.permissions.guilds[&Id(10)].roles.as_ref().unwrap()[0].clone();
-			role.bits |= model::permissions::STREAM;
-			state.apply(client_core::Envelope {
-				generation: state.generation,
-				event: Event::Permissions(client_core::permissions::Event::Role {
-					guild: Id(10),
-					role,
-				}),
-			});
-			for phase in [
-				Phase::Waiting,
-				Phase::Securing,
-				Phase::OpeningAudio,
-				Phase::Connected,
-				Phase::Waiting,
-			] {
-				state.voice.active.as_mut().unwrap().phase = phase;
-				assert!(
-					camera_preview_allowed(&state),
-					"phase={phase:?}, channel={:?}, can_call={}, permission={:?}",
-					state.voice.active.as_ref().unwrap().channel,
-					state.can_call(state.voice.active.as_ref().unwrap().channel),
-					state.permission(
-						state.voice.active.as_ref().unwrap().channel,
-						model::permissions::STREAM
-					)
-				);
-			}
-			state.voice.active.as_mut().unwrap().connected_at = None;
-			for phase in [
-				Phase::Connecting,
-				Phase::Securing,
-				Phase::OpeningAudio,
-				Phase::Failed,
-			] {
-				state.voice.active.as_mut().unwrap().phase = phase;
-				assert!(!camera_preview_allowed(&state));
-			}
-			state.voice.active.as_mut().unwrap().phase = Phase::Waiting;
-			state.gateway_connected = false;
-			assert!(!camera_preview_allowed(&state));
-			state.voice.active = None;
-			assert!(!camera_preview_allowed(&state));
-		}
-	}
-
-	#[test]
-	fn audio_opening_has_a_deadline_that_clears_on_readiness_or_security_pause() {
-		let now = Instant::now();
-		let mut deadline = None;
-		assert_eq!(device_wait(&mut deadline, false, now), Ok(None));
-		assert_eq!(
-			device_wait(&mut deadline, true, now),
-			Ok(Some(DEVICE_OPEN_TIMEOUT))
-		);
-		assert_eq!(
-			device_wait(&mut deadline, true, now + Duration::from_secs(19)),
-			Ok(Some(Duration::from_secs(1)))
-		);
-		assert!(device_wait(&mut deadline, true, now + DEVICE_OPEN_TIMEOUT).is_err());
-		assert_eq!(
-			device_wait(&mut deadline, false, now + DEVICE_OPEN_TIMEOUT),
-			Ok(None)
-		);
-		assert!(deadline.is_none());
-		assert_eq!(
-			device_wait(&mut deadline, true, now + DEVICE_OPEN_TIMEOUT),
-			Ok(Some(DEVICE_OPEN_TIMEOUT))
-		);
-	}
-	#[test]
-	fn microphone_requires_speak_and_focused_push_to_talk_without_vad() {
-		use model::permissions as p;
-		let mut state = test_support::demo_state();
-		let bits = p::VIEW_CHANNEL | p::CONNECT | p::SPEAK;
-		state.permissions.guilds.insert(
-			Id(10),
-			p::Guild {
-				id: Id(10),
-				owner: Some(Id(999)),
-				roles: Some(vec![p::Role {
-					name: String::new(),
-					color: 0,
-					secondary_color: None,
-					tertiary_color: None,
-					position: 0,
-					hoist: false,
-					id: Id(10),
-					bits,
-				}]),
-				member: Some(p::Member {
-					roles: vec![],
-					timeout_until: None,
-				}),
-			},
-		);
-		state.permissions.channels.insert(
-			Id(25),
-			p::Channel {
-				id: Id(25),
-				guild: Id(10),
-				overwrites: Some(vec![]),
-			},
-		);
-		assert!(permission_mutes_microphone(&state, Id(25), false, false));
-		assert!(permission_mutes_microphone(&state, Id(25), false, true));
-		assert!(permission_mutes_microphone(&state, Id(25), true, false));
-		assert!(!permission_mutes_microphone(&state, Id(25), true, true));
-		state
-			.permissions
-			.guilds
-			.get_mut(&Id(10))
-			.unwrap()
-			.roles
-			.as_mut()
-			.unwrap()[0]
-			.bits |= p::USE_VAD;
-		state.permissions.clear_cache();
-		assert!(!permission_mutes_microphone(&state, Id(25), false, false));
-		state
-			.permissions
-			.guilds
-			.get_mut(&Id(10))
-			.unwrap()
-			.roles
-			.as_mut()
-			.unwrap()[0]
-			.bits &= !p::SPEAK;
-		state.permissions.clear_cache();
-		assert!(permission_mutes_microphone(&state, Id(25), true, true));
-		state.permissions.channels.remove(&Id(25));
-		state.permissions.clear_cache();
-		assert!(permission_mutes_microphone(&state, Id(25), true, true));
-	}
-	#[test]
-	fn group_negotiation_uses_the_voice_roster_and_preserves_one_to_one_peer_pinning() {
-		for kind in [1, 3] {
-			let mut state = test_support::demo_state();
-			state.demo = false;
-			let channel = state.channels.iter_mut().find(|c| c.id == Id(22)).unwrap();
-			channel.kind = kind;
-			let peer = channel.recipients[0].id;
-			if kind == 3 {
-				let mut other = channel.recipients[0].clone();
-				other.id = Id(999);
-				channel.recipients.push(other);
-			}
-			state.start_call(Id(22), true).unwrap();
-			let mut manager = Voice::default();
-			manager.begin(&state, true).unwrap();
-			let pending = manager.pending.as_ref().unwrap();
-			assert_eq!(pending.guild, None);
-			assert_eq!(pending.peer, (kind == 1).then_some(peer));
-			assert!(pending.ring);
-			assert!(manager.live.is_none());
-		}
-	}
-	#[test]
-	fn guild_negotiation_has_no_dm_peer_or_ringing_and_opens_no_devices() {
-		let mut state = test_support::demo_state();
-		state.demo = false;
-		let command = state.start_call(Id(25), true).unwrap();
-		assert!(matches!(
-			command,
-			Command::Voice(voice::Command::Join { ring: false, .. })
-		));
-		let mut manager = Voice::default();
-		manager.begin(&state, true).unwrap();
-		let pending = manager.pending.as_ref().unwrap();
-		assert_eq!(pending.guild, Some(Id(10)));
-		assert_eq!(pending.peer, None);
-		assert!(!pending.ring);
-		assert!(manager.live.is_none());
-		state.leave_call();
-		manager.stop();
-		assert!(manager.pending.is_none());
-	}
-	#[test]
-	fn invalidation_leaves_service_but_never_sends_old_account_commands() {
-		let runtime = tokio::runtime::Builder::new_current_thread()
-			.enable_all()
-			.build()
-			.unwrap();
-		let mut state = test_support::demo_state();
-		state.demo = false;
-		state.start_call(Id(25), false).unwrap();
-		let mut manager = Voice::default();
-		manager.begin(&state, false).unwrap();
-		state.disconnect_voice("Discord gateway connection lost; rejoin after reconnecting");
-		let mut ui = ui::MessagingUi::default();
-		let context = egui::Context::default();
-		assert!(matches!(
-			manager.poll(&runtime, &mut state, &mut ui, &context),
-			Some(Command::Voice(voice::Command::AbandonSession {
-				channel: Id(25),
-				..
-			}))
-		));
-		assert!(manager.pending.is_none());
-		state.leave_call();
-		state.start_call(Id(25), false).unwrap();
-		manager.begin(&state, false).unwrap();
-		state.generation += 1;
-		assert!(
-			manager
-				.poll(&runtime, &mut state, &mut ui, &context)
-				.is_none()
-		);
-		assert!(manager.pending.is_none());
-	}
-	#[test]
-	fn takeover_notice_is_only_for_the_current_call_request() {
-		let mut state = test_support::demo_state();
-		state.demo = false;
-		state.start_call(Id(22), false).unwrap();
-		let request = state.voice.active.as_ref().unwrap().request;
-		let event = |channel, request| Event::Voice(voice::Event::TakenOver { channel, request });
-		assert!(takeover_notice(&state, &event(Id(23), request)).is_none());
-		assert!(takeover_notice(&state, &event(Id(22), request + 1)).is_none());
-		assert_eq!(
-			takeover_notice(&state, &event(Id(22), request)),
-			Some("voice-call-moved-to-another-client")
-		);
-		state.apply_voice(voice::Event::TakenOver {
-			channel: Id(22),
-			request,
-		});
-		assert!(takeover_notice(&state, &event(Id(22), request)).is_none());
-	}
-	#[test]
-	fn takeover_stops_local_negotiation_without_sending_a_service_hangup() {
-		let runtime = Runtime::new().unwrap();
-		let mut state = test_support::demo_state();
-		state.demo = false;
-		state.start_call(Id(22), false).unwrap();
-		let request = state.voice.active.as_ref().unwrap().request;
-		let mut manager = Voice::default();
-		manager.begin(&state, false).unwrap();
-		let mut stale = Event::Voice(voice::Event::TakenOver {
-			channel: Id(22),
-			request: request + 1,
-		});
-		assert!(manager.observe(&state, &mut stale).is_none());
-		assert!(manager.pending.is_some());
-		let mut event = Event::Voice(voice::Event::TakenOver {
-			channel: Id(22),
-			request,
-		});
-		assert!(manager.observe(&state, &mut event).is_none());
-		assert!(manager.pending.is_none());
-		let Event::Voice(event) = event else {
-			unreachable!()
-		};
-		state.apply_voice(event);
-		let mut ui = ui::MessagingUi::default();
-		let context = egui::Context::default();
-		assert!(
-			manager
-				.poll(&runtime, &mut state, &mut ui, &context)
-				.is_none()
-		);
-		assert!(state.start_call(Id(22), false).is_some());
-		assert!(manager.begin(&state, false).is_ok());
-	}
-	#[test]
-	fn confirmation_failure_abandons_only_the_current_unconfirmed_candidate() {
-		let mut state = test_support::demo_state();
-		state.demo = false;
-		state.gateway_connected = true;
-		state.start_call(Id(22), false).unwrap();
-		let request = state.voice.active.as_ref().unwrap().request;
-		let mut manager = Voice::default();
-		manager.begin(&state, false).unwrap();
-		let pending = manager.pending.as_mut().unwrap();
-		pending.session = Some(Secret::new("synthetic-session".into()).unwrap());
-		pending.server = Some((
-			Secret::new("synthetic-token".into()).unwrap(),
-			"synthetic.discord.media".into(),
-		));
-		pending.negotiation_revision = Some(2);
-		let started = pending.started;
-		let failure = |channel, attempt, revision| {
-			Event::Voice(voice::Event::SessionConfirmationFailed {
-				channel,
-				request: attempt,
-				revision,
-				message: "Call confirmation was not sent; the voice queue is full",
-			})
-		};
-		state.voice.active.as_mut().unwrap().phase = Phase::Securing;
-		for (channel, attempt, revision) in [
-			(Id(22), request, 1),
-			(Id(23), request, 2),
-			(Id(22), request + 1, 2),
-		] {
-			assert!(
-				manager
-					.observe(&state, &mut failure(channel, attempt, revision))
-					.is_none()
-			);
-			assert_eq!(manager.pending.as_ref().unwrap().started, started);
-		}
-		for phase in [
-			Phase::Connected,
-			Phase::Waiting,
-			Phase::Ringing,
-			Phase::OpeningAudio,
-			Phase::Failed,
-		] {
-			state.voice.active.as_mut().unwrap().phase = phase;
-			assert!(
-				manager
-					.observe(&state, &mut failure(Id(22), request, 2))
-					.is_none()
-			);
-		}
-		for phase in [
-			Phase::Connecting,
-			Phase::ConnectingTransport,
-			Phase::Discovering,
-			Phase::Securing,
-		] {
-			state.voice.active.as_mut().unwrap().phase = phase;
-			assert!(
-				manager
-					.observe(&state, &mut failure(Id(22), request, 2))
-					.is_some()
-			);
-		}
-		manager.pending.as_mut().unwrap().generation += 1;
-		assert!(
-			manager
-				.observe(&state, &mut failure(Id(22), request, 2))
-				.is_none()
-		);
-		manager.pending.as_mut().unwrap().generation = state.generation;
-		manager.pending.as_mut().unwrap().failed_candidate = true;
-		assert!(
-			manager
-				.observe(&state, &mut failure(Id(22), request, 2))
-				.is_none()
-		);
-		manager.pending.as_mut().unwrap().failed_candidate = false;
-		manager.pending.as_mut().unwrap().started = Instant::now() - Duration::from_secs(31);
-		assert!(
-			manager
-				.observe(&state, &mut failure(Id(22), request, 2))
-				.is_none()
-		);
-		manager.pending.as_mut().unwrap().started = started;
-		let auth = state.auth;
-		// Core cannot fail a candidate merely from its channel/request: revision lives in Desktop.
-		state.apply(client_core::Envelope {
-			generation: state.generation,
-			event: failure(Id(22), request, 1),
-		});
-		assert_eq!(state.voice.active.as_ref().unwrap().phase, Phase::Securing);
-		let error = manager
-			.observe(&state, &mut failure(Id(22), request, 2))
-			.unwrap();
-		assert!(
-			matches!(manager.fail(&mut state, error), Some(Command::Voice(voice::Command::AbandonSession { channel: Id(22), request: attempt })) if attempt == request)
-		);
-		assert_eq!(state.auth, auth);
-		assert!(state.gateway_connected);
-		assert_eq!(state.voice.active.as_ref().unwrap().phase, Phase::Failed);
-		assert!(manager.pending.is_none() && manager.live.is_none());
-		assert!(
-			manager
-				.observe(&state, &mut failure(Id(22), request, 2))
-				.is_none()
-		);
-	}
-
-	#[test]
-	fn confirmation_failure_stops_live_unconfirmed_transport_and_audio_worker() {
-		// The audio worker stays behind its initial ready=false gate throughout this test:
-		// it never enumerates/opens devices. The transport is only a pending local task.
-		let runtime = Runtime::new().unwrap();
-		let mut state = test_support::demo_state();
-		state.demo = false;
-		state.gateway_connected = true;
-		state.start_call(Id(22), false).unwrap();
-		state.voice.active.as_mut().unwrap().phase = Phase::Securing;
-		let request = state.voice.active.as_ref().unwrap().request;
-		let auth = state.auth;
-		let mut manager = Voice::default();
-		manager.begin(&state, false).unwrap();
-		let mut pending = manager.pending.take().unwrap();
-		pending.session = Some(Secret::new("synthetic-session".into()).unwrap());
-		pending.server = Some((
-			Secret::new("synthetic-token".into()).unwrap(),
-			"synthetic.discord.media".into(),
-		));
-		pending.negotiation_revision = Some(2);
-		let (capture, _captured) = mpsc::sync_channel(8);
-		let (_playback, playback) = mpsc::sync_channel(8);
-		let (device_event, device_events) = mpsc::sync_channel(1);
-		let audio = Audio::start(Devices::default(), capture, playback, move |event| {
-			let _ = device_event.try_send(event);
-		})
-		.unwrap();
-		assert!(!audio.is_ready());
-		let gate = audio.gate.clone();
-		assert!(!gate.ready.load(std::sync::atomic::Ordering::Acquire));
-		struct OnDrop(Option<tokio::sync::oneshot::Sender<()>>);
-		impl Drop for OnDrop {
-			fn drop(&mut self) {
-				let _ = self.0.take().unwrap().send(());
-			}
-		}
-		let (started, running) = tokio::sync::oneshot::channel();
-		let (stopped, finished) = tokio::sync::oneshot::channel();
-		let task = runtime.spawn(async move {
-			let _on_drop = OnDrop(Some(stopped));
-			let _ = started.send(());
-			std::future::pending::<()>().await;
-		});
-		runtime.block_on(async {
-			tokio::time::timeout(Duration::from_secs(2), running)
-				.await
-				.unwrap()
-				.unwrap();
-		});
-		let transport = task.abort_handle();
-		let (controls, _control_events) = watch::channel(Controls::default());
-		let (_notices, events) = mpsc::sync_channel(8);
-		let (_speaking, speakers) = watch::channel([0; 64]);
-		let (camera_frames, _camera_frames) = mpsc::sync_channel(1);
-		let (stream_audio, _stream_audio) = mpsc::sync_channel(8);
-		manager.live = Some(Live {
-			generation: pending.generation,
-			channel: pending.channel,
-			request,
-			user: pending.user,
-			peer: pending.peer,
-			ring_pending: false,
-			cues: CallCues::default(),
-			session: Zeroizing::new("synthetic-session".into()),
-			negotiation_revision: 2,
-			negotiation: Some(pending),
-			media_ready: false,
-			waiting_for_peer: false,
-			identity: discord_voice::Identity::generate(),
-			audio,
-			controls,
-			events,
-			failure: Arc::new(OnceLock::new()),
-			speakers,
-			task,
-			devices: Devices::default(),
-			device_deadline: None,
-			camera_frames,
-			camera_negotiated: false,
-			camera_clock: Instant::now(),
-			remote_video: Arc::new(std::sync::Mutex::new(Vec::new())),
-			stream_audio,
-		});
-		let failure = |revision| {
-			Event::Voice(voice::Event::SessionConfirmationFailed {
-				channel: Id(22),
-				request,
-				revision,
-				message: "Call confirmation was not sent; the voice queue is full",
-			})
-		};
-		assert!(manager.observe(&state, &mut failure(1)).is_none());
-		assert!(manager.pending.is_none() && manager.live.is_some());
-		assert!(!transport.is_finished());
-		assert!(!manager.live.as_ref().unwrap().audio.is_stopped());
-		let error = manager.observe(&state, &mut failure(2)).unwrap();
-		assert!(matches!(
-			manager.fail(&mut state, error),
-			Some(Command::Voice(voice::Command::AbandonSession {
-				channel: Id(22), request: attempt
-			})) if attempt == request
-		));
-		assert!(manager.pending.is_none() && manager.live.is_none());
-		runtime.block_on(async {
-			tokio::time::timeout(Duration::from_secs(2), finished)
-				.await
-				.unwrap()
-				.unwrap();
-		});
-		manager
-			.retiring
-			.take()
-			.unwrap()
-			.recv_timeout(Duration::from_secs(2))
-			.unwrap();
-		assert!(!gate.ready.load(std::sync::atomic::Ordering::Acquire));
-		assert!(device_events.try_recv().is_err());
-		assert_eq!(state.auth, auth);
-		assert!(state.gateway_connected);
-		assert_eq!(state.voice.active.as_ref().unwrap().phase, Phase::Failed);
-	}
-
-	#[test]
-	fn takeover_join_reconciles_both_credential_orders_and_rejects_stale_transport_readiness() {
-		for server_first in [false, true] {
-			let mut state = test_support::demo_state();
-			state.demo = false;
-			state.start_call(Id(22), true).unwrap();
-			let request = state.voice.active.as_ref().unwrap().request;
-			let mut manager = Voice::default();
-			manager.begin(&state, true).unwrap();
-			let started = manager.pending.as_ref().unwrap().started;
-			let session = |id: &str, revision| {
-				Event::Voice(voice::Event::State {
-					request: Some(request),
-					guild: None,
-					member: None,
-					server_muted: false,
-					server_deafened: false,
-					channel: Some(Id(22)),
-					user: Id(1),
-					session: Some(Secret::new(id.into()).unwrap()),
-					negotiation_revision: Some(revision),
-					muted: false,
-					deafened: false,
-					video: false,
-					streaming: false,
-				})
-			};
-			let server = || {
-				Event::Voice(voice::Event::Server {
-					channel: Id(22),
-					request,
-					token: Some(Secret::new("synthetic-token".into()).unwrap()),
-					endpoint: Some("synthetic.discord.media".into()),
-					negotiation_revision: Some(1),
-				})
-			};
-			if server_first {
-				assert!(manager.observe(&state, &mut server()).is_none());
-			}
-			assert!(
-				manager
-					.observe(&state, &mut session("existing-client", 1))
-					.is_none()
-			);
-			if !server_first {
-				assert!(manager.observe(&state, &mut server()).is_none());
-			}
-			// An attempted but unconfirmed old candidate failed; duplicates must not retry it.
-			manager.pending.as_mut().unwrap().failed_candidate = true;
-			assert!(
-				manager
-					.observe(&state, &mut session("existing-client", 1))
-					.is_none()
-			);
-			assert!(manager.pending.as_ref().unwrap().failed_candidate);
-			assert!(manager.observe(&state, &mut server()).is_none());
-			assert!(manager.pending.as_ref().unwrap().failed_candidate);
-			assert!(manager.pending.as_ref().unwrap().changed(
-				match &session("local-candidate", 2) {
-					Event::Voice(event) => event,
-					_ => unreachable!(),
-				}
-			));
-			assert!(
-				manager
-					.observe(&state, &mut session("local-candidate", 2))
-					.is_none()
-			);
-			let pending = manager.pending.as_ref().unwrap();
-			assert!(!pending.failed_candidate);
-			assert_eq!(pending.started, started); // Candidate replacement does not extend the 30s attempt.
-			assert_eq!(
-				pending.session.as_ref().unwrap().expose(),
-				"local-candidate"
-			);
-			assert!(pending.confirm_transport(1).is_none());
-			assert!(
-				matches!(pending.confirm_transport(2), Some(Command::Voice(voice::Command::ConfirmSession { channel:Id(22), request: r, revision:2 })) if r == request)
-			);
-			for (channel, attempt, candidate, expected) in [
-				(Id(22), request, 1, false),
-				(Id(22), request + 1, 2, false),
-				(Id(23), request, 2, false),
-				(Id(22), request, 2, true),
-			] {
-				let confirmed = pending.accepts_confirmation(channel, attempt, candidate);
-				assert_eq!(confirmed, expected);
-				assert_eq!(negotiated_media(confirmed, true), expected);
-				assert!(!negotiated_media(confirmed, false));
-				for phase in [Phase::Waiting, Phase::Connected] {
-					assert_eq!(
-						negotiated_phase(confirmed, phase),
-						if expected { phase } else { Phase::Securing }
-					);
-				}
-			}
-			// Confirmation belongs to a running transport, never a merely pending candidate.
-			assert!(
-				manager
-					.observe(
-						&state,
-						&mut Event::Voice(voice::Event::SessionConfirmed {
-							channel: Id(22),
-							request,
-							revision: 1
-						})
-					)
-					.is_none()
-			);
-			assert!(manager.pending.is_some() && manager.live.is_none());
-			// With closing devices, complete replacement credentials must not open another worker.
-			let (closing, receive) = mpsc::channel();
-			manager.retiring = Some(receive);
-			let runtime = Runtime::new().unwrap();
-			let mut view = ui::MessagingUi::default();
-			let ctx = egui::Context::default();
-			assert!(
-				manager
-					.poll(&runtime, &mut state, &mut view, &ctx)
-					.is_none()
-			);
-			assert!(
-				manager.pending.is_some() && manager.live.is_none() && manager.retiring.is_some()
-			);
-			manager.pending.as_mut().unwrap().started = Instant::now() - Duration::from_secs(31);
-			assert!(
-				manager
-					.pending
-					.as_ref()
-					.unwrap()
-					.confirm_transport(2)
-					.is_none()
-			);
-			assert!(
-				matches!(manager.poll(&runtime, &mut state, &mut view, &ctx), Some(Command::Voice(voice::Command::AbandonSession { channel:Id(22), request:r })) if r == request)
-			);
-			assert!(manager.pending.is_none() && manager.live.is_none());
-			drop(closing);
-			manager.stop();
-		}
-	}
-	#[test]
-	fn unconfirmed_startup_failure_abandons_locally_and_established_failure_keeps_hangup() {
-		let mut state = test_support::demo_state();
-		state.demo = false;
-		state.start_call(Id(22), false).unwrap();
-		let request = state.voice.active.as_ref().unwrap().request;
-		let mut manager = Voice::default();
-		manager.begin(&state, false).unwrap();
-		assert!(
-			matches!(manager.fail(&mut state, "Synthetic startup failure"), Some(Command::Voice(voice::Command::AbandonSession { channel:Id(22), request:r })) if r == request)
-		);
-		assert!(manager.pending.is_none() && manager.live.is_none());
-		assert!(
-			matches!(end_negotiation(Id(22), request, true), voice::Command::Leave { channel:Id(22), request:r } if r == request)
-		);
-	}
-	#[test]
-	fn negotiation_requires_matching_request_owner_and_session_without_opening_devices() {
-		let mut state = test_support::demo_state();
-		state.demo = false;
-		state.start_call(Id(22), true).unwrap();
-		let request = state.voice.active.as_ref().unwrap().request;
-		let mut manager = Voice::default();
-		manager.begin(&state, true).unwrap();
-		let mut stale = Event::Voice(voice::Event::Server {
-			channel: Id(22),
-			request: request + 1,
-			token: Some(Secret::new("synthetic-token".into()).unwrap()),
-			endpoint: Some("synthetic.discord.media".into()),
-			negotiation_revision: Some(1),
-		});
-		assert!(manager.observe(&state, &mut stale).is_none());
-		assert!(manager.pending.as_ref().unwrap().server.is_none());
-		let mut server = Event::Voice(voice::Event::Server {
-			channel: Id(22),
-			request,
-			token: Some(Secret::new("synthetic-token".into()).unwrap()),
-			endpoint: Some("synthetic.discord.media".into()),
-			negotiation_revision: Some(1),
-		});
-		assert!(manager.observe(&state, &mut server).is_none());
-		assert!(manager.pending.as_ref().unwrap().server.is_some());
-		let session = |user, id: &str| {
-			Event::Voice(voice::Event::State {
-				request: Some(request),
-				guild: None,
-				member: None,
-				server_muted: false,
-				server_deafened: false,
-				channel: Some(Id(22)),
-				user: Id(user),
-				session: Some(Secret::new(id.into()).unwrap()),
-				negotiation_revision: Some(if id == "changed-session" { 2 } else { 1 }),
-				muted: false,
-				deafened: false,
-				video: false,
-				streaming: false,
-			})
-		};
-		assert!(
-			manager
-				.observe(&state, &mut session(2, "other-session"))
-				.is_none()
-		);
-		assert!(manager.pending.as_ref().unwrap().session.is_none());
-		assert!(
-			manager
-				.observe(&state, &mut session(1, "synthetic-session"))
-				.is_none()
-		);
-		assert!(
-			manager
-				.observe(&state, &mut session(1, "changed-session"))
-				.is_none()
-		);
-		assert_eq!(
-			manager
-				.pending
-				.as_ref()
-				.unwrap()
-				.session
-				.as_ref()
-				.unwrap()
-				.expose(),
-			"changed-session"
-		);
-		assert_eq!(
-			manager.pending.as_ref().unwrap().negotiation_revision,
-			Some(2)
-		);
-		assert!(manager.live.is_none());
-		manager.stop();
-		assert!(manager.pending.is_none());
 	}
 }

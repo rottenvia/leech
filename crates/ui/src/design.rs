@@ -716,16 +716,29 @@ pub fn finish_panel(ui: &egui::Ui, rect: egui::Rect, backdrop: Color32) {
 	painter.rect_stroke(rect, PANEL_RADIUS, hairline(ui), egui::StrokeKind::Inside);
 }
 
-/// Fill for a loading placeholder. It breathes slowly instead of spinning, and only asks for
-/// frames while a placeholder is drawn. `strength` sets the resting opacity of the muted colour.
-pub fn placeholder_fill(ui: &egui::Ui, strength: f32) -> Color32 {
+/// Light sweeping through a loading placeholder in `rect`: a soft band about 90 points tall,
+/// faintly tinted with the accent, crossing it at an even pace every 1.8 seconds, upward from
+/// the composer (`upward`) or down a list. Returns the fill for a placeholder part at height
+/// `y` and `strength`. It repaints every frame while drawn, like egui's own animations.
+pub fn shimmer(ui: &egui::Ui, rect: egui::Rect, upward: bool) -> impl Fn(f32, f32) -> Color32 {
+	const CYCLE: f64 = 1.8;
+	const SWEEP: f64 = 1.5;
+	const BAND: f32 = 90.0;
+	let p = palette(ui);
 	let time = ui.input(|input| input.time);
-	let pulse = 0.5 - 0.5 * (time * std::f64::consts::TAU / 1.8).cos() as f32;
-	ui.ctx()
-		.request_repaint_after(std::time::Duration::from_millis(33));
-	palette(ui)
-		.muted
-		.gamma_multiply(strength * (0.7 + 0.45 * pulse))
+	ui.ctx().request_repaint();
+	let t = ((time % CYCLE) / SWEEP).min(1.0) as f32;
+	let travel = rect.height() + 3.0 * BAND;
+	let band = if upward {
+		rect.bottom() + 1.5 * BAND - travel * t
+	} else {
+		rect.top() - 1.5 * BAND + travel * t
+	};
+	let light = mix(p.text_strong, p.accent, 0.25);
+	move |y, strength| {
+		let lit = (-((y - band) / BAND).powi(2)).exp();
+		mix(p.muted, light, 0.55 * lit).gamma_multiply(strength * (1.0 + 0.7 * lit))
+	}
 }
 
 /// Fill the notches outside a rounded corner at `corner`, for surfaces that cannot paint a
@@ -766,6 +779,32 @@ pub fn has_section_background(ui: &egui::Ui) -> bool {
 				.background
 				.is_some_and(|background| background.sections.is_some())
 		})
+}
+
+/// Eased 0–1 hover (or keyboard focus) progress of `response`, so hover fills and ink fade
+/// instead of snapping. It runs on egui's `animation_time` like the server rail, so setting
+/// that to zero turns all of it off; idle frames only read the stored value.
+pub fn hover_motion(ui: &egui::Ui, response: &egui::Response) -> f32 {
+	ui.ctx().animate_bool_with_time_and_easing(
+		response.id.with("hover-motion"),
+		response.hovered() || response.has_focus(),
+		ui.style().animation_time,
+		egui::emath::easing::cubic_out,
+	)
+}
+
+/// Eased 0–1 press progress of `response`: controls dip while held and ease back on release.
+pub fn press_motion(ui: &egui::Ui, response: &egui::Response) -> f32 {
+	ui.ctx().animate_bool_with_time(
+		response.id.with("press-motion"),
+		response.is_pointer_button_down_on(),
+		ui.style().animation_time * 0.6,
+	)
+}
+
+/// `rect` shrunk toward its centre while pressed (`press` from [`press_motion`]).
+pub fn pressed_rect(rect: egui::Rect, press: f32) -> egui::Rect {
+	egui::Rect::from_center_size(rect.center(), rect.size() * (1.0 - 0.06 * press))
 }
 
 /// Keep large hover rows translucent over a shared background image.
@@ -1449,24 +1488,27 @@ pub fn window_controls(ui: &mut egui::Ui) {
 			let (rect, response) =
 				ui.allocate_exact_size(egui::vec2(46.0, height), egui::Sense::click());
 			response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
-			let hovered = response.hovered() || response.has_focus();
-			let active = response.is_pointer_button_down_on();
-			if active && danger {
-				ui.painter().rect_filled(rect, 0.0, rgb(0x8b0a14));
-			} else if hovered && danger {
-				ui.painter().rect_filled(rect, 0.0, rgb(0xc42b1c));
-			} else if active {
-				ui.painter().rect_filled(rect, 0.0, p.selected);
-			} else if hovered {
-				ui.painter().rect_filled(rect, 0.0, p.hover);
-			}
-			let color = if (hovered || active) && danger {
-				Color32::WHITE
-			} else if hovered || active {
-				p.text_strong
+			let hover = hover_motion(ui, &response);
+			let press = press_motion(ui, &response);
+			let (hot, held) = if danger {
+				(rgb(0xc42b1c), rgb(0x8b0a14))
 			} else {
-				p.text
+				(p.hover, p.selected)
 			};
+			if hover > 0.0 || press > 0.0 {
+				let fill = Color32::TRANSPARENT
+					.lerp_to_gamma(hot, hover.max(press))
+					.lerp_to_gamma(held, press);
+				ui.painter().rect_filled(rect, 0.0, fill);
+			}
+			let color = p.text.lerp_to_gamma(
+				if danger {
+					Color32::WHITE
+				} else {
+					p.text_strong
+				},
+				hover.max(press),
+			);
 			(response, rect, color)
 		};
 
@@ -1602,15 +1644,14 @@ fn wide_button(
 		ui.allocate_exact_size(egui::vec2(ui.available_width(), 44.0), egui::Sense::click());
 	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), &label));
 	let enabled = ui.is_enabled();
-	let fill = if !enabled {
-		fill.gamma_multiply(0.5)
-	} else if response.is_pointer_button_down_on() {
-		fill.gamma_multiply(0.85)
-	} else if response.hovered() {
-		fill.linear_multiply(1.12)
+	let press = press_motion(ui, &response);
+	let fill = if enabled {
+		fill.lerp_to_gamma(fill.linear_multiply(1.12), hover_motion(ui, &response))
+			.gamma_multiply(1.0 - 0.15 * press)
 	} else {
-		fill
+		fill.gamma_multiply(0.5)
 	};
+	let rect = pressed_rect(rect, press * 0.3);
 	// A disabled fill is dim, so its label takes the strong text colour, not the accent's own
 	// ink, which would vanish on it; the disabled fade then quiets it.
 	let text = if enabled { text } else { p.text_strong };
@@ -1879,7 +1920,7 @@ pub(crate) fn luminance(c: Color32) -> f32 {
 	};
 	0.2126 * channel(c.r()) + 0.7152 * channel(c.g()) + 0.0722 * channel(c.b())
 }
-fn contrast(a: Color32, b: Color32) -> f32 {
+pub(crate) fn contrast(a: Color32, b: Color32) -> f32 {
 	let (l1, l2) = (luminance(a) + 0.05, luminance(b) + 0.05);
 	l1.max(l2) / l1.min(l2)
 }
@@ -2335,22 +2376,22 @@ pub fn button(ui: &mut egui::Ui, label: &str, kind: ButtonKind) -> egui::Respons
 		ui.allocate_exact_size(egui::vec2(width, BUTTON_HEIGHT), egui::Sense::click());
 	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), &label));
 	let enabled = ui.is_enabled();
-	let hot = response.hovered() || response.has_focus();
-	let fill = if !enabled {
-		fill.gamma_multiply(0.4)
-	} else if response.is_pointer_button_down_on() {
-		fill.gamma_multiply(0.82)
-	} else if hot {
-		match kind {
+	let hover = hover_motion(ui, &response);
+	let press = press_motion(ui, &response);
+	let fill = if enabled {
+		let hot = match kind {
 			ButtonKind::Neutral => p.text_strong.gamma_multiply(0.08),
 			ButtonKind::Outline => p.text_strong.gamma_multiply(0.16),
 			_ => fill.linear_multiply(1.1),
-		}
+		};
+		fill.lerp_to_gamma(hot, hover)
+			.gamma_multiply(1.0 - 0.18 * press)
 	} else {
-		fill
+		fill.gamma_multiply(0.4)
 	};
 	// See `wide_button`: the accent's ink would vanish on a dimmed fill.
 	let text = if enabled { text } else { p.text_strong };
+	let rect = pressed_rect(rect, press * 0.5);
 	let painter = ui.painter();
 	painter.rect(rect, 8, fill, stroke, egui::StrokeKind::Inside);
 	if response.has_focus() {
@@ -2661,10 +2702,19 @@ pub fn segmented(ui: &mut egui::Ui, labels: &[&str], selected: usize) -> Option<
 	for (index, (segment, response)) in segments.iter().enumerate() {
 		let active = index == selected;
 		let hot = enabled && (response.hovered() || response.has_focus());
+		let hover = if enabled {
+			hover_motion(ui, response)
+		} else {
+			0.0
+		};
 		if active {
 			painter.rect_filled(*segment, 8, p.selected);
-		} else if hot {
-			painter.rect_filled(*segment, 8, p.hover);
+		} else if hover > 0.0 {
+			painter.rect_filled(
+				*segment,
+				8,
+				Color32::TRANSPARENT.lerp_to_gamma(p.hover, hover),
+			);
 		}
 		if response.has_focus() {
 			painter.rect_stroke(
@@ -2871,25 +2921,27 @@ pub fn menu_item(
 	let width = ui.available_width().max(galley.size().x + inset + 14.0);
 	let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 32.0), egui::Sense::click());
 	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &label));
-	let hot = enabled && (response.hovered() || response.has_focus());
+	let hover = if enabled {
+		hover_motion(ui, &response)
+	} else {
+		0.0
+	};
 	let painter = ui.painter();
-	if hot {
+	if hover > 0.0 {
 		painter.rect_filled(
 			rect,
 			6,
 			if danger {
-				p.danger.gamma_multiply(0.16)
+				p.danger.gamma_multiply(0.16 * hover)
 			} else {
-				p.text_strong.gamma_multiply(0.08)
+				p.text_strong.gamma_multiply(0.08 * hover)
 			},
 		);
 	}
 	let ink = if danger {
 		p.danger
-	} else if hot {
-		p.text_strong
 	} else {
-		p.text
+		p.text.lerp_to_gamma(p.text_strong, hover)
 	};
 	let ink = if enabled {
 		ink
@@ -2943,6 +2995,73 @@ pub fn menu_item_if(
 		.inner
 }
 
+/// Menu row with a check box at its right edge, like Discord's call options: the whole row
+/// toggles `checked`.
+pub fn menu_check(ui: &mut egui::Ui, label: &str, checked: &mut bool) -> egui::Response {
+	const BOX: f32 = 18.0;
+	let label = crate::i18n::translate_if_key(label);
+	let p = palette(ui);
+	let enabled = ui.is_enabled();
+	let galley = ui.painter().layout_no_wrap(
+		label.to_owned(),
+		FontId::new(14.0, medium_family(ui.ctx())),
+		p.text,
+	);
+	let width = ui
+		.available_width()
+		.max(galley.size().x + BOX + 10.0 + 24.0 + 10.0);
+	let (rect, mut response) =
+		ui.allocate_exact_size(egui::vec2(width, 32.0), egui::Sense::click());
+	if response.clicked() {
+		*checked = !*checked;
+		response.mark_changed();
+	}
+	response.widget_info(|| {
+		egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, *checked, &label)
+	});
+	let hover = if enabled {
+		hover_motion(ui, &response)
+	} else {
+		0.0
+	};
+	let painter = ui.painter();
+	if hover > 0.0 {
+		painter.rect_filled(rect, 6, p.text_strong.gamma_multiply(0.08 * hover));
+	}
+	let dim = if enabled { 1.0 } else { 0.45 };
+	painter.galley_with_override_text_color(
+		egui::pos2(rect.left() + 10.0, rect.center().y - galley.size().y * 0.5),
+		galley,
+		p.text
+			.lerp_to_gamma(p.text_strong, hover)
+			.gamma_multiply(dim),
+	);
+	let square = egui::Rect::from_center_size(
+		egui::pos2(rect.right() - 10.0 - BOX * 0.5, rect.center().y),
+		egui::Vec2::splat(BOX),
+	);
+	if *checked {
+		painter.rect_filled(square, 5, p.accent.gamma_multiply(dim));
+		crate::icons::paint(
+			painter,
+			crate::icons::Icon::Check,
+			square.shrink(3.5),
+			p.accent_text.gamma_multiply(dim),
+		);
+	} else {
+		painter.rect_stroke(
+			square,
+			5,
+			Stroke::new(
+				1.5,
+				p.text_strong.gamma_multiply((0.32 + 0.23 * hover) * dim),
+			),
+			egui::StrokeKind::Inside,
+		);
+	}
+	response
+}
+
 /// Quiet inline action for secondary verbs such as "Reset" or "Try again": muted text that
 /// brightens and underlines on hover instead of a full button.
 pub fn text_action(ui: &mut egui::Ui, label: &str) -> egui::Response {
@@ -2958,16 +3077,19 @@ pub fn text_action(ui: &mut egui::Ui, label: &str) -> egui::Response {
 	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), &label));
 	let enabled = ui.is_enabled();
 	let hot = enabled && (response.hovered() || response.has_focus());
-	let color = if !enabled {
-		p.muted.gamma_multiply(0.5)
-	} else if hot {
-		p.text_strong
+	let hover = if enabled {
+		hover_motion(ui, &response)
 	} else {
-		p.muted
+		0.0
+	};
+	let color = if enabled {
+		p.muted.lerp_to_gamma(p.text_strong, hover)
+	} else {
+		p.muted.gamma_multiply(0.5)
 	};
 	let painter = ui.painter();
-	if hot {
-		painter.rect_filled(rect, 8, p.hover);
+	if hover > 0.0 {
+		painter.rect_filled(rect, 8, Color32::TRANSPARENT.lerp_to_gamma(p.hover, hover));
 	}
 	let pos = rect.center() - galley.size() * 0.5;
 	painter.galley_with_override_text_color(pos, galley.clone(), color);

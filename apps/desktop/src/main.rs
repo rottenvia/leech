@@ -94,7 +94,6 @@ fn main() -> eframe::Result {
 			.build()
 			.unwrap();
 		uploads::debug_reservation_check(runtime.handle());
-		discord_gateway::debug_voice_state_retry_check();
 		ui::MessagingUi::debug_double_click_reaction_check(
 			test_support::demo_state(),
 			test_support::message(60_000 << 22, model::Id(20)),
@@ -987,6 +986,9 @@ struct Desktop {
 	avatar_clear_account: Option<model::Id>,
 	avatar_cleanup: Option<std::sync::mpsc::Receiver<Result<(), &'static str>>>,
 	voice: voice::Voice,
+	/// The offline demo's simulated Discord; demo calls connect, share and fail inside it.
+	#[cfg(feature = "demo")]
+	sim: Option<client_core::voice::sim::Discord>,
 	runtime: tokio::runtime::Runtime,
 	store: Option<credentials::Store>,
 	cache: Option<cache::Cache>,
@@ -1022,6 +1024,14 @@ struct Desktop {
 	/// `--demo-reply`: keeps two synthetic typists active on the selected fixture channel.
 	#[cfg(feature = "demo")]
 	demo_typing: bool,
+	/// `--demo-slow-load`: the history page still on its way, and when it lands.
+	#[cfg(feature = "demo")]
+	demo_history: Option<(
+		std::time::Instant,
+		model::Id,
+		Option<model::Id>,
+		Option<model::Id>,
+	)>,
 	variant_changed: bool,
 	pending_save: Option<Arc<SessionSecret>>,
 	/// Written under the account's own entry on every READY, including a launch restore, so
@@ -1038,6 +1048,10 @@ struct Desktop {
 	/// Until when the sign-in failure copy button reads "Copied".
 	sign_in_copied: Option<f64>,
 	forgetting: bool,
+	/// When the restore screen first showed, and how far its bar has filled, so it eases
+	/// toward its estimate instead of jumping.
+	restore_started: Option<std::time::Instant>,
+	restore_shown: f32,
 	confirming_close: bool,
 	confirming_logout: bool,
 	/// What the pending session teardown is for: logging out, switching or adding an account.
@@ -1531,35 +1545,27 @@ impl Desktop {
 				list.freshness = model::Freshness::Loading;
 			}
 		}
+		// Demo calls run against a simulated Discord: they connect, share, watch and fail
+		// like real ones, with no account, network or device.
+		#[cfg(feature = "demo")]
+		let mut sim = demo.then(|| {
+			state.voice.simulated = true;
+			let mut sim = client_core::voice::sim::Discord::new(
+				7,
+				client_core::voice::sim::Config {
+					latency: (40, 160),
+					answer: Some(std::time::Duration::from_secs(3)),
+					..Default::default()
+				},
+			);
+			sim.adopt(&state);
+			sim.settle(&mut state, std::time::Instant::now());
+			sim
+		});
 		#[cfg(feature = "demo")]
 		if demo && std::env::args().any(|arg| arg == "--demo-voice-failed") {
-			let call = state
-				.voice
-				.active
-				.as_ref()
-				.expect("voice fixture has a call");
-			let (channel, request) = (call.channel, call.request);
-			let reason = "Audio device stopped or disconnected; choose a device and call again";
-			state.apply_voice(client_core::voice::Event::Failed {
-				channel,
-				request,
-				message: reason,
-			});
-			// Synthetic recovery events must not erase the reason before it can be copied.
-			state.disconnect_voice("Later gateway disconnect");
-			state.apply_voice(client_core::voice::Event::Deleted { channel });
-			state.apply_voice(client_core::voice::Event::Progress {
-				channel,
-				request,
-				phase: client_core::voice::Phase::Connected,
-			});
-			let call = state
-				.voice
-				.active
-				.as_ref()
-				.expect("failure survives departure");
-			assert_eq!(call.error, Some(reason));
-			assert_eq!(call.phase, client_core::voice::Phase::Failed);
+			state.leave_call();
+			state.status = "Audio device stopped or disconnected; choose a device and call again";
 		}
 		#[cfg(feature = "demo")]
 		if demo {
@@ -1774,9 +1780,18 @@ impl Desktop {
 					}
 				}
 			}
-			// Watching enlarges the share, as a click on Watch Stream does.
-			if state.watch_stream(peer).is_some() {
-				messaging.voice_focus = Some(ui::StageFocus::Stream(peer));
+			if let (Some(sim), Some(channel)) = (
+				sim.as_mut(),
+				state.voice.active.as_ref().map(|call| call.channel),
+			) {
+				let now = std::time::Instant::now();
+				sim.other_state(&state, now, peer, Some(channel), true);
+				let now = sim.settle(&mut state, now);
+				// Watching enlarges the share, as a click on Watch Stream does.
+				if state.watch_stream(peer) {
+					messaging.voice_focus = Some(ui::StageFocus::Stream(peer));
+				}
+				sim.settle(&mut state, now);
 			}
 			let (width, height) = (640usize, 360usize);
 			let pixels = (0..width * height)
@@ -2293,6 +2308,8 @@ impl Desktop {
 			avatar_start_failed: false,
 			avatar_clear_account: None,
 			voice: voice::Voice::default(),
+			#[cfg(feature = "demo")]
+			sim,
 			runtime,
 			store,
 			cache,
@@ -2327,6 +2344,8 @@ impl Desktop {
 			tray_error: None,
 			#[cfg(feature = "demo")]
 			demo_typing,
+			#[cfg(feature = "demo")]
+			demo_history: None,
 			variant_changed: false,
 			pending_save: None,
 			pending_account_save: None,
@@ -2345,6 +2364,8 @@ impl Desktop {
 				"Saved login unavailable; could not start credential lookup"
 			},
 			forgetting: false,
+			restore_started: None,
+			restore_shown: 0.0,
 			confirming_close: false,
 			confirming_logout: false,
 			end_intent: SessionEnd::Logout,
@@ -3569,40 +3590,9 @@ impl Desktop {
 				channel: *channel,
 			}));
 		}
-		if let Command::Voice(control) = &command {
-			if self.state.demo || self.fixture_only {
-				self.state.status = "Voice calls are unavailable in the offline preview";
-				return;
-			}
-			if let client_core::voice::Command::Join {
-				channel,
-				request,
-				ring,
-				..
-			} = control
-			{
-				let result = self.voice.begin(&self.state, *ring);
-				if let Err(message) = result {
-					self.state.apply_voice(client_core::voice::Event::Failed {
-						channel: *channel,
-						request: *request,
-						message,
-					});
-					return;
-				}
-			}
-			if matches!(
-				control,
-				client_core::voice::Command::SetCamera { enabled: false, .. }
-			) {
-				self.voice.stop_camera();
-				self.messaging.voice_camera_preview = None;
-			}
-			if matches!(control, client_core::voice::Command::Leave { .. }) {
-				self.voice.stop();
-				self.messaging.camera_test_requested = false;
-				self.messaging.camera_test_texture = None;
-			}
+		if matches!(command, Command::Voice(_)) && (self.state.demo || self.fixture_only) {
+			// The simulated Discord answers demo calls; nothing reaches a network.
+			return;
 		}
 		if let Command::History {
 			channel,
@@ -4053,6 +4043,10 @@ impl Desktop {
 					request,
 					..
 				} => {
+					// `--demo-loading` keeps searches waiting too.
+					if std::env::args().any(|arg| arg == "--demo-loading") {
+						return;
+					}
 					let mut hits = Vec::new();
 					let mut total = 0;
 					let (content, filters) = match model::search_terms(&query) {
@@ -4265,6 +4259,20 @@ impl Desktop {
 					before,
 					after,
 				} => {
+					// `--demo-loading` keeps every conversation waiting for its history;
+					// `--demo-slow-load` delivers it about a second later.
+					if std::env::args().any(|arg| arg == "--demo-loading") {
+						return;
+					}
+					if std::env::args().any(|arg| arg == "--demo-slow-load") {
+						self.demo_history = Some((
+							std::time::Instant::now() + std::time::Duration::from_millis(900),
+							channel,
+							before,
+							after,
+						));
+						return;
+					}
 					if std::env::args().any(|arg| arg == "--demo-message-links") {
 						test_support::load_message_link_page(
 							&mut self.state,
@@ -4496,66 +4504,135 @@ impl Desktop {
 					});
 				let time = ui.input(|i| i.time) as f32;
 				ui.ctx().request_repaint();
+				// Progress follows the last restores' length: about 90% when that much time
+				// has passed, never past the current stage, and never full until the account
+				// is ready. The bar eases toward it, so a stage change glides.
+				let started = *self
+					.restore_started
+					.get_or_insert_with(std::time::Instant::now);
+				let elapsed = started.elapsed().as_secs_f32();
+				let expected = if self.messaging.restore_ms == 0 {
+					2.4
+				} else {
+					self.messaging.restore_ms as f32 / 1000.0
+				};
+				let checking = self
+					.store
+					.as_ref()
+					.is_some_and(|store| store.remaining(std::time::Instant::now()).is_some());
+				let estimate = 1.0 - (-2.3 * elapsed / expected).exp();
+				let target = if checking {
+					estimate.min(0.25)
+				} else {
+					estimate.clamp(0.25, 0.94)
+				};
+				let dt = ui.input(|i| i.stable_dt).min(0.1);
+				self.restore_shown += (target - self.restore_shown) * (1.0 - (-dt * 8.0).exp());
+				let shown = self.restore_shown;
+				let left = (expected - elapsed).max(0.0);
+				let eta = if left >= 1.0 {
+					format!("about {} s left", left.ceil() as u32)
+				} else {
+					"almost there".to_owned()
+				};
 				ui.vertical_centered(|ui| {
-					ui.add_space((ui.available_height() * 0.5 - 150.0).max(12.0));
-					// App mark with a slow breathing halo; the only motion besides the bar.
+					ui.add_space((ui.available_height() * 0.5 - 110.0).max(12.0));
+					// The app mark breathes, and a sheen crosses it now and then.
 					let (rect, _) =
-						ui.allocate_exact_size(egui::vec2(72.0, 72.0), egui::Sense::hover());
-					let mark = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(56.0));
+						ui.allocate_exact_size(egui::vec2(64.0, 64.0), egui::Sense::hover());
+					let mark = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(48.0));
 					let pulse = 0.5 + 0.5 * (time * 1.6).sin();
 					ui.painter().rect_filled(
-						mark.expand(4.0 + 4.0 * pulse),
-						18,
+						mark.expand(3.0 + 4.0 * pulse),
+						16,
 						p.accent.gamma_multiply(0.10 + 0.10 * pulse),
 					);
-					ui.painter().rect_filled(mark, 14, p.accent);
+					ui.painter().rect_filled(mark, 12, p.accent);
+					let sheen = (time % 2.4) / 0.9;
+					if sheen < 1.0 {
+						let x = mark.left() - 24.0 + (mark.width() + 48.0) * sheen;
+						let mut mesh = egui::Mesh::default();
+						let clear = egui::Color32::TRANSPARENT;
+						let lit = egui::Color32::WHITE.gamma_multiply(0.22);
+						for (dx, color) in [(-14.0, clear), (0.0, lit), (14.0, clear)] {
+							mesh.colored_vertex(egui::pos2(x + dx + 10.0, mark.top()), color);
+							mesh.colored_vertex(egui::pos2(x + dx - 10.0, mark.bottom()), color);
+						}
+						for base in [0, 2] {
+							mesh.add_triangle(base, base + 1, base + 2);
+							mesh.add_triangle(base + 1, base + 2, base + 3);
+						}
+						ui.painter()
+							.with_clip_rect(mark.shrink(1.0))
+							.add(egui::Shape::mesh(mesh));
+					}
 					ui::icons::paint(
 						ui.painter(),
 						ui::icons::Icon::Leech,
-						mark.shrink(13.0),
+						mark.shrink(11.0),
 						p.accent_text,
 					);
-					ui.add_space(18.0);
+					ui.add_space(14.0);
 					ui.label(
 						ui::design::semibold(
 							ui,
 							ui::i18n::translate("main-restoring-screen-welcome-back"),
-							24.0,
+							19.0,
 						)
 						.color(p.text_strong),
 					);
-					ui.add_space(6.0);
+					ui.add_space(16.0);
+					// The bar, then the stage and the time left under it.
+					let width = ui.available_width().min(240.0);
+					let (track, response) =
+						ui.allocate_exact_size(egui::vec2(width, 4.0), egui::Sense::hover());
+					response.widget_info(|| {
+						egui::WidgetInfo::labeled(
+							egui::Role::ProgressIndicator,
+							true,
+							format!("{stage}, {eta}"),
+						)
+					});
+					ui.painter().rect_filled(track, 2, p.raised);
+					let fill = egui::Rect::from_min_max(
+						track.min,
+						egui::pos2(track.left() + track.width() * shown, track.bottom()),
+					);
+					if fill.width() > 0.5 {
+						// A glow under the bar's head and a light running along its fill.
+						let head = egui::pos2(fill.right(), fill.center().y);
+						ui.painter()
+							.circle_filled(head, 6.0, p.accent.gamma_multiply(0.18));
+						ui.painter().rect_filled(fill, 2, p.accent);
+						let run = (time % 1.6) / 1.6;
+						let x = fill.left() + (fill.width() + 60.0) * run - 30.0;
+						let mut mesh = egui::Mesh::default();
+						let clear = egui::Color32::TRANSPARENT;
+						let lit = egui::Color32::WHITE.gamma_multiply(0.35);
+						for (dx, color) in [(-30.0, clear), (0.0, lit), (30.0, clear)] {
+							mesh.colored_vertex(egui::pos2(x + dx, fill.top()), color);
+							mesh.colored_vertex(egui::pos2(x + dx, fill.bottom()), color);
+						}
+						for base in [0, 2] {
+							mesh.add_triangle(base, base + 1, base + 2);
+							mesh.add_triangle(base + 1, base + 2, base + 3);
+						}
+						ui.painter()
+							.with_clip_rect(fill)
+							.add(egui::Shape::mesh(mesh));
+					}
+					ui.add_space(10.0);
 					ui.label(
-						egui::RichText::new(format!("{stage}…"))
-							.size(15.0)
+						egui::RichText::new(format!("{stage}… · {eta}"))
+							.size(12.5)
 							.color(p.muted),
 					);
-					ui.add_space(22.0);
-					// Indeterminate track: progress is unknown, so a sweeping segment.
-					let width = ui.available_width().min(260.0);
-					let (track, _) =
-						ui.allocate_exact_size(egui::vec2(width, 4.0), egui::Sense::hover());
-					ui.painter().rect_filled(track, 2, p.raised);
-					let span = track.width() * 0.35;
-					let travel = (track.width() + span) * ((time * 0.5).fract());
-					let left = (track.left() + travel - span).max(track.left());
-					let right = (track.left() + travel).min(track.right());
-					if right > left {
-						ui.painter().rect_filled(
-							egui::Rect::from_min_max(
-								egui::pos2(left, track.top()),
-								egui::pos2(right, track.bottom()),
-							),
-							2,
-							p.accent,
-						);
-					}
-					ui.add_space(26.0);
+					ui.add_space(18.0);
 					ui.allocate_ui_with_layout(
 						egui::vec2(220.0, 0.0),
 						egui::Layout::top_down(egui::Align::Center),
 						|ui| {
-							if ui::design::secondary_button(
+							if ui::design::text_action(
 								ui,
 								&ui::i18n::translate(
 									"main-restoring-screen-use-a-different-account",
@@ -4563,6 +4640,8 @@ impl Desktop {
 							)
 							.clicked()
 							{
+								self.restore_started = None;
+								self.restore_shown = 0.0;
 								if let Some(store) = &mut self.store {
 									store.cancel_load();
 								}
@@ -5405,12 +5484,44 @@ impl Desktop {
 			}
 		}
 	}
+	/// The call controller ticks, media follows its plans, and its commands go out.
 	fn poll_voice(&mut self, ctx: &egui::Context) {
-		if let Some(command) =
-			self.voice
-				.poll(&self.runtime, &mut self.state, &mut self.messaging, ctx)
-		{
-			self.command(command);
+		let now = std::time::Instant::now();
+		self.state.voice_tick(now);
+		self.voice
+			.poll(&self.runtime, &mut self.state, &mut self.messaging, ctx);
+		#[cfg(feature = "demo")]
+		if let Some(sim) = &mut self.sim {
+			// `--demo-takeover`: a few seconds into a call, another device of the account
+			// takes it over.
+			if let Some(call) = self.state.voice.active.as_ref()
+				&& call.connected_at.is_some_and(|at| {
+					now.saturating_duration_since(at) > std::time::Duration::from_secs(4)
+				}) && sim
+				.truth
+				.voice
+				.is_some_and(|voice| voice.holder == client_core::voice::sim::Holder::Ours)
+				&& std::env::args().any(|arg| arg == "--demo-takeover")
+			{
+				let channel = call.channel;
+				sim.other_device_joins(&self.state, now, channel);
+			}
+			sim.step(&mut self.state, now);
+			if let Some(due) = sim.next_due() {
+				ctx.request_repaint_after(due.saturating_duration_since(now));
+			}
+		}
+		let commands: Vec<_> = self.state.voice.take_commands().collect();
+		for command in commands {
+			self.command(Command::Voice(command));
+		}
+		if let Some(notice) = self.state.voice.take_notice() {
+			self.messaging
+				.toasts
+				.push(ui::design::Level::Info, ui::i18n::translate_if_key(notice));
+		}
+		if let Some(deadline) = self.state.voice.next_deadline() {
+			ctx.request_repaint_after(deadline.saturating_duration_since(now));
 		}
 	}
 	fn poll(&mut self, ctx: &egui::Context) {
@@ -5771,20 +5882,12 @@ impl Desktop {
 			}
 			let typing_count = events.len() - reliable_count;
 			events.rotate_right(typing_count);
-			// A local candidate failure must remain deliverable when reliable account
-			// events are full. Apply queued signaling first; observe rechecks its scope.
-			if let Some(failure) = connection::take_confirmation_failure(
-				&mut connection.confirmation_failure,
-				&connection.events,
-			) {
-				events.push(failure);
-			}
 			terminal = *connection.terminal.borrow();
 		}
 		let mut persist_timeline = false;
 		let mut full_window = false;
 		let mut changed_messages = std::collections::BTreeSet::new();
-		for mut event in events {
+		for event in events {
 			if event.generation != self.state.generation {
 				continue;
 			}
@@ -5802,8 +5905,6 @@ impl Desktop {
 				}
 				_ => {}
 			}
-			let takeover_notice = voice::takeover_notice(&self.state, &event.event);
-			let voice_failure = self.voice.observe(&self.state, &mut event.event);
 			let ready = event.event.ready_navigation().is_some();
 			let resumed = matches!(event.event, Event::Resumed);
 			if (ready || resumed)
@@ -5896,11 +5997,6 @@ impl Desktop {
 				self.extensions.access_changed(&mut self.messaging);
 			}
 			self.state.apply(event);
-			if let Some(message) = takeover_notice {
-				self.messaging
-					.toasts
-					.push(ui::design::Level::Info, ui::i18n::translate(message));
-			}
 			self.extensions.data_changed(data_changes);
 			self.extensions.cancel_stale_message_events(&self.state);
 			for candidate in extension_events {
@@ -5929,11 +6025,6 @@ impl Desktop {
 					self.messaging.channel_preferences_changed |=
 						self.messaging.channel_preferences.forget(channel);
 				}
-			}
-			if let Some(error) = voice_failure
-				&& let Some(command) = self.voice.fail(&mut self.state, error)
-			{
-				self.command(command);
 			}
 			// ponytail: accepted navigation removals clear account-wide history;
 			// add scoped disk deletion if channel churn makes refetch cost significant.
@@ -6279,11 +6370,8 @@ impl eframe::App for Desktop {
 			}
 			let (muted, deafened) =
 				latest.unwrap_or((self.messaging.voice_muted, self.messaging.voice_deafened));
-			if self.state.auth == AuthState::Authenticated
-				&& let Some(command) = self.state.set_call_mute(muted, deafened)
-				&& !self.state.demo
-			{
-				self.command(command);
+			if self.state.auth == AuthState::Authenticated {
+				self.state.set_call_mute(muted, deafened);
 			}
 		}
 		if self.updater.sync(
@@ -6340,6 +6428,18 @@ impl eframe::App for Desktop {
 			});
 		}
 		self.sync_customization(ctx);
+		#[cfg(feature = "demo")]
+		if let Some((due, channel, before, after)) = self.demo_history {
+			let now = std::time::Instant::now();
+			if now < due {
+				ctx.request_repaint_after(due - now);
+			} else {
+				self.demo_history = None;
+				if self.state.selected == Some(channel) {
+					test_support::load_page_with_cursors(&mut self.state, before, after);
+				}
+			}
+		}
 		#[cfg(feature = "demo")]
 		if self.demo_typing
 			&& let Some(channel) = self.state.selected
@@ -6876,6 +6976,16 @@ impl eframe::App for Desktop {
 				login.resize(&self.window);
 			}
 		} else if self.state.user.is_some() {
+			if let Some(started) = self.restore_started.take() {
+				// The next restore's estimate leans on the last few.
+				let took = started.elapsed().as_millis().clamp(400, 30_000) as u32;
+				let last = self.messaging.restore_ms;
+				self.messaging.restore_ms = if last == 0 {
+					took
+				} else {
+					(last * 2 + took) / 3
+				};
+			}
 			self.messaging.storage_status = self.cache_status;
 			self.messaging.notification_status = self.notifications.status().label();
 			if self.app_settings.state.failed {
@@ -7340,6 +7450,9 @@ impl eframe::App for Desktop {
 		} else if let Some(stage) = self.restoring() {
 			self.restoring_screen(ui, &stage);
 		} else {
+			// A restore that failed into the sign-in screen is not timed for the next estimate.
+			self.restore_started = None;
+			self.restore_shown = 0.0;
 			self.sign_in_screen(ui);
 		}
 		// Outside the signed-in branch so leaving an account still restores the window mode.

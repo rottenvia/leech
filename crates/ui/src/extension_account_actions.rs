@@ -352,7 +352,9 @@ impl MessagingUi {
 				if state.voice.incoming != Some(id(&channel_id)?) {
 					return Err("This incoming call is no longer available".into());
 				}
-				queue(state.decline_call(), commands)?;
+				if !state.decline_call() {
+					return Err("This incoming call is no longer available".into());
+				}
 			}
 			other => return self.apply_extension_admin_action(state, other, commands),
 		}
