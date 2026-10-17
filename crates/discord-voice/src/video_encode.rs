@@ -26,6 +26,9 @@ pub(crate) struct Config {
 	pub bit_rate: u32,
 	/// Largest encoded access unit the caller's transport accepts.
 	pub max_bytes: usize,
+	/// Frames between scheduled IDR pictures; receivers ask for others with PLI or FIR.
+	#[cfg_attr(target_os = "linux", allow(dead_code))]
+	pub keyframe_interval: u32,
 	/// Screen sharing already ships Main; the camera keeps the Baseline profile its
 	/// software encoder has always sent, so its wire format is unchanged.
 	pub profile: Profile,

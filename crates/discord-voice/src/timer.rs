@@ -7,11 +7,39 @@
 //! Windows 11 also drops that request, and may run the process on efficiency cores, once
 //! every Leech window is minimized or covered (a streamer's game). Media loops opt the
 //! process out of that power throttling until the last one ends.
+//!
+//! A game that saturates every core starves normal-priority threads: voice and the stream
+//! freeze together. Media and audio threads therefore join MMCSS, the Windows scheduler
+//! class for audio and video, which runs them ahead of the game but caps their share.
 use std::future::Future;
 
 pub(crate) struct Resolution {
 	#[cfg(target_os = "windows")]
 	raised: bool,
+	#[cfg(target_os = "windows")]
+	task: Option<windows::Win32::Foundation::HANDLE>,
+}
+
+/// Join the calling thread to the MMCSS `task` ("Audio", "Pro Audio" ...).
+#[cfg(target_os = "windows")]
+#[allow(unsafe_code)]
+fn multimedia_thread(task: windows::core::PCWSTR) -> Option<windows::Win32::Foundation::HANDLE> {
+	let mut index = 0;
+	// SAFETY: A static NUL-terminated task name and a live out pointer.
+	unsafe { windows::Win32::System::Threading::AvSetMmThreadCharacteristicsW(task, &mut index) }
+		.ok()
+}
+
+/// Raise the calling audio thread once: a native device callback (cpal owns the thread, so
+/// MMCSS releases it when the thread ends) or a capture worker.
+pub(crate) fn raise_audio_thread() {
+	#[cfg(target_os = "windows")]
+	{
+		thread_local!(static RAISED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+		if !RAISED.replace(true) {
+			let _ = multimedia_thread(windows::core::w!("Pro Audio"));
+		}
+	}
 }
 
 #[cfg(target_os = "windows")]
@@ -65,12 +93,20 @@ impl Resolution {
 		Self {
 			#[cfg(target_os = "windows")]
 			raised,
+			#[cfg(target_os = "windows")]
+			task: multimedia_thread(windows::core::w!("Audio")),
 		}
 	}
 }
 
 impl Drop for Resolution {
 	fn drop(&mut self) {
+		#[cfg(target_os = "windows")]
+		if let Some(task) = self.task {
+			#[allow(unsafe_code)]
+			// SAFETY: Reverts this thread's own registration; the guard never leaves its thread.
+			let _ = unsafe { windows::Win32::System::Threading::AvRevertMmThreadCharacteristics(task) };
+		}
 		#[cfg(target_os = "windows")]
 		if self.raised {
 			#[allow(unsafe_code)]

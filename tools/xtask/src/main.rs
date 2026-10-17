@@ -259,6 +259,28 @@ fn package() -> Result<(), String> {
 		"leech",
 		"--no-default-features",
 	];
+	// Without NASM, openh264 silently skips its x86 assembly and the software H.264 encoder
+	// (every machine without a hardware encoder) runs about four times slower. Rebuild it so
+	// a cache from before NASM was installed cannot ship either.
+	if cfg!(any(target_arch = "x86", target_arch = "x86_64"))
+		&& std::env::var_os("OPENH264_NO_ASM").is_none()
+	{
+		let nasm = std::env::var_os("NASM").unwrap_or_else(|| "nasm".into());
+		if !Command::new(nasm)
+			.arg("-v")
+			.stdout(Stdio::null())
+			.stderr(Stdio::null())
+			.status()
+			.is_ok_and(|status| status.success())
+		{
+			return Err(
+				"Packaging needs NASM 2.14 or later (https://www.nasm.us) on PATH or in \
+				NASM for the software H.264 encoder; set OPENH264_NO_ASM=1 to package a slower build"
+					.into(),
+			);
+		}
+		run(&["clean", "--release", "-p", "openh264-sys2"])?;
+	}
 	run(&arguments)?;
 	let root = PathBuf::from("dist");
 	std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;

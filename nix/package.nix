@@ -4,6 +4,7 @@
     rustPlatform,
     pkg-config,
     cmake,
+    nasm,
     makeWrapper,
     swift,
     swiftpm,
@@ -113,6 +114,9 @@ in
                 pkg-config
                 cmake
                 makeWrapper
+            ]
+            ++ lib.optionals stdenv.hostPlatform.isx86 [
+                nasm
             ]
             ++ lib.optionals isLinux [
                 wrapGAppsHook4

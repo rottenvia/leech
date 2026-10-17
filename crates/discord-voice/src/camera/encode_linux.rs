@@ -247,6 +247,7 @@ mod tests {
 		fps: 15,
 		bit_rate: 600_000,
 		max_bytes: 128 * 1024,
+		keyframe_interval: 30,
 		profile: Profile::Baseline,
 	};
 

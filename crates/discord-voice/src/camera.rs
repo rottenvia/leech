@@ -178,6 +178,7 @@ impl CameraEncoder {
 			fps: 15,
 			bit_rate: 600_000,
 			max_bytes: MAX_ENCODED_BYTES,
+			keyframe_interval: 30,
 			profile: crate::video_encode::Profile::Baseline,
 		};
 		#[cfg(target_os = "macos")]
