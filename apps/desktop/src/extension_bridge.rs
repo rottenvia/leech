@@ -186,6 +186,9 @@ pub struct Bridge {
 	picker: Option<mpsc::Receiver<Option<PathBuf>>>,
 	theme_picker: Option<mpsc::Receiver<ThemePickerResult>>,
 	theme_preview: Option<(Box<extensions::Theme>, Option<Arc<egui::ColorImage>>)>,
+	/// Offline demo theme; account resets keep it, unlike `theme_preview`.
+	#[cfg(feature = "demo")]
+	demo_theme: Option<(Box<extensions::Theme>, Option<Arc<egui::ColorImage>>)>,
 	message_events: VecDeque<QueuedEvent>,
 	message_event_at: Option<Instant>,
 	message_events_dropped: bool,
@@ -1710,7 +1713,21 @@ impl Bridge {
 		};
 		Some(blend_theme(&transition.from, &transition.to, t))
 	}
+	/// Offline demo: show a repository theme package as if it were being previewed.
+	#[cfg(feature = "demo")]
+	pub(crate) fn preview_demo_theme(
+		&mut self,
+		ctx: &egui::Context,
+		theme: extensions::Theme,
+		image: Option<Arc<egui::ColorImage>>,
+	) {
+		self.demo_theme = Some((Box::new(theme), image));
+		self.apply_theme(ctx);
+	}
 	fn apply_theme(&self, ctx: &egui::Context) {
+		let preview = self.theme_preview.as_ref();
+		#[cfg(feature = "demo")]
+		let preview = preview.or(self.demo_theme.as_ref());
 		// Explicit theme first, then enabled plugin appearances in stable ID order.
 		let mut entries: Vec<_> = self
 			.installed
@@ -1720,7 +1737,7 @@ impl Bridge {
 					&& !self.disabled.contains(&entry.manifest.id)
 					&& entry.theme.is_some()
 					&& (entry.manifest.kind == ExtensionKind::Plugin
-						|| entry.active_theme && self.theme_preview.is_none())
+						|| entry.active_theme && preview.is_none())
 			})
 			.collect();
 		entries.sort_by_key(|entry| {
@@ -1729,10 +1746,8 @@ impl Bridge {
 				&entry.manifest.id,
 			)
 		});
-		let mut appearance = self
-			.theme_preview
-			.as_ref()
-			.map_or_else(extensions::Theme::default, |(theme, _)| (**theme).clone());
+		let mut appearance =
+			preview.map_or_else(extensions::Theme::default, |(theme, _)| (**theme).clone());
 		for entry in &entries {
 			let blended = self.blended_theme(&entry.manifest.id);
 			appearance.overlay(
@@ -1742,11 +1757,11 @@ impl Bridge {
 			);
 		}
 		ui::design::set_extension_theme(
-			(!entries.is_empty() || self.theme_preview.is_some()).then_some(&appearance),
+			(!entries.is_empty() || preview.is_some()).then_some(&appearance),
 		);
 		ui::design::set_background_image(
 			ctx,
-			self.theme_preview.as_ref().map_or_else(
+			preview.map_or_else(
 				|| {
 					entries
 						.iter()
