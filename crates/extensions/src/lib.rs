@@ -28,6 +28,8 @@ pub const API_VERSION: u32 = 1;
 pub const MAX_PACKAGE_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_MODULE_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_BACKGROUND_BYTES: usize = 2 * 1024 * 1024;
+/// One bar image. The theme editor re-encodes picks to stay well under it.
+pub const MAX_SURFACE_BYTES: usize = 1024 * 1024;
 pub const MAX_PREVIEW_BYTES: usize = 256 * 1024;
 pub const MAX_CATALOG_BYTES: usize = 1024 * 1024;
 pub const MAX_IO_BYTES: usize = 256 * 1024;
@@ -257,6 +259,66 @@ pub enum BackgroundTarget {
 	Chat,
 }
 
+/// A bar that can carry its own image, painted over the bar's colour and under its content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeSurface {
+	CallStage,
+	Composer,
+	ChannelList,
+	VoicePanel,
+	AccountPanel,
+	ServerList,
+	TitleBar,
+	MemberList,
+}
+
+impl ThemeSurface {
+	pub const ALL: [Self; 8] = [
+		Self::CallStage,
+		Self::Composer,
+		Self::ChannelList,
+		Self::VoicePanel,
+		Self::AccountPanel,
+		Self::ServerList,
+		Self::TitleBar,
+		Self::MemberList,
+	];
+}
+
+/// How one bar shows its image. Images are shared by the light and dark appearances.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SurfaceImage {
+	/// Strength of the image over the bar's own colour, 0–100.
+	pub opacity: u8,
+	pub fit: SurfaceFit,
+	/// The image point kept in view when `Cover` crops it, in percent of width and height.
+	pub focus: [u8; 2],
+}
+
+impl Default for SurfaceImage {
+	fn default() -> Self {
+		Self {
+			opacity: 70,
+			fit: SurfaceFit::Cover,
+			focus: [50, 50],
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceFit {
+	/// Fill the bar at any size, keeping the aspect and cropping around `focus`.
+	#[default]
+	Cover,
+	/// Fill the bar exactly, distorting the image when the shapes differ.
+	Stretch,
+	/// Repeat the image at its own size, for patterns.
+	Tile,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Theme {
@@ -266,6 +328,9 @@ pub struct Theme {
 	pub dark: ThemePalette,
 	#[serde(default)]
 	pub style: ThemeStyle,
+	/// Settings of the bars that carry an image in [`Package::surface_images`].
+	#[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+	pub surfaces: BTreeMap<ThemeSurface, SurfaceImage>,
 }
 
 /// Native control metrics in logical pixels. Omitted fields inherit the active theme.
@@ -313,6 +378,9 @@ pub struct Package {
 	pub background_image: Vec<u8>,
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub cover_image: Vec<u8>,
+	/// PNG or JPEG bytes of each bar image; settings live in [`Theme::surfaces`].
+	#[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+	pub surface_images: BTreeMap<ThemeSurface, Vec<u8>>,
 	pub manifest: Manifest,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub theme: Option<Theme>,
@@ -755,6 +823,7 @@ impl Theme {
 				base.backdrop.clone_from(&overlay.backdrop);
 			}
 		}
+		self.surfaces.extend(other.surfaces.clone());
 		self.style.body_size = other.style.body_size.or(self.style.body_size);
 		self.style.transparency_blur = other
 			.style
@@ -805,7 +874,9 @@ impl Theme {
 				.into_iter()
 				.flatten()
 				.any(|size| size > 24)
-		{
+			|| self.surfaces.values().any(|surface| {
+				surface.opacity > 100 || surface.focus.into_iter().any(|focus| focus > 100)
+			}) {
 			return Err(Error::Invalid);
 		}
 		const NAMES: &[&str] = &[
@@ -870,6 +941,10 @@ impl Package {
 		self.manifest.validate()?;
 		if self.background_image.len() > MAX_BACKGROUND_BYTES
 			|| self.cover_image.len() > MAX_BACKGROUND_BYTES
+			|| self
+				.surface_images
+				.values()
+				.any(|image| image.is_empty() || image.len() > MAX_SURFACE_BYTES)
 		{
 			return Err(Error::Limit);
 		}
@@ -880,7 +955,8 @@ impl Package {
 			ExtensionKind::Plugin
 				if self.theme.is_none()
 					&& self.background_image.is_empty()
-					&& self.cover_image.is_empty() =>
+					&& self.cover_image.is_empty()
+					&& self.surface_images.is_empty() =>
 			{
 				if self.wasm.len() > MAX_MODULE_BYTES {
 					return Err(Error::Limit);

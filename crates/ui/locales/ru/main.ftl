@@ -3801,6 +3801,64 @@ theme-editor-tab-background = Фон
 theme-editor-tab-basics = Основы
 # Context: key
 theme-editor-tab-colors = Цвета
+# Context: bars
+theme-editor-tab-bars = Панели
+# Context: bars
+theme-editor-bars-title = Картинки панелей
+# Context: bars
+theme-editor-bars-description = Поставьте картинку за любую панель, как тему в Firefox. Каждая картинка обрезается под форму панели и подходит к любому размеру окна.
+# Context: bars
+theme-editor-bars-formats = PNG, JPEG или WebP. Большие картинки уменьшаются до 2560 × 1440 и сжимаются до 1 МБ. Выбирайте картинку близкую по форме к панели, а главное держите у точки фокуса.
+# Context: bars
+theme-editor-bars-aim-for = Лучший размер
+# Context: bars
+theme-editor-bars-fit = Как картинка заполняет панель
+# Context: bars
+theme-editor-bars-fit-cover = Заполнить с обрезкой
+# Context: bars
+theme-editor-bars-fit-stretch = Растянуть
+# Context: bars
+theme-editor-bars-fit-tile = Плиткой
+# Context: bars
+theme-editor-bars-strength = Насыщенность
+# Context: bars
+theme-editor-bars-strength-detail = Насколько сильно картинка видна сквозь панель.
+# Context: bars
+theme-editor-bars-focus-x = Фокус слева направо
+# Context: bars
+theme-editor-bars-focus-y = Фокус сверху вниз
+# Context: bars
+theme-editor-bar-call-stage = Сцена звонка
+# Context: bars
+theme-editor-bar-call-stage-where = За плитками видео в звонке.
+# Context: bars
+theme-editor-bar-composer = Поле сообщения
+# Context: bars
+theme-editor-bar-composer-where = Панель, где вы пишете сообщения.
+# Context: bars
+theme-editor-bar-channel-list = Список каналов
+# Context: bars
+theme-editor-bar-channel-list-where = Каналы и личные сообщения слева.
+# Context: bars
+theme-editor-bar-voice-panel = Голосовая связь
+# Context: bars
+theme-editor-bar-voice-panel-where = Управление звонком над вашим аккаунтом.
+# Context: bars
+theme-editor-bar-account-panel = Панель аккаунта
+# Context: bars
+theme-editor-bar-account-panel-where = Ваше имя и кнопки микрофона, звука и настроек.
+# Context: bars
+theme-editor-bar-server-list = Список серверов
+# Context: bars
+theme-editor-bar-server-list-where = Колонка с иконками серверов.
+# Context: bars
+theme-editor-bar-title-bar = Заголовок окна
+# Context: bars
+theme-editor-bar-title-bar-where = Полоса вдоль верха окна.
+# Context: bars
+theme-editor-bar-member-list = Список участников
+# Context: bars
+theme-editor-bar-member-list-where = Участники справа от канала.
 # Context: toolbar
 theme-editor-toolbar-back = Назад
 # Context: toolbar

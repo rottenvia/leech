@@ -50,6 +50,7 @@ fn rebuilt(manifest: &str, path: &Path) -> Result<Package, Box<dyn std::error::E
 		theme: None,
 		background_image: Vec::new(),
 		cover_image: Vec::new(),
+		surface_images: Default::default(),
 		wasm,
 	})
 }

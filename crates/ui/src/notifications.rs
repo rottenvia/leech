@@ -255,6 +255,16 @@ impl MessagingUi {
 					}),
 			)
 			.show(ui, |ui| {
+				let inner = ui.max_rect();
+				design::paint_surface(
+					ui,
+					egui::Rect::from_min_max(
+						inner.min - egui::vec2(f32::from(RAIL_MARGIN), 4.0),
+						inner.max + egui::vec2(f32::from(RAIL_MARGIN), 8.0),
+					),
+					0,
+					extensions::ThemeSurface::ServerList,
+				);
 				ui.spacing_mut().item_spacing.y = 9.0;
 				let home = self.guild.is_none();
 				let (rect, response) =
