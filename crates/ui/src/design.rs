@@ -175,15 +175,20 @@ pub fn color_edit(ui: &mut egui::Ui, color: &mut [u8; 3]) -> egui::Response {
 	let swatch = ui.color_edit_button_srgb(color);
 	let mut value = u32::from_be_bytes([0, color[0], color[1], color[2]]);
 	let hex = ui
-		.add(
-			egui::DragValue::new(&mut value)
-				.clip_text(true)
-				.range(0..=0xFFFFFF)
-				.hexadecimal(6, false, true)
-				.prefix("#")
-				.custom_parser(|text| parse_hex_color(text).map(f64::from))
-				.update_while_editing(false),
-		)
+		.scope(|ui| {
+			// One width for every value, so stacked colour rows line up.
+			ui.spacing_mut().interact_size.x = 92.0;
+			ui.add(
+				egui::DragValue::new(&mut value)
+					.clip_text(true)
+					.range(0..=0xFFFFFF)
+					.hexadecimal(6, false, true)
+					.prefix("#")
+					.custom_parser(|text| parse_hex_color(text).map(f64::from))
+					.update_while_editing(false),
+			)
+		})
+		.inner
 		.on_hover_text(crate::i18n::translate(
 			"design-color-edit-hex-color-rrggbb-click-to-type-or-paste",
 		));
@@ -3224,7 +3229,8 @@ pub fn menu_check(ui: &mut egui::Ui, label: &str, checked: &mut bool) -> egui::R
 }
 
 /// Quiet inline action for secondary verbs such as "Reset" or "Try again": muted text that
-/// brightens and underlines on hover instead of a full button.
+/// brightens and underlines on hover instead of a full button. The text sits on the layout's
+/// edge like any label; only the hover tint reaches past it.
 pub fn text_action(ui: &mut egui::Ui, label: &str) -> egui::Response {
 	let label = crate::i18n::translate_if_key(label);
 	let p = palette(ui);
@@ -3234,7 +3240,7 @@ pub fn text_action(ui: &mut egui::Ui, label: &str) -> egui::Response {
 		p.muted,
 	);
 	let (rect, response) =
-		ui.allocate_exact_size(galley.size() + egui::vec2(12.0, 12.0), egui::Sense::click());
+		ui.allocate_exact_size(galley.size() + egui::vec2(0.0, 12.0), egui::Sense::click());
 	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), &label));
 	let enabled = ui.is_enabled();
 	let hot = enabled && (response.hovered() || response.has_focus());
@@ -3250,7 +3256,11 @@ pub fn text_action(ui: &mut egui::Ui, label: &str) -> egui::Response {
 	};
 	let painter = ui.painter();
 	if hover > 0.0 {
-		painter.rect_filled(rect, 8, Color32::TRANSPARENT.lerp_to_gamma(p.hover, hover));
+		painter.rect_filled(
+			rect.expand2(egui::vec2(6.0, 0.0)),
+			8,
+			Color32::TRANSPARENT.lerp_to_gamma(p.hover, hover),
+		);
 	}
 	let pos = rect.center() - galley.size() * 0.5;
 	painter.galley_with_override_text_color(pos, galley.clone(), color);

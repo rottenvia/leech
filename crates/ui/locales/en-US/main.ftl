@@ -2021,6 +2021,8 @@ profile-edit-form-png-jpeg-gif-or-webp-up-to-8-mb-cropped = PNG, JPEG, GIF or We
 # Context: form
 profile-edit-form-profile-color = Profile color
 # Context: form
+profile-edit-form-public-profile = Public profile
+# Context: form
 profile-edit-form-profile-picture = Profile picture
 # Context: form
 profile-edit-form-remove = Remove
