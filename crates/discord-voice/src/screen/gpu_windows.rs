@@ -11,7 +11,11 @@ use std::{ffi::c_void, mem::ManuallyDrop, sync::Arc};
 use windows::{
 	Win32::{
 		Foundation::RECT,
-		Graphics::{Direct3D10::ID3D10Multithread, Direct3D11::*, Dxgi::Common::*},
+		Graphics::{
+			Direct3D10::ID3D10Multithread,
+			Direct3D11::*,
+			Dxgi::{Common::*, IDXGIDevice},
+		},
 	},
 	core::Interface,
 };
@@ -299,6 +303,11 @@ impl Converter {
 				.cast::<ID3D10Multithread>()
 				.map_err(|_| FAILED)?
 				.SetMultithreadProtected(true);
+			// A game keeping the GPU busy must not delay the capture's small conversions: raise
+			// this device's scheduling priority, as OBS does. Windows may refuse; that is harmless.
+			if let Ok(dxgi) = device.cast::<IDXGIDevice>() {
+				let _ = dxgi.SetGPUThreadPriority(7);
+			}
 			let video: ID3D11VideoDevice = device.cast().map_err(|_| FAILED)?;
 			let context: ID3D11VideoContext = immediate.cast().map_err(|_| FAILED)?;
 			let stream = Scaler::new(&video, &context, input, output, DXGI_FORMAT_NV12)

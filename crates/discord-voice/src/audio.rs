@@ -845,6 +845,7 @@ where
 		.build_input_stream(
 			*config,
 			move |data: &[T], _| {
+				crate::timer::raise_audio_thread();
 				if !data.is_empty() {
 					gate.input_callbacks.fetch_add(1, Ordering::Release);
 				}
@@ -877,6 +878,7 @@ where
 		.build_output_stream(
 			*config,
 			move |data: &mut [T], _| {
+				crate::timer::raise_audio_thread();
 				output.render(data, channels, &gate);
 			},
 			move |error| {
