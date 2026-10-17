@@ -34,7 +34,7 @@ use openh264::{
 	formats::{BgraSliceU8, YUVBuffer, YUVSource},
 };
 use std::sync::{
-	Arc, Mutex,
+	Arc, Mutex, OnceLock,
 	atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
 	mpsc,
 };
@@ -137,6 +137,7 @@ pub struct Worker {
 	ready: Arc<AtomicBool>,
 	preview: Arc<Mutex<Option<image::RgbaImage>>>,
 	done: Option<mpsc::Receiver<Result<(), &'static str>>>,
+	audio_warning: Arc<OnceLock<&'static str>>,
 	#[cfg(target_os = "linux")]
 	status: Arc<Mutex<&'static str>>,
 	#[cfg(target_os = "linux")]
@@ -160,6 +161,9 @@ impl Worker {
 		let worker_bitrate = bitrate.clone();
 		let preview = Arc::new(Mutex::new(None));
 		let worker_preview = preview.clone();
+		let audio_warning = Arc::new(OnceLock::new());
+		#[cfg(not(target_os = "linux"))]
+		let worker_audio_warning = audio_warning.clone();
 		#[cfg(target_os = "linux")]
 		let status = Arc::new(Mutex::new("Choose a screen or window in the system picker"));
 		#[cfg(target_os = "linux")]
@@ -211,6 +215,7 @@ impl Worker {
 					audio_send,
 					worker_audio_epoch,
 					worker_preview,
+					worker_audio_warning,
 					&wake,
 				);
 				finished_ready.store(false, Ordering::Release);
@@ -232,6 +237,7 @@ impl Worker {
 				ready: ready.clone(),
 				preview,
 				done: Some(done),
+				audio_warning,
 				#[cfg(target_os = "linux")]
 				status,
 				#[cfg(target_os = "linux")]
@@ -259,6 +265,11 @@ impl Worker {
 		return self.status.try_lock().ok().map(|status| *status);
 		#[cfg(not(target_os = "linux"))]
 		None
+	}
+
+	/// Why system audio is off although the share asked for it.
+	pub fn audio_warning(&self) -> Option<&'static str> {
+		self.audio_warning.get().copied()
 	}
 
 	pub fn result(&self) -> Option<Result<(), &'static str>> {
@@ -294,6 +305,9 @@ fn encode_loop(
 	audio: Option<tokio::sync::mpsc::Sender<AudioChunk>>,
 	audio_epoch: Arc<AtomicU64>,
 	preview: Arc<Mutex<Option<image::RgbaImage>>>,
+	#[cfg_attr(not(target_os = "windows"), allow(unused_variables))] audio_warning: Arc<
+		OnceLock<&'static str>,
+	>,
 	wake: &impl Fn(),
 ) -> Result<(), &'static str> {
 	if stop.load(Ordering::Acquire) || send.is_closed() {
@@ -311,7 +325,7 @@ fn encode_loop(
 	#[cfg(not(target_os = "windows"))]
 	let gpu = ();
 	#[cfg(target_os = "windows")]
-	let _native = capture::Capture::start(
+	let mut _native = capture::Capture::start(
 		settings,
 		raw_send,
 		audio,
@@ -341,10 +355,9 @@ fn encode_loop(
 
 	while !stop.load(Ordering::Acquire) && !send.is_closed() {
 		#[cfg(target_os = "windows")]
-		if _native.failed() {
-			return Err(
-				"System audio capture stopped; check your output device or share without audio",
-			);
+		if let Some(warning) = _native.audio_lost() {
+			let _ = audio_warning.set(warning);
+			wake();
 		}
 		if capture_stop.load(Ordering::Acquire) {
 			return Err("The selected screen or window stopped sharing");
@@ -969,6 +982,7 @@ mod tests {
 			ready: Arc::new(AtomicBool::new(false)),
 			preview: Arc::new(Mutex::new(Some(preview))),
 			done: None,
+			audio_warning: Arc::default(),
 			#[cfg(target_os = "linux")]
 			status: Arc::new(Mutex::new("")),
 			#[cfg(target_os = "linux")]

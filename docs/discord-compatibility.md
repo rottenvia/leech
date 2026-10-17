@@ -770,7 +770,8 @@ and Windows process loopback feed the existing stereo Opus/DAVE stream audio sen
 Both are opt-in and exclude Leech's playback, including received call and stream audio.
 Other applications are included even for a single-window share. macOS ScreenCaptureKit
 continues excluding the current process. Windows requires build 20348+ and uses native
-process-tree exclusion; unsupported systems fail visibly without whole-output fallback.
+process-tree exclusion; when it cannot start, the share continues as video only with a
+visible warning, without whole-output fallback.
 Linux uses `pa_stream_set_monitor_stream` before connecting each recording stream,
 rejects Leech/unknown application identities and disables recording-stream movement.
 Audio access is separate from portal-approved video, using the existing PulseAudio socket.
