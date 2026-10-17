@@ -32,6 +32,7 @@ impl Audio {
 		let thread = std::thread::Builder::new()
 			.name("screen-audio".into())
 			.spawn(move || {
+				crate::timer::raise_audio_thread();
 				if native::run(&input, started).is_err() {
 					input.failed.store(true, Ordering::Release);
 					input.stop.store(true, Ordering::Release);

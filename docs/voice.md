@@ -599,6 +599,12 @@ with an NVIDIA GPU, encoding took about 7 ms per frame on this path, 15 ms plus 
 the memory path, and OpenH264 took 9 ms (39 ms without NASM) after CPU conversion. A synthetic test compares the GPU conversion with
 the memory path and decodes an in-place encode; live Discord delivery remains unverified.
 
+A game that saturates the CPU used to starve normal-priority threads, freezing voice and
+the stream together. Media loops now join the MMCSS `Audio` task and audio callbacks
+`Pro Audio` (priority 13 and 15 instead of 0 on Windows 11), and the capture device asks for
+the highest GPU scheduling priority, as OBS does. Windows caps MMCSS threads' share, so
+the game keeps most of the machine. Behavior under a real game load is not yet measured.
+
 ### Camera capture and delivery
 
 The voice build can send a native camera after an explicit camera-on click in a
