@@ -3472,12 +3472,13 @@ impl Desktop {
 				.any(|p| p.nonce == *nonce && !p.attachments.is_empty())
 		{
 			let (channel, nonce) = (*channel, nonce.clone());
+			// `can_attach` admits stale history like text sends do; requiring fresh history here
+			// rejected the first Enter after a resume or a cached channel open.
 			let available = !self.state.demo
 				&& self.state.can_attach(channel)
 				&& !self.fixture_only
 				&& self.state.auth == AuthState::Authenticated
 				&& self.state.gateway_connected
-				&& self.state.freshness == model::Freshness::Fresh
 				&& self.state.selected == Some(channel)
 				&& self.connection.is_some();
 			if available
@@ -3507,13 +3508,16 @@ impl Desktop {
 					return;
 				}
 			}
+			let failure =
+				Failure::ProtocolAt("File not sent; reconnect and reselect the attachment");
+			self.messaging
+				.toasts
+				.push(ui::design::Level::Error, failure.label());
 			self.state.apply(Envelope {
 				generation: self.state.generation,
 				event: Event::SendResult {
 					nonce,
-					result: Err(Failure::ProtocolAt(
-						"File not sent; reconnect and reselect the attachment",
-					)),
+					result: Err(failure),
 				},
 			});
 			return;
@@ -5896,6 +5900,15 @@ impl Desktop {
 				user_action_notice.is_some() && self.state.user_action_pending();
 			self.delete_cached_messages(&event.event);
 			match &event.event {
+				// The pending card only reads "Not sent"; say why.
+				Event::SendResult {
+					result: Err(failure),
+					..
+				} if *failure != Failure::Ambiguous => {
+					self.messaging
+						.toasts
+						.push(ui::design::Level::Error, failure.label());
+				}
 				Event::Delete { channel, id } => {
 					self.messaging
 						.messages_deleted(ctx, *channel, std::slice::from_ref(id));
@@ -6758,6 +6771,16 @@ impl eframe::App for Desktop {
 			self.downloads.cancel();
 		}
 
+		match self.downloads.take_notice() {
+			Some(downloads::Status::Copied) => self
+				.messaging
+				.toasts
+				.push(ui::design::Level::Success, "Copied to clipboard"),
+			Some(downloads::Status::Failed(error)) => {
+				self.messaging.toasts.push(ui::design::Level::Error, error)
+			}
+			_ => {}
+		}
 		let download_status = match self.downloads.poll() {
 			downloads::Status::Idle | downloads::Status::Choosing => String::new(),
 			downloads::Status::Downloading { total: 0, .. } => "Loading image…".into(),
