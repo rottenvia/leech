@@ -1329,8 +1329,8 @@ The shared bounded avatar cache is reused.
 
 ### Application updates
 
-The existing device-wide `app_preferences` JSON stores `auto_update` (default false)
-and `update_nightly` (default true). Missing fields in older settings use those
+The existing device-wide `app_preferences` JSON stores `auto_update` (default true)
+and `update_nightly` (default false). Missing fields in older settings use those
 defaults; the existing 16 KiB row bound still applies. These preferences survive
 account logout. Update checks wait for preferences to load; demo actions remain
 in memory and never open update transports or create installation files.

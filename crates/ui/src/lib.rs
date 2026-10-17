@@ -5569,9 +5569,8 @@ impl MessagingUi {
 		self.onboarding.show(&ctx, state, &mut commands);
 		self.scroll.clear_if_unbound(&ctx);
 		self.scroll.paint(&ctx);
-		// Clear the title bar and channel header so a notice never sits on the chrome.
-		self.toasts
-			.show(&ctx, if self.shows_title_bar() { 96.0 } else { 60.0 });
+		// Clear the composer and the call bar so a notice never sits on a control.
+		self.toasts.show(&ctx, 96.0);
 		if !commands.is_empty() {
 			ctx.request_repaint();
 		}

@@ -550,11 +550,12 @@ fn asset_name(tag: &str) -> Option<String> {
 	};
 	Some(format!("leech-{tag}-{os}-{arch}.zip"))
 }
+/// Stable releases reach both channels; the nightly channel adds nightly prereleases.
 fn on_channel(release: &Release, version: &semver::Version, nightly: bool) -> bool {
 	let is_nightly = version.pre.as_str().starts_with("nightly.");
 	!release.draft
-		&& ((nightly && release.prerelease && is_nightly)
-			|| (!nightly && !release.prerelease && version.pre.is_empty()))
+		&& ((!release.prerelease && version.pre.is_empty())
+			|| (nightly && release.prerelease && is_nightly))
 }
 /// Releases between the running build and the newest one, notes reduced to plain bullets.
 fn release_log(
@@ -919,6 +920,28 @@ async fn download_full(
 		.map_err(|_| "Could not save the update package.".to_owned())?;
 	drop(file);
 	Ok(())
+}
+
+#[test]
+fn stable_releases_reach_both_channels() {
+	let release = |tag: &str, prerelease| Release {
+		tag_name: tag.into(),
+		draft: false,
+		prerelease,
+		assets: Vec::new(),
+		published_at: None,
+		body: None,
+	};
+	let on = |tag, prerelease, nightly| {
+		on_channel(
+			&release(tag, prerelease),
+			&release_version(tag).unwrap(),
+			nightly,
+		)
+	};
+	assert!(on("v0.1.1", false, false) && on("v0.1.1", false, true));
+	assert!(on("v0.2.0-nightly.1", true, true) && !on("v0.2.0-nightly.1", true, false));
+	assert!(!on("v0.2.0-rc.1", true, true));
 }
 
 /// Offline checks used by the explicit demo debug path, never by release startup.

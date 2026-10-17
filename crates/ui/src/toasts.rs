@@ -64,17 +64,17 @@ impl Toasts {
 			self.items.remove(0);
 		}
 	}
-	/// Draws the live toasts stacked under the window chrome. `top` is the inset that
-	/// clears whatever the caller draws above them.
-	pub fn show(&mut self, ctx: &egui::Context, top: f32) {
+	/// Draws the live toasts at the bottom centre, as Discord does, the newest lowest.
+	/// `bottom` is the inset that clears whatever the caller draws below them.
+	pub fn show(&mut self, ctx: &egui::Context, bottom: f32) {
 		if self.items.is_empty() {
 			return;
 		}
 		let now = ctx.input(|input| input.time);
 		let colors = design::palette_for(ctx);
 		let shadow = ctx.style_of(ctx.theme()).visuals.window_shadow;
-		let mut offset = top;
-		for toast in &mut self.items {
+		let mut offset = bottom;
+		for toast in self.items.iter_mut().rev() {
 			let deadline = *toast.deadline.get_or_insert(now + lifetime(toast.level));
 			let remaining = deadline - now;
 			if remaining <= 0.0 {
@@ -88,7 +88,7 @@ impl Toasts {
 			};
 			let mut dismissed = false;
 			let response = egui::Area::new(egui::Id::unique(("toast", toast.id)))
-				.anchor(Align2::CENTER_TOP, egui::vec2(0.0, offset))
+				.anchor(Align2::CENTER_BOTTOM, egui::vec2(0.0, -offset))
 				.order(egui::Order::Foreground)
 				.show(ctx, |ui| {
 					ui.set_opacity((remaining / FADE).clamp(0.0, 1.0) as f32);
