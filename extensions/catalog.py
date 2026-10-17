@@ -20,7 +20,7 @@ PACKAGE_DIRS = ("themes", "plugins/packages")
 CAPABILITIES = {"selected_message", "composer", "storage", "deleted_messages", "image_sharing", "appearance", "rich_presence", "api_proxy"}
 RESERVED = {"con", "prn", "aux", "nul"} | {f"{prefix}{n}" for prefix in ("com", "lpt") for n in range(1, 10)}
 MAX_PREVIEW = 256 * 1024
-SURFACES = {"call_stage", "composer", "channel_list", "voice_panel", "account_panel", "server_list", "title_bar", "member_list"}
+SURFACES = {"call_stage", "composer", "channel_list", "voice_panel", "account_panel", "server_list", "title_bar", "member_list", "message_list"}
 
 
 def require(condition, message):

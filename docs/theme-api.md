@@ -218,7 +218,7 @@ settings in the theme's `surfaces`, both keyed by bar:
   "surface_images": { "call_stage": [137, 80, 78, 71], "composer": [255, 216, 255] },
   "theme": {
     "surfaces": {
-      "call_stage": { "opacity": 80, "fit": "cover", "focus": [50, 60] },
+      "call_stage": { "opacity": 80, "fit": "cover", "area": [1000, 2000, 9000, 7000] },
       "composer": { "opacity": 60, "fit": "stretch" }
     }
   }
@@ -227,17 +227,26 @@ settings in the theme's `surfaces`, both keyed by bar:
 
 Bars are `call_stage` (behind call tiles), `composer` (message box), `channel_list`
 (channels and direct messages), `voice_panel` (Voice Connected), `account_panel`
-(name, mute and settings), `server_list` (server rail), `title_bar` and
-`member_list`. Opacity runs from 0 to 100 and defaults to 70. Fit is `cover`, which
-fills the bar and crops toward `focus` (`[x, y]` percentages, default `[50, 50]`),
-`stretch`, or `tile`, which repeats the picture at its own size. Because the crop
-follows the bar's live size, one image looks right at any window size or display
-scale. The editor shows each bar's ideal pixel size: twice its size on screen, which
-stays sharp when the window grows.
+(name, mute and settings), `server_list` (server rail), `title_bar`, `member_list` and
+`message_list` (the conversation behind messages). Opacity runs from 0 to 100 and
+defaults to 70. Fit is `cover`, `stretch`, or `tile`, which repeats the picture at its
+own size. `cover` fills the bar with the smallest window of the bar's shape around
+`area`: the part of the picture that stays in view, as left, top, right and bottom in
+ten-thousandths of its width and height (default `[0, 0, 10000, 10000]`, each side at
+least 1%). When the bar's shape cannot hold all of it, the window stays centred on it.
+Because the crop follows the bar's live size, one image looks right at any window size
+or display scale. The editor shows each bar's ideal pixel size: twice its size on
+screen, which stays sharp when the window grows.
+
+Choosing a picture opens a crop dialog on a smart crop: the window of the bar's shape
+with the most edge detail, pulled slightly toward the middle. The user can move or resize
+the box, pick the whole picture, then continue in the app, where the bar is outlined and
+dragging moves the picture while scrolling zooms it, no closer than twice its own pixels.
+Done saves and applies the theme. **Adjust framing** reopens the same flow later.
 
 Each image is a PNG or JPEG of at most 1 MiB, decoded with the edge and allocation
-limits above and at most 8,000,000 pixels. The editor accepts PNG, JPEG or WebP, scales a picture down until it just fills the
-bar's ideal size (never past 2560 x 1440), and re-encodes it (PNG when it has transparency, JPEG otherwise) until it fits.
+limits above and at most 8,000,000 pixels. The editor accepts PNG, JPEG or WebP, resizes a picture with Lanczos until it just fills the
+bar's ideal size (never past 2560 x 1440, and enlarging at most four times), and re-encodes it (PNG when it has transparency, JPEG otherwise) until it fits.
 Plugins cannot carry bar images, and a supplied `surfaces` entry merges over the
 selected theme's settings for that bar. Bars without an image paint as before. Each
 image is uploaded once as a mipmapped texture and drawn as one textured rectangle

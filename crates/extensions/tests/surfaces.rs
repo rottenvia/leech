@@ -33,7 +33,7 @@ fn bar_images_round_trip_and_stay_bounded() {
 	let settings = SurfaceImage {
 		opacity: 40,
 		fit: SurfaceFit::Tile,
-		focus: [10, 90],
+		area: [1_000, 2_000, 6_000, 9_000],
 	};
 	let package = theme(vec![(ThemeSurface::CallStage, vec![1, 2, 3])], settings);
 	let bytes = serde_json::to_vec(&package).unwrap();
@@ -76,7 +76,16 @@ fn bar_images_round_trip_and_stay_bounded() {
 			..settings
 		},
 		SurfaceImage {
-			focus: [50, 101],
+			area: [0, 0, 10_001, 10_000],
+			..settings
+		},
+		// Inverted, and thinner than one percent.
+		SurfaceImage {
+			area: [5_000, 0, 4_000, 10_000],
+			..settings
+		},
+		SurfaceImage {
+			area: [0, 5_000, 10_000, 5_050],
 			..settings
 		},
 	] {

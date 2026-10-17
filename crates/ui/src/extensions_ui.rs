@@ -301,10 +301,15 @@ impl ExtensionUi {
 		}
 	}
 	pub fn stop_theme_preview(&mut self, ctx: &egui::Context) {
+		design::set_surface_override(None);
 		if let Some(editor) = &mut self.theme_editor
 			&& editor.preview
 		{
 			editor.preview = false;
+			// Leaving the app mid-framing returns to the crop dialog.
+			if let Some(framing) = &mut editor.framing {
+				framing.in_app = false;
+			}
 			self.queue(
 				ctx,
 				ExtensionRequest::PreviewTheme {
@@ -339,8 +344,21 @@ impl ExtensionUi {
 			.is_some_and(|editor| editor.preview)
 	}
 	pub(crate) fn theme_preview_bar(&mut self, ui: &mut egui::Ui, inset: f32) -> bool {
+		design::set_surface_override(
+			self.theme_editor
+				.as_ref()
+				.and_then(|editor| editor.framing_override()),
+		);
 		if !self.previewing_theme() {
 			return false;
+		}
+		if self.theme_editor.as_ref().is_some_and(|editor| {
+			editor
+				.framing
+				.as_ref()
+				.is_some_and(|framing| framing.in_app)
+		}) {
+			return self.framing_bar(ui, inset);
 		}
 		let colors = design::palette(ui);
 		let surface = design::section_surface(
@@ -452,6 +470,138 @@ impl ExtensionUi {
 			self.stop_theme_preview(ui.ctx());
 		}
 		back || customize
+	}
+	/// The last step of framing a bar picture: the app as it will look, the bar outlined and
+	/// draggable, and Done to save. Returns true to go back to the crop dialog in settings.
+	fn framing_bar(&mut self, ui: &mut egui::Ui, inset: f32) -> bool {
+		let Some(editor) = self.theme_editor.as_mut() else {
+			return false;
+		};
+		let Some(framing) = editor.framing.as_mut() else {
+			return false;
+		};
+		let colors = design::palette(ui);
+		let bar = design::surface_rect(ui.ctx(), framing.surface);
+		let surface = design::section_surface(
+			ui,
+			design::window_palette(ui).base,
+			design::ImageSection::TopBar,
+		);
+		let (mut back, mut smart, mut done) = (false, false, false);
+		let panel = egui::Panel::top("theme-framing")
+			.exact_size(52.0)
+			.show_separator_line(false)
+			.frame(egui::Frame::new().fill(surface).inner_margin(egui::Margin {
+				left: (inset + 16.0).min(120.0) as i8,
+				right: 16,
+				top: 0,
+				bottom: 0,
+			}))
+			.show(ui, |ui| {
+				let rect = ui.max_rect();
+				if inset > 0.0 {
+					design::window_drag(ui, rect);
+				}
+				ui.painter().hline(
+					rect.x_range().expand(inset + 16.0),
+					rect.bottom() - 0.5,
+					egui::Stroke::new(1.0, colors.border),
+				);
+				ui.horizontal_centered(|ui| {
+					ui.spacing_mut().item_spacing.x = 12.0;
+					let (icon, _) =
+						ui.allocate_exact_size(egui::Vec2::splat(30.0), egui::Sense::hover());
+					ui.painter().circle_filled(
+						icon.center(),
+						15.0,
+						design::mix(colors.raised, colors.accent, 0.22),
+					);
+					icons::paint(
+						ui.painter(),
+						icons::Icon::Image,
+						egui::Rect::from_center_size(icon.center(), egui::Vec2::splat(16.0)),
+						colors.accent,
+					);
+					// Three buttons plus their gaps; the instructions truncate before they wrap.
+					let title_width = (ui.available_width() - 330.0).max(80.0);
+					ui.allocate_ui_with_layout(
+						egui::vec2(title_width, rect.height()),
+						egui::Layout::top_down(egui::Align::Min),
+						|ui| {
+							ui.add_space(8.0);
+							ui.spacing_mut().item_spacing.y = 1.0;
+							ui.label(design::eyebrow(
+								ui,
+								crate::i18n::translate(crate::theme_editor::surface_name(
+									framing.surface,
+								)),
+								colors.muted,
+							));
+							ui.add(
+								egui::Label::new(
+									design::semibold(
+										ui,
+										crate::i18n::translate(if bar.is_some() {
+											"theme-editor-framing-in-app"
+										} else {
+											"theme-editor-framing-off-screen"
+										}),
+										14.0,
+									)
+									.color(colors.text_strong),
+								)
+								.truncate(),
+							);
+						},
+					);
+					ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+						ui.spacing_mut().item_spacing.x = 8.0;
+						done = design::button(
+							ui,
+							&crate::i18n::translate("theme-editor-framing-done"),
+							design::ButtonKind::Primary,
+						)
+						.clicked();
+						smart = design::button(
+							ui,
+							&crate::i18n::translate("theme-editor-framing-smart"),
+							design::ButtonKind::Outline,
+						)
+						.on_hover_text(crate::i18n::translate("theme-editor-framing-smart-detail"))
+						.clicked();
+						back = design::button(
+							ui,
+							&crate::i18n::translate("theme-editor-framing-back"),
+							design::ButtonKind::Outline,
+						)
+						.clicked();
+					});
+				});
+			});
+		if let Some(rect) = bar {
+			framing.overlay(ui.ctx(), rect, panel.response.rect.bottom(), colors.accent);
+		}
+		if smart {
+			framing.area = framing.smart;
+		}
+		if back {
+			self.stop_theme_preview(ui.ctx());
+			return true;
+		}
+		if done {
+			editor.accept_framing();
+			let mut requests = Vec::new();
+			// The preview stays up until the save lands, so the picture never flickers.
+			let saved = editor.request_save(&mut requests);
+			for request in requests {
+				self.queue(ui.ctx(), request);
+			}
+			if !saved {
+				self.stop_theme_preview(ui.ctx());
+				return true;
+			}
+		}
+		false
 	}
 	fn edit_theme(&mut self, ui: &mut egui::Ui) {
 		let Some(mut editor) = self.theme_editor.take() else {

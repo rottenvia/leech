@@ -1540,14 +1540,16 @@ pub(crate) fn package_surfaces(package: &Package) -> Result<ui::design::SurfaceI
 		.map(Arc::new)
 }
 
-/// The largest bar image kept from a pick: sharp on a 1440p window, and eight bars at most
+/// The largest bar image kept from a pick: sharp on a 1440p window, and nine bars at most
 /// stay within a sensible amount of memory.
 const SURFACE_MAX: (u32, u32) = (2560, 1440);
 
 /// Read a picked bar image and re-encode it small enough for a theme package: PNG when it has
-/// transparency, JPEG otherwise. It shrinks until it just fills a bar of `fill` pixels (never
-/// past [`SURFACE_MAX`]), then further until it fits [`extensions::MAX_SURFACE_BYTES`]. Photos
-/// straight from a phone are fine, and eight bars stay well inside the package limit.
+/// transparency, JPEG otherwise. It is resized with Lanczos until it just fills a bar of `fill`
+/// pixels (never past [`SURFACE_MAX`]), then shrinks further until it fits
+/// [`extensions::MAX_SURFACE_BYTES`]. Photos straight from a phone are fine, small pictures are
+/// enlarged up to four times here rather than blurred by the GPU, and nine bars stay well inside
+/// the package limit.
 pub fn read_surface(
 	path: &Path,
 	fill: [u32; 2],
@@ -1573,13 +1575,13 @@ pub fn read_surface(
 	// A cover crop keeps one whole axis of the picture, so the other may be larger than the bar.
 	let scale = (fill[0].clamp(1, SURFACE_MAX.0) as f32 / picture.width() as f32)
 		.max(fill[1].clamp(1, SURFACE_MAX.1) as f32 / picture.height() as f32)
-		.min(1.0);
+		.min(4.0);
 	let (mut width, mut height) = (
 		((picture.width() as f32 * scale).ceil() as u32).clamp(1, SURFACE_MAX.0),
 		((picture.height() as f32 * scale).ceil() as u32).clamp(1, SURFACE_MAX.1),
 	);
 	for quality in [88, 82, 76, 70, 64] {
-		if picture.width() > width || picture.height() > height {
+		if picture.width() != width || picture.height() != height {
 			picture = picture.resize(width, height, image::imageops::FilterType::Lanczos3);
 		}
 		let mut encoded = Vec::new();

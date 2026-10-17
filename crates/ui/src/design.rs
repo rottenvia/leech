@@ -396,7 +396,10 @@ thread_local! {
 	static BACKGROUND_IMAGE: std::cell::RefCell<Option<(std::sync::Arc<egui::ColorImage>, egui::TextureHandle)>> = const { std::cell::RefCell::new(None) };
 	static SURFACE_SETTINGS: std::cell::Cell<[Option<extensions::SurfaceImage>; SURFACES]> = const { std::cell::Cell::new([None; SURFACES]) };
 	static SURFACE_TEXTURES: std::cell::RefCell<(SurfaceImages, Vec<Option<egui::TextureHandle>>)> = std::cell::RefCell::new(Default::default());
-	static SURFACE_RECTS: std::cell::Cell<[Option<egui::Rect>; SURFACES]> = const { std::cell::Cell::new([None; SURFACES]) };
+	/// Where each bar was painted, and in which frame.
+	static SURFACE_RECTS: std::cell::Cell<[Option<(egui::Rect, u64)>; SURFACES]> = const { std::cell::Cell::new([None; SURFACES]) };
+	/// Settings dragged live in the app, ahead of the theme they will be saved to.
+	static SURFACE_OVERRIDE: std::cell::Cell<Option<(extensions::ThemeSurface, extensions::SurfaceImage)>> = const { std::cell::Cell::new(None) };
 }
 
 const SURFACES: usize = extensions::ThemeSurface::ALL.len();
@@ -564,7 +567,18 @@ pub fn set_surface_images(ctx: &egui::Context, images: SurfaceImages) {
 
 /// The size in points `surface` last had on screen, for recommending image resolutions.
 pub fn surface_size(surface: extensions::ThemeSurface) -> Option<egui::Vec2> {
-	SURFACE_RECTS.get()[surface as usize].map(|rect| rect.size())
+	SURFACE_RECTS.get()[surface as usize].map(|(rect, _)| rect.size())
+}
+
+/// Where `surface` is on screen now, if it was painted in the previous frame or this one.
+pub fn surface_rect(ctx: &egui::Context, surface: extensions::ThemeSurface) -> Option<egui::Rect> {
+	let (rect, frame) = SURFACE_RECTS.get()[surface as usize]?;
+	(frame + 1 >= ctx.cumulative_frame_nr()).then_some(rect)
+}
+
+/// Show `surface` with these settings until cleared, without touching the theme.
+pub fn set_surface_override(value: Option<(extensions::ThemeSurface, extensions::SurfaceImage)>) {
+	SURFACE_OVERRIDE.set(value);
 }
 
 /// Paint the theme's image for `surface` over the bar's own colour, under its content: one
@@ -606,9 +620,13 @@ fn surface_shape(
 ) -> Option<egui::Shape> {
 	let index = surface as usize;
 	let mut rects = SURFACE_RECTS.get();
-	rects[index] = Some(rect);
+	rects[index] = Some((rect, ui.ctx().cumulative_frame_nr()));
 	SURFACE_RECTS.set(rects);
-	let settings = SURFACE_SETTINGS.get()[index]?;
+	let settings = SURFACE_OVERRIDE
+		.get()
+		.filter(|(adjusted, _)| *adjusted == surface)
+		.map(|(_, settings)| settings)
+		.or(SURFACE_SETTINGS.get()[index])?;
 	let texture = SURFACE_TEXTURES.with(|textures| textures.borrow().1.get(index).cloned())??;
 	if rect.width() < 1.0 || rect.height() < 1.0 || settings.opacity == 0 {
 		return None;
@@ -634,6 +652,20 @@ fn surface_shape(
 	)
 }
 
+/// A bar's focus area in texture units, at least one percent on each side.
+pub(crate) fn surface_area(settings: extensions::SurfaceImage) -> egui::Rect {
+	let [left, top, right, bottom] = settings
+		.area
+		.map(|value| f32::from(value.min(10_000)) / 10_000.0);
+	egui::Rect::from_min_max(
+		egui::pos2(left.min(0.99), top.min(0.99)),
+		egui::pos2(
+			right.max(left.min(0.99) + 0.01),
+			bottom.max(top.min(0.99) + 0.01),
+		),
+	)
+}
+
 /// Texture coordinates that map an `image` (in points) onto a bar of `size`.
 pub(crate) fn surface_uv(
 	image: egui::Vec2,
@@ -647,22 +679,21 @@ pub(crate) fn surface_uv(
 			egui::Rect::from_min_size(egui::Pos2::ZERO, size / image.max(egui::Vec2::splat(1.0)))
 		}
 		extensions::SurfaceFit::Cover => {
-			// The visible share of each axis; the cropped axis slides toward the focus.
-			let image_aspect = image.x / image.y.max(1.0);
-			let bar_aspect = size.x / size.y.max(1.0);
-			let visible = if bar_aspect > image_aspect {
-				egui::vec2(1.0, image_aspect / bar_aspect)
-			} else {
-				egui::vec2(bar_aspect / image_aspect, 1.0)
-			};
-			let focus = egui::vec2(
-				f32::from(settings.focus[0].min(100)),
-				f32::from(settings.focus[1].min(100)),
-			) / 100.0;
-			egui::Rect::from_min_size(
-				(focus * (egui::Vec2::splat(1.0) - visible)).to_pos2(),
-				visible,
-			)
+			// The smallest window of the bar's shape around `area`, shrunk to the image when
+			// the shapes disagree, so the chosen part stays in view at every bar size.
+			let area = surface_area(settings);
+			// The bar's shape in texture units, where the image is one unit square.
+			let ratio = (size.x / size.y.max(1.0)) / (image.x / image.y.max(1.0));
+			let mut visible = egui::vec2(
+				area.width().max(area.height() * ratio),
+				area.height().max(area.width() / ratio),
+			);
+			visible /= visible.x.max(visible.y).max(1.0);
+			let min = (area.center() - visible / 2.0).clamp(
+				egui::Pos2::ZERO,
+				(egui::Vec2::splat(1.0) - visible).to_pos2(),
+			);
+			egui::Rect::from_min_size(min, visible)
 		}
 	}
 }
@@ -4034,49 +4065,56 @@ mod sign_in_widget_tests {
 	}
 
 	#[test]
-	fn bar_images_crop_toward_the_focus_and_tile_at_native_size() {
-		let settings = |fit, focus| extensions::SurfaceImage {
+	fn bar_images_keep_their_area_in_view_and_tile_at_native_size() {
+		let settings = |fit, area| extensions::SurfaceImage {
 			opacity: 70,
 			fit,
-			focus,
+			area,
 		};
-		let image = egui::vec2(1000.0, 500.0);
-		// A bar four times wider than tall keeps the full width and half the height.
-		let wide = surface_uv(
-			image,
-			egui::vec2(400.0, 100.0),
-			settings(extensions::SurfaceFit::Cover, [50, 0]),
-		);
+		let cover = |size, area| {
+			surface_uv(
+				egui::vec2(1000.0, 500.0),
+				size,
+				settings(extensions::SurfaceFit::Cover, area),
+			)
+		};
+		let wide = egui::vec2(400.0, 100.0);
+		let rect = |x, y, w, h| egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, h));
+		// The whole picture on a bar twice as wide: full width, centred half height.
 		assert_eq!(
-			wide,
-			egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1.0, 0.5))
+			cover(wide, extensions::SurfaceImage::FULL),
+			rect(0.0, 0.25, 1.0, 0.5)
 		);
-		let bottom = surface_uv(
-			image,
-			egui::vec2(400.0, 100.0),
-			settings(extensions::SurfaceFit::Cover, [50, 100]),
+		assert_eq!(cover(wide, [0, 0, 10_000, 5_000]), rect(0.0, 0.0, 1.0, 0.5));
+		assert_eq!(
+			cover(wide, [0, 5_000, 10_000, 10_000]).min,
+			egui::pos2(0.0, 0.5)
 		);
-		assert_eq!(bottom.min, egui::pos2(0.0, 0.5));
 		// A square bar keeps half the width, centred.
-		let square = surface_uv(
-			image,
-			egui::vec2(100.0, 100.0),
-			settings(extensions::SurfaceFit::Cover, [50, 50]),
-		);
+		let square = egui::vec2(100.0, 100.0);
 		assert_eq!(
-			square,
-			egui::Rect::from_min_size(egui::pos2(0.25, 0.0), egui::vec2(0.5, 1.0))
+			cover(square, extensions::SurfaceImage::FULL),
+			rect(0.25, 0.0, 0.5, 1.0)
 		);
+		// A small area zooms in and stays wholly visible.
+		let zoomed = cover(square, [4_000, 4_000, 6_000, 6_000]);
+		assert!((zoomed.min - egui::pos2(0.4, 0.3)).length() < 1e-5);
+		assert!((zoomed.size() - egui::vec2(0.2, 0.4)).length() < 1e-5);
+		// An area at the edge slides the window inside the picture.
+		assert_eq!(cover(square, [0, 0, 2_000, 10_000]).min.x, 0.0);
 		let tile = surface_uv(
-			image,
+			egui::vec2(1000.0, 500.0),
 			egui::vec2(2000.0, 250.0),
-			settings(extensions::SurfaceFit::Tile, [50, 50]),
+			settings(extensions::SurfaceFit::Tile, extensions::SurfaceImage::FULL),
 		);
 		assert_eq!(tile.max, egui::pos2(2.0, 0.5));
 		let stretch = surface_uv(
-			image,
+			egui::vec2(1000.0, 500.0),
 			egui::vec2(10.0, 900.0),
-			settings(extensions::SurfaceFit::Stretch, [0, 0]),
+			settings(
+				extensions::SurfaceFit::Stretch,
+				extensions::SurfaceImage::FULL,
+			),
 		);
 		assert_eq!(stretch.max, egui::pos2(1.0, 1.0));
 	}
