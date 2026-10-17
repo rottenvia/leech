@@ -23,7 +23,7 @@ use sha2::{Digest, Sha256};
 /// Generated from `extensions/` and pinned to a merged commit by the catalog workflow.
 /// Leech reads the upstream Serein catalog: its packages share this build's extension ABI.
 const CATALOG_URL: &str =
-	"https://raw.githubusercontent.com/ViceVerse-cz/Serein/main/extensions/catalog.json";
+	"https://raw.githubusercontent.com/rottenvia/leech/main/extensions/catalog.json";
 const MAX_PACKAGE: usize = 16 * 1024 * 1024;
 const MAX_RECORD: usize = MAX_PACKAGE + 64 * 1024;
 const MAX_CATALOG: usize = 1024 * 1024;
@@ -1545,9 +1545,13 @@ pub(crate) fn package_surfaces(package: &Package) -> Result<ui::design::SurfaceI
 const SURFACE_MAX: (u32, u32) = (2560, 1440);
 
 /// Read a picked bar image and re-encode it small enough for a theme package: PNG when it has
-/// transparency, JPEG otherwise, shrunk to fit [`SURFACE_MAX`] and then until it fits
-/// [`extensions::MAX_SURFACE_BYTES`]. Photos straight from a phone are fine.
-pub fn read_surface(path: &Path) -> Result<(Vec<u8>, eframe::egui::ColorImage), String> {
+/// transparency, JPEG otherwise. It shrinks until it just fills a bar of `fill` pixels (never
+/// past [`SURFACE_MAX`]), then further until it fits [`extensions::MAX_SURFACE_BYTES`]. Photos
+/// straight from a phone are fine, and eight bars stay well inside the package limit.
+pub fn read_surface(
+	path: &Path,
+	fill: [u32; 2],
+) -> Result<(Vec<u8>, eframe::egui::ColorImage), String> {
 	const UNREADABLE: &str = "Choose a PNG, JPEG or WebP image within 8192 pixels per edge";
 	let bytes = read_bounded(path, 64 * 1024 * 1024)?;
 	let format = image::guess_format(&bytes).map_err(|_| UNREADABLE)?;
@@ -1566,7 +1570,14 @@ pub fn read_surface(path: &Path) -> Result<(Vec<u8>, eframe::egui::ColorImage), 
 	let mut picture = reader.decode().map_err(|_| UNREADABLE)?;
 	let transparent =
 		picture.color().has_alpha() && picture.to_rgba8().pixels().any(|p| p[3] < 255);
-	let (mut width, mut height) = SURFACE_MAX;
+	// A cover crop keeps one whole axis of the picture, so the other may be larger than the bar.
+	let scale = (fill[0].clamp(1, SURFACE_MAX.0) as f32 / picture.width() as f32)
+		.max(fill[1].clamp(1, SURFACE_MAX.1) as f32 / picture.height() as f32)
+		.min(1.0);
+	let (mut width, mut height) = (
+		((picture.width() as f32 * scale).ceil() as u32).clamp(1, SURFACE_MAX.0),
+		((picture.height() as f32 * scale).ceil() as u32).clamp(1, SURFACE_MAX.1),
+	);
 	for quality in [88, 82, 76, 70, 64] {
 		if picture.width() > width || picture.height() > height {
 			picture = picture.resize(width, height, image::imageops::FilterType::Lanczos3);

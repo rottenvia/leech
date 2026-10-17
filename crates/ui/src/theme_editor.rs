@@ -9,6 +9,10 @@ use std::sync::{
 	atomic::{AtomicU64, Ordering},
 };
 
+/// Where a shared theme goes for review: GitHub forks the catalog repository for anyone
+/// without write access and opens a pull request with the uploaded package.
+const MARKETPLACE_UPLOAD: &str = "https://github.com/rottenvia/leech/upload/main/extensions/themes";
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum EditorTab {
 	#[default]
@@ -1056,18 +1060,42 @@ impl ThemeEditor {
 							),
 						);
 						ui.add_space(8.0);
-						if dialog::action(
-							ui,
-							"theme-editor-show-export-theme",
-							dialog::Action::Outline,
-						)
-						.clicked()
-						{
+						let has_source = !self.package.manifest.source.trim().is_empty();
+						let (export, publish) = ui
+							.horizontal_wrapped(|ui| {
+								let export = dialog::action(
+									ui,
+									"theme-editor-show-export-theme",
+									dialog::Action::Outline,
+								)
+								.clicked();
+								let publish = ui
+									.add_enabled_ui(has_source, |ui| {
+										dialog::action(
+											ui,
+											"theme-editor-publish",
+											dialog::Action::Outline,
+										)
+									})
+									.inner
+									.on_disabled_hover_text(crate::i18n::translate(
+										"theme-editor-publish-needs-source",
+									))
+									.clicked();
+								(export, publish)
+							})
+							.inner;
+						design::hint(ui, &crate::i18n::translate("theme-editor-publish-hint"));
+						if export || publish {
 							self.show_errors = true;
 							if self.ready_to_save() {
 								requests.push(ExtensionRequest::ExportTheme {
 									package: self.package.clone(),
 								});
+								if publish {
+									ui.ctx()
+										.open_url(egui::OpenUrl::new_tab(MARKETPLACE_UPLOAD));
+								}
 							} else {
 								let (tab, message, dark, reveal_colors) = self.save_error();
 								self.tab = tab;
@@ -1332,7 +1360,10 @@ impl ThemeEditor {
 						)
 						.clicked()
 						{
-							requests.push(ExtensionRequest::PickThemeSurface(surface));
+							requests.push(ExtensionRequest::PickThemeSurface(
+								surface,
+								[aim.x as u32, aim.y as u32],
+							));
 						}
 						if image.is_some()
 							&& dialog::action(

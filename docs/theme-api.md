@@ -236,8 +236,8 @@ scale. The editor shows each bar's ideal pixel size: twice its size on screen, w
 stays sharp when the window grows.
 
 Each image is a PNG or JPEG of at most 1 MiB, decoded with the edge and allocation
-limits above and at most 8,000,000 pixels. The editor accepts PNG, JPEG or WebP, scales a picture down to fit 2560 x 1440,
-and re-encodes it (PNG when it has transparency, JPEG otherwise) until it fits.
+limits above and at most 8,000,000 pixels. The editor accepts PNG, JPEG or WebP, scales a picture down until it just fills the
+bar's ideal size (never past 2560 x 1440), and re-encodes it (PNG when it has transparency, JPEG otherwise) until it fits.
 Plugins cannot carry bar images, and a supplied `surfaces` entry merges over the
 selected theme's settings for that bar. Bars without an image paint as before. Each
 image is uploaded once as a mipmapped texture and drawn as one textured rectangle

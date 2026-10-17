@@ -47,8 +47,8 @@ for entry in moved["entries"]:
     for value in [entry] + ([entry["preview"]] if "preview" in entry else []):
         key = "release_url" if value is entry else "url"
         value[key] = value[key].replace(old, "f" * 40)
-assert catalog.content(pinned, "ViceVerse-cz/Serein") == catalog.content(moved, "ViceVerse-cz/Serein") is not None
+assert catalog.content(pinned, catalog.REPOSITORY) == catalog.content(moved, catalog.REPOSITORY) is not None
 assert catalog.content(pinned, "ViceVerse-cz/Other") is None
 moved["entries"][0]["sha256"] = "0" * 64
-assert catalog.content(pinned, "ViceVerse-cz/Serein") != catalog.content(moved, "ViceVerse-cz/Serein")
+assert catalog.content(pinned, catalog.REPOSITORY) != catalog.content(moved, catalog.REPOSITORY)
 print("Theme/plugin identity, byte, capability, action and URL checks passed.")
