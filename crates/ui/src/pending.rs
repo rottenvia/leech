@@ -243,7 +243,7 @@ pub fn show(
 						}
 						if ui
 							.button(crate::i18n::translate_if_key(
-								&(if pending.sticker.is_some() {
+								&(if pending.sticker.is_some() || pending.content.is_empty() {
 									crate::i18n::translate("pending-show-dismiss")
 								} else {
 									crate::i18n::translate("pending-show-restore-to-composer")

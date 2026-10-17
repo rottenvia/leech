@@ -2673,7 +2673,10 @@ impl MessagingUi {
 		if let Some(index) = state.pending.iter().position(|p| {
 			p.nonce == nonce && p.channel == channel && p.delivery != model::Delivery::Sending
 		}) {
-			if !state.drafts.contains_key(&channel) && state.drafts.len() >= 64 {
+			if state.pending[index].content.is_empty() {
+				// A file-only message has no text to restore; its card is dismissed.
+				state.pending.remove(index);
+			} else if !state.drafts.contains_key(&channel) && state.drafts.len() >= 64 {
 				state.status =
 					"Draft budget full. Clear an existing draft before restoring pending text";
 			} else if state.drafts.get(&channel).is_none_or(String::is_empty) {
