@@ -12,6 +12,9 @@ mod capture;
 #[cfg(any(test, not(target_os = "linux")))]
 #[path = "screen/convert.rs"]
 mod convert;
+#[cfg(target_os = "windows")]
+#[path = "screen/gpu_windows.rs"]
+mod gpu;
 #[cfg(target_os = "linux")]
 #[path = "screen/gstreamer.rs"]
 mod gstreamer;
@@ -53,11 +56,20 @@ pub(crate) fn fits_capture(width: u32, height: u32) -> bool {
 }
 pub const MAX_ENCODED_BYTES: usize = 2 * 1024 * 1024;
 
+/// Frames between scheduled IDR pictures: libwebrtc's H.264 default. Viewers that lose a
+/// picture ask for one with PLI or FIR, and every DAVE transition (a viewer joining) already
+/// forces one, so frequent periodic IDRs only add a large burst and a blurry frame each time.
+const KEYFRAME_INTERVAL: u32 = 3000;
+
 pub struct RawFrame {
 	pub width: u32,
 	pub height: u32,
 	pub stride: usize,
 	pub data: Vec<u8>,
+	/// Windows GPU path: the picture already scaled to the stream size as NV12 in video
+	/// memory, for the hardware encoder to read in place. `data` is then empty.
+	#[cfg(target_os = "windows")]
+	pub(crate) surface: Option<Arc<crate::video_encode::hardware::Surface>>,
 }
 
 pub struct EncodedFrame {
@@ -292,6 +304,12 @@ fn encode_loop(
 	let capture_stop = Arc::new(AtomicBool::new(false));
 	#[cfg(target_os = "windows")]
 	let raw_pending = Arc::new(AtomicBool::new(false));
+	// Windows starts on the GPU path. The encoder clears this once it cannot read GPU
+	// pictures, which moves capture back to frames in memory.
+	#[cfg(target_os = "windows")]
+	let gpu = Arc::new(AtomicBool::new(true));
+	#[cfg(not(target_os = "windows"))]
+	let gpu = ();
 	#[cfg(target_os = "windows")]
 	let _native = capture::Capture::start(
 		settings,
@@ -301,6 +319,8 @@ fn encode_loop(
 		ready.clone(),
 		audio_epoch,
 		raw_pending.clone(),
+		gpu.clone(),
+		preview.clone(),
 	)?;
 	// The worker's stop also reaches a pending macOS picker, so call teardown closes it now.
 	#[cfg(not(target_os = "windows"))]
@@ -354,9 +374,12 @@ fn encode_loop(
 		if let Some(frame) = &frame {
 			first_frame_deadline = None;
 			if now >= next_preview {
-				let image = preview_frame(frame)?;
-				if let Ok(mut slot) = preview.try_lock() {
-					*slot = Some(image);
+				// A GPU picture has no pixels here; its capture thread publishes the preview.
+				if !on_gpu(frame) {
+					let image = preview_frame(frame)?;
+					if let Ok(mut slot) = preview.try_lock() {
+						*slot = Some(image);
+					}
 				}
 				next_preview = now + Duration::from_millis(100);
 				wake();
@@ -377,10 +400,11 @@ fn encode_loop(
 		if !encode {
 			continue;
 		}
-		// Pace on an accumulating schedule with a little tolerance: capture timing jitter must
-		// not skip every other frame, and a stalled encoder resumes from now instead of bursting.
+		// Pace on an accumulating schedule with tolerance: capture already paces, and its
+		// delivery jitter must not drop frames here. A stalled encoder resumes from now
+		// instead of bursting.
 		let interval = Duration::from_secs_f64(1.0 / f64::from(settings.fps));
-		if now + Duration::from_millis(2) < next_frame {
+		if now + interval / 4 < next_frame {
 			continue;
 		}
 		next_frame = (next_frame + interval).max(now + interval / 2);
@@ -393,7 +417,7 @@ fn encode_loop(
 			.load(Ordering::Acquire)
 			.clamp(250_000, settings.bit_rate());
 		if encoding.is_none() {
-			encoding = Some(ScreenEncoder::new(settings, target)?);
+			encoding = Some(ScreenEncoder::new(settings, target, gpu.clone())?);
 		}
 		if encoding
 			.as_mut()
@@ -435,7 +459,9 @@ fn encode_loop(
 		}
 		let frame = EncodedFrame {
 			data,
-			timestamp: (origin.elapsed().as_micros() * 90 / 1000) as u32,
+			// When the picture arrived, not when encoding finished: encoder time must not
+			// jitter the receiver's playout.
+			timestamp: (now.duration_since(origin).as_micros() * 90 / 1000) as u32,
 			keyframe: is_keyframe,
 		};
 		if send.try_send(frame).is_err() {
@@ -455,15 +481,37 @@ fn retain_screen_frame(
 ) -> Result<bool, &'static str> {
 	let fresh = frame.is_some();
 	if let Some(frame) = frame {
-		validate_frame(&frame)?;
+		if !on_gpu(&frame) {
+			validate_frame(&frame)?;
+		}
 		*latest = Some(frame);
 	}
 	Ok(ready && latest.is_some() && (fresh || keyframe))
 }
 
+/// Whether `frame` is a Windows GPU picture rather than pixels in memory.
+#[cfg(any(test, not(target_os = "linux")))]
+fn on_gpu(frame: &RawFrame) -> bool {
+	#[cfg(target_os = "windows")]
+	return frame.surface.is_some();
+	#[cfg(not(target_os = "windows"))]
+	{
+		let _ = frame;
+		false
+	}
+}
+
+/// Windows: cleared once the encoder cannot read GPU pictures, which moves capture back to
+/// frames in memory. macOS has no GPU path.
+#[cfg(target_os = "windows")]
+type GpuPath = Arc<AtomicBool>;
+#[cfg(target_os = "macos")]
+type GpuPath = ();
+
 /// Screen encoder preferring the platform hardware H.264 encoder (Media Foundation on
 /// Windows, VideoToolbox on macOS) and falling back to openh264 when it is unavailable or
-/// fails mid-stream.
+/// fails mid-stream. On Windows the hardware encoder reads GPU pictures in place while
+/// capture sends them.
 #[cfg(not(target_os = "linux"))]
 struct ScreenEncoder {
 	diagnostics: crate::diagnostics::EncoderRegistration,
@@ -473,40 +521,72 @@ struct ScreenEncoder {
 	hardware: Option<crate::video_encode::hardware::Encoder>,
 	settings: Settings,
 	bitrate: u32,
+	#[cfg_attr(target_os = "macos", allow(dead_code))]
+	gpu: GpuPath,
+	/// The capture device whose surfaces the hardware encoder reads, when it reads them.
+	#[cfg(target_os = "windows")]
+	device: Option<windows::Win32::Graphics::Direct3D11::ID3D11Device>,
 }
 
 #[cfg(not(target_os = "linux"))]
 impl ScreenEncoder {
-	fn new(settings: Settings, bitrate: u32) -> Result<Self, &'static str> {
-		let config = crate::video_encode::Config {
-			width: settings.width,
-			height: settings.height,
-			fps: settings.fps,
-			bit_rate: bitrate,
-			max_bytes: MAX_ENCODED_BYTES,
-			profile: crate::video_encode::Profile::Main,
+	fn new(settings: Settings, bitrate: u32, gpu: GpuPath) -> Result<Self, &'static str> {
+		let mut encoder = Self {
+			diagnostics: crate::diagnostics::EncoderRegistration::new(true, false),
+			software: None,
+			i420: Vec::new(),
+			hardware: None,
+			settings,
+			bitrate,
+			gpu,
+			#[cfg(target_os = "windows")]
+			device: None,
 		};
+		// GPU pictures open their encoder on the first surface, for that surface's device.
+		#[cfg(target_os = "windows")]
+		if encoder.gpu.load(Ordering::Acquire) {
+			encoder.diagnostics.set(None);
+			return Ok(encoder);
+		}
+		encoder.open()?;
+		Ok(encoder)
+	}
+
+	fn config(&self) -> crate::video_encode::Config {
+		crate::video_encode::Config {
+			width: self.settings.width,
+			height: self.settings.height,
+			fps: self.settings.fps,
+			bit_rate: self.bitrate,
+			max_bytes: MAX_ENCODED_BYTES,
+			keyframe_interval: KEYFRAME_INTERVAL,
+			profile: crate::video_encode::Profile::Main,
+		}
+	}
+
+	/// Open an encoder for pictures in memory: hardware when available, else openh264.
+	fn open(&mut self) -> Result<(), &'static str> {
+		// Release a scarce hardware session before requesting its replacement.
+		self.hardware = None;
+		#[cfg(target_os = "windows")]
+		{
+			self.device = None;
+		}
 		#[cfg(target_os = "macos")]
 		let hardware = crate::video_encode::hardware::Encoder::new(
-			config,
+			self.config(),
 			crate::video_encode::SourceFormat::Bgra,
 		)
 		.ok();
 		#[cfg(target_os = "windows")]
-		let hardware = crate::video_encode::hardware::Encoder::new(config).ok();
-		let software = if hardware.is_none() {
-			Some(encoder(settings, bitrate)?)
-		} else {
-			None
+		let hardware = crate::video_encode::hardware::Encoder::new(self.config()).ok();
+		self.software = match hardware {
+			Some(_) => None,
+			None => Some(encoder(self.settings, self.bitrate)?),
 		};
-		Ok(Self {
-			diagnostics: crate::diagnostics::EncoderRegistration::new(true, hardware.is_some()),
-			software,
-			i420: Vec::new(),
-			hardware,
-			settings,
-			bitrate,
-		})
+		self.diagnostics.set(Some(hardware.is_some()));
+		self.hardware = hardware;
+		Ok(())
 	}
 
 	fn set_bitrate(&mut self, bitrate: u32) -> Result<bool, &'static str> {
@@ -521,7 +601,7 @@ impl ScreenEncoder {
 			self.bitrate = bitrate;
 			return Ok(false);
 		}
-		if self.hardware.is_none() {
+		if self.software.is_some() {
 			// OpenH264 exposes no safe runtime bitrate setter, and a restart costs an IDR:
 			// follow only large moves so gradual recovery cannot cause a keyframe per second.
 			if !software_rate_change(self.bitrate, bitrate) {
@@ -529,12 +609,18 @@ impl ScreenEncoder {
 			}
 			self.software = Some(encoder(self.settings, bitrate)?);
 			self.bitrate = bitrate;
-		} else {
-			// Reopen native encoders that refuse a live rate change at the target rate.
-			// Release scarce hardware sessions before requesting their replacement.
-			self.hardware = None;
-			*self = Self::new(self.settings, bitrate)?;
+			return Ok(true);
 		}
+		self.bitrate = bitrate;
+		// A GPU encoder (re)opens at the new rate on its next surface.
+		#[cfg(target_os = "windows")]
+		if self.hardware.is_none() || self.device.is_some() {
+			self.device = None;
+			self.diagnostics.set(None);
+			return Ok(self.hardware.take().is_some());
+		}
+		// Reopen native encoders that refuse a live rate change at the target rate.
+		self.open()?;
 		Ok(true)
 	}
 
@@ -543,6 +629,19 @@ impl ScreenEncoder {
 		frame: &RawFrame,
 		force_keyframe: bool,
 	) -> Result<(Vec<u8>, bool), &'static str> {
+		#[allow(unused_mut)] // Only Windows switches encoders between GPU and memory pictures.
+		let mut force_keyframe = force_keyframe;
+		#[cfg(target_os = "windows")]
+		{
+			if let Some(surface) = &frame.surface {
+				return Ok(self.encode_surface(surface, force_keyframe));
+			}
+			// Capture left the GPU path, or never took it: encode from memory instead.
+			if self.device.is_some() || (self.hardware.is_none() && self.software.is_none()) {
+				self.open()?;
+				force_keyframe = true;
+			}
+		}
 		let (width, height) = (self.settings.width as usize, self.settings.height as usize);
 		let mut software_force = force_keyframe;
 		if let Some(hardware) = self.hardware.as_mut() {
@@ -581,6 +680,53 @@ impl ScreenEncoder {
 			),
 			software_force,
 		)
+	}
+
+	/// Encode a GPU picture in place. When the GPU path cannot encode, this clears it and
+	/// returns nothing, leaving the keyframe request for capture's first frame in memory.
+	#[cfg(target_os = "windows")]
+	fn encode_surface(
+		&mut self,
+		surface: &crate::video_encode::hardware::Surface,
+		force_keyframe: bool,
+	) -> (Vec<u8>, bool) {
+		if !self.gpu.load(Ordering::Acquire) {
+			return (Vec::new(), false);
+		}
+		let mut force_keyframe = force_keyframe;
+		if self.device.as_ref() != Some(&surface.device) {
+			self.hardware = None;
+			self.software = None;
+			match crate::video_encode::hardware::Encoder::with_device(
+				self.config(),
+				&surface.device,
+			) {
+				Ok(encoder) => {
+					self.hardware = Some(encoder);
+					self.device = Some(surface.device.clone());
+					self.diagnostics.set(Some(true));
+					force_keyframe = true;
+				}
+				Err(_) => {
+					self.gpu.store(false, Ordering::Release);
+					return (Vec::new(), false);
+				}
+			}
+		}
+		match self
+			.hardware
+			.as_mut()
+			.map(|encoder| encoder.encode_surface(surface, force_keyframe))
+		{
+			Some(Ok(encoded)) => encoded,
+			_ => {
+				self.hardware = None;
+				self.device = None;
+				self.diagnostics.set(None);
+				self.gpu.store(false, Ordering::Release);
+				(Vec::new(), false)
+			}
+		}
 	}
 }
 
@@ -628,7 +774,7 @@ pub(super) fn encoder(settings: Settings, bitrate: u32) -> Result<Encoder, &'sta
 			Complexity::Medium
 		})
 		.num_threads(encoder_threads())
-		.intra_frame_period(IntraFramePeriod::from_num_frames(settings.fps * 2));
+		.intra_frame_period(IntraFramePeriod::from_num_frames(KEYFRAME_INTERVAL));
 	Encoder::with_api_config(OpenH264API::from_source(), config)
 		.map_err(|_| "Screen video encoder is unavailable")
 }
@@ -786,6 +932,8 @@ mod tests {
 			height: 2,
 			stride: 8,
 			data: vec![value; 16],
+			#[cfg(target_os = "windows")]
+			surface: None,
 		};
 		let mut latest = None;
 		assert!(!retain_screen_frame(&mut latest, None, true, true).unwrap());
@@ -811,6 +959,8 @@ mod tests {
 			height: 2,
 			stride: 8,
 			data: vec![1, 2, 3, 0, 9, 9, 9, 9, 4, 5, 6, 0, 9, 9, 9, 9],
+			#[cfg(target_os = "windows")]
+			surface: None,
 		})
 		.unwrap();
 		assert_eq!(preview.as_raw(), &[3, 2, 1, 255, 6, 5, 4, 255]);
@@ -833,6 +983,8 @@ mod tests {
 				height,
 				stride: width as usize * 4,
 				data: vec![0; width as usize * height as usize * 4],
+				#[cfg(target_os = "windows")]
+				surface: None,
 			};
 			let preview = preview_frame(&frame).unwrap();
 			assert!(preview.width() > 0 && preview.width() <= 640);
@@ -845,6 +997,8 @@ mod tests {
 				height: 2,
 				stride: 4,
 				data: vec![0; 8],
+				#[cfg(target_os = "windows")]
+				surface: None,
 			})
 			.is_err()
 		);
@@ -857,6 +1011,8 @@ mod tests {
 			height: 2,
 			stride: 12,
 			data: vec![255; 24],
+			#[cfg(target_os = "windows")]
+			surface: None,
 		};
 		let pixels = fit_frame(frame, 1280, 720).unwrap();
 		assert_eq!(pixels.len(), 1280 * 720 * 4);
@@ -884,6 +1040,8 @@ mod tests {
 					height: 2,
 					stride: 4,
 					data: vec![0; 8],
+					#[cfg(target_os = "windows")]
+					surface: None,
 				},
 				1280,
 				720,

@@ -10,8 +10,16 @@ use std::{
 };
 use windows::{
 	Win32::{
+		Foundation::LUID,
+		Graphics::{
+			Direct3D11::{ID3D11Device, ID3D11Texture2D},
+			Dxgi::IDXGIDevice,
+		},
 		Media::MediaFoundation::*,
-		System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoTaskMemFree, CoUninitialize},
+		System::Com::{
+			CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+			CoTaskMemFree, CoUninitialize,
+		},
 		System::Variant::VARIANT,
 	},
 	core::Interface,
@@ -53,6 +61,7 @@ pub(crate) struct Encoder {
 	events: IMFMediaEventGenerator,
 	codec: ICodecAPI,
 	_activate: Activated,
+	_manager: Option<IMFDXGIDeviceManager>,
 	_runtime: Runtime,
 	frame: i64,
 	duration: i64,
@@ -74,14 +83,93 @@ impl Drop for Activated {
 	}
 }
 
+/// One NV12 picture at the encoder's size in video memory, made on the capture device.
+pub(crate) struct Surface {
+	pub texture: ID3D11Texture2D,
+	pub device: ID3D11Device,
+}
+
+// SAFETY: D3D11 devices and resources are free-threaded; only device contexts are not, and a
+// surface carries none.
+unsafe impl Send for Surface {}
+unsafe impl Sync for Surface {}
+
 impl Encoder {
+	/// An encoder fed packed NV12 pictures from system memory.
 	pub(crate) fn new(config: Config) -> Result<Self, &'static str> {
-		let runtime = Runtime::open()?;
-		// SAFETY: Media Foundation owns returned COM objects; the activation array is cleared
-		// before its CoTaskMem allocation is released.
+		let _enumeration = Runtime::open()?;
+		// SAFETY: The activation array is cleared before its CoTaskMem allocation is released.
+		Self::first(config, unsafe { hardware_encoders(None)? }, None)
+	}
+
+	/// An encoder that reads [`Surface`]s of `device` directly, with no copy through memory.
+	pub(crate) fn with_device(config: Config, device: &ID3D11Device) -> Result<Self, &'static str> {
+		let _enumeration = Runtime::open()?;
+		// SAFETY: The device manager takes its own reference to the device; the token stays
+		// private to this encoder.
 		unsafe {
-			let activate = Activated(hardware_encoder()?);
-			let transform: IMFTransform = activate.0.ActivateObject().map_err(|_| UNAVAILABLE)?;
+			let mut token = 0;
+			let mut manager = None;
+			MFCreateDXGIDeviceManager(&mut token, &mut manager).map_err(|_| UNAVAILABLE)?;
+			let manager = manager.ok_or(UNAVAILABLE)?;
+			manager
+				.ResetDevice(device, token)
+				.map_err(|_| UNAVAILABLE)?;
+			// Only the capture GPU's own encoders can read its textures.
+			let adapter = device
+				.cast::<IDXGIDevice>()
+				.and_then(|device| device.GetAdapter())
+				.and_then(|adapter| adapter.GetDesc())
+				.map_err(|_| UNAVAILABLE)?
+				.AdapterLuid;
+			Self::first(config, hardware_encoders(Some(adapter))?, Some(manager))
+		}
+	}
+
+	/// The first encoder in `encoders` that accepts this format. Windows ranks an integrated
+	/// GPU's encoder first on hybrid desktops (a Ryzen iGPU beside a GeForce), and that one may
+	/// refuse, so every adapter gets a turn before the caller falls back to software.
+	fn first(
+		config: Config,
+		encoders: Vec<IMFActivate>,
+		manager: Option<IMFDXGIDeviceManager>,
+	) -> Result<Self, &'static str> {
+		for activate in encoders {
+			// SAFETY: Each attempt holds its own balanced runtime reference on this worker.
+			let opened = unsafe {
+				Self::open(
+					Activated(activate),
+					config,
+					manager.clone(),
+					Runtime::open()?,
+				)
+			};
+			if let Ok(encoder) = opened {
+				return Ok(encoder);
+			}
+		}
+		Err(UNAVAILABLE)
+	}
+
+	/// Configure one activated hardware transform. `Activated` shuts it down on failure.
+	unsafe fn open(
+		activate: Activated,
+		config: Config,
+		manager: Option<IMFDXGIDeviceManager>,
+		runtime: Runtime,
+	) -> Result<Self, &'static str> {
+		// SAFETY: Media Foundation owns returned COM objects on the worker that owns `runtime`.
+		unsafe {
+			// The activation object can refuse a working encoder: NVIDIA's failed with
+			// MF_E_GRL_VERSION_TOO_LOW on a Windows 11 desktop, yet its class creates directly.
+			let transform: IMFTransform = activate
+				.0
+				.ActivateObject()
+				.or_else(|_| {
+					let class = activate.0.GetGUID(&MFT_TRANSFORM_CLSID_Attribute)?;
+					CoCreateInstance(&class, None, CLSCTX_INPROC_SERVER)
+				})
+				.map_err(|_| UNAVAILABLE)?;
 			let attributes = transform.GetAttributes().map_err(|_| UNAVAILABLE)?;
 			if attributes.GetUINT32(&MF_TRANSFORM_ASYNC).unwrap_or(0) == 0 {
 				return Err(UNAVAILABLE);
@@ -89,6 +177,11 @@ impl Encoder {
 			attributes
 				.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1)
 				.map_err(|_| UNAVAILABLE)?;
+			if let Some(manager) = &manager {
+				transform
+					.ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, manager.as_raw() as usize)
+					.map_err(|_| UNAVAILABLE)?;
+			}
 			let _ = attributes.SetUINT32(&MF_LOW_LATENCY, 1);
 			let codec: ICodecAPI = transform.cast().map_err(|_| UNAVAILABLE)?;
 			let _ = codec.SetValue(&CODECAPI_AVLowLatencyMode, &VARIANT::from(true));
@@ -104,7 +197,10 @@ impl Encoder {
 				&CODECAPI_AVEncMPVDefaultBPictureCount,
 				&VARIANT::from(0_u32),
 			);
-			let _ = codec.SetValue(&CODECAPI_AVEncMPVGOPSize, &VARIANT::from(config.fps * 2));
+			let _ = codec.SetValue(
+				&CODECAPI_AVEncMPVGOPSize,
+				&VARIANT::from(config.keyframe_interval),
+			);
 
 			let output = video_type(config, MFVideoFormat_H264)?;
 			output
@@ -159,6 +255,7 @@ impl Encoder {
 				events,
 				codec,
 				_activate: activate,
+				_manager: manager,
 				_runtime: runtime,
 				frame: 0,
 				duration: 10_000_000 / i64::from(config.fps),
@@ -205,19 +302,8 @@ impl Encoder {
 		force_keyframe: bool,
 		fill: impl FnOnce(&mut [u8]) -> Result<(), &'static str>,
 	) -> Result<(Vec<u8>, bool), &'static str> {
-		self.wait_for_input()?;
-		if force_keyframe {
-			// SAFETY: Codec control is called on the owning worker before this input sample.
-			unsafe {
-				self.codec
-					// Microsoft specifies ULONG (VT_UI4), not VARIANT_BOOL. A rejected
-					// command otherwise silently sends camera and screen share to software.
-					.SetValue(&CODECAPI_AVEncVideoForceKeyFrame, &force_keyframe_value())
-					.map_err(|_| FAILED)?;
-			}
-		}
 		// SAFETY: The allocation is exactly the validated NV12 size; Lock is balanced by Unlock.
-		unsafe {
+		let buffer = unsafe {
 			let native_length = u32::try_from(length).map_err(|_| FAILED)?;
 			let buffer = MFCreateMemoryBuffer(native_length).map_err(|_| FAILED)?;
 			let mut data = std::ptr::null_mut();
@@ -236,8 +322,52 @@ impl Encoder {
 			}
 			buffer.Unlock().map_err(|_| FAILED)?;
 			buffer.SetCurrentLength(native_length).map_err(|_| FAILED)?;
+			buffer
+		};
+		self.submit(&buffer, force_keyframe)
+	}
+
+	/// Encode one capture-device NV12 texture in place.
+	pub(crate) fn encode_surface(
+		&mut self,
+		surface: &Surface,
+		force_keyframe: bool,
+	) -> Result<(Vec<u8>, bool), &'static str> {
+		// SAFETY: The buffer holds its own reference to the texture until the sample is released.
+		let buffer = unsafe {
+			let buffer =
+				MFCreateDXGISurfaceBuffer(&ID3D11Texture2D::IID, &surface.texture, 0, false)
+					.map_err(|_| FAILED)?;
+			let length = buffer
+				.cast::<IMF2DBuffer>()
+				.and_then(|buffer| buffer.GetContiguousLength())
+				.map_err(|_| FAILED)?;
+			buffer.SetCurrentLength(length).map_err(|_| FAILED)?;
+			buffer
+		};
+		self.submit(&buffer, force_keyframe)
+	}
+
+	fn submit(
+		&mut self,
+		buffer: &IMFMediaBuffer,
+		force_keyframe: bool,
+	) -> Result<(Vec<u8>, bool), &'static str> {
+		self.wait_for_input()?;
+		if force_keyframe {
+			// SAFETY: Codec control is called on the owning worker before this input sample.
+			unsafe {
+				self.codec
+					// Microsoft specifies ULONG (VT_UI4), not VARIANT_BOOL. A rejected
+					// command otherwise silently sends camera and screen share to software.
+					.SetValue(&CODECAPI_AVEncVideoForceKeyFrame, &force_keyframe_value())
+					.map_err(|_| FAILED)?;
+			}
+		}
+		// SAFETY: The sample and buffer are owned COM objects passed to the transform's worker.
+		unsafe {
 			let sample = MFCreateSample().map_err(|_| FAILED)?;
-			sample.AddBuffer(&buffer).map_err(|_| FAILED)?;
+			sample.AddBuffer(buffer).map_err(|_| FAILED)?;
 			sample
 				.SetSampleTime(self.frame * self.duration)
 				.map_err(|_| FAILED)?;
@@ -353,7 +483,9 @@ impl Drop for Encoder {
 	}
 }
 
-unsafe fn hardware_encoder() -> Result<IMFActivate, &'static str> {
+/// Every hardware H.264 encoder in Windows' preference order.
+/// Limited to one GPU when `adapter` is given.
+unsafe fn hardware_encoders(adapter: Option<LUID>) -> Result<Vec<IMFActivate>, &'static str> {
 	unsafe {
 		let input = MFT_REGISTER_TYPE_INFO {
 			guidMajorType: MFMediaType_Video,
@@ -363,16 +495,40 @@ unsafe fn hardware_encoder() -> Result<IMFActivate, &'static str> {
 			guidMajorType: MFMediaType_Video,
 			guidSubtype: MFVideoFormat_H264,
 		};
+		let flags = MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER;
 		let mut entries = std::ptr::null_mut();
 		let mut count = 0;
-		MFTEnumEx(
-			MFT_CATEGORY_VIDEO_ENCODER,
-			MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER,
-			Some(&input),
-			Some(&output),
-			&mut entries,
-			&mut count,
-		)
+		match adapter {
+			Some(adapter) => {
+				let mut attributes = None;
+				MFCreateAttributes(&mut attributes, 1).map_err(|_| UNAVAILABLE)?;
+				let attributes = attributes.ok_or(UNAVAILABLE)?;
+				let luid = std::slice::from_raw_parts(
+					(&raw const adapter).cast::<u8>(),
+					size_of::<LUID>(),
+				);
+				attributes
+					.SetBlob(&MFT_ENUM_ADAPTER_LUID, luid)
+					.map_err(|_| UNAVAILABLE)?;
+				MFTEnum2(
+					MFT_CATEGORY_VIDEO_ENCODER,
+					flags,
+					Some(&input),
+					Some(&output),
+					&attributes,
+					&mut entries,
+					&mut count,
+				)
+			}
+			None => MFTEnumEx(
+				MFT_CATEGORY_VIDEO_ENCODER,
+				flags,
+				Some(&input),
+				Some(&output),
+				&mut entries,
+				&mut count,
+			),
+		}
 		.map_err(|_| UNAVAILABLE)?;
 		if entries.is_null() {
 			return Err(UNAVAILABLE);
@@ -382,12 +538,9 @@ unsafe fn hardware_encoder() -> Result<IMFActivate, &'static str> {
 			return Err(UNAVAILABLE);
 		}
 		let entries_slice = std::slice::from_raw_parts_mut(entries, count as usize);
-		let selected = entries_slice.first_mut().and_then(Option::take);
-		for entry in entries_slice {
-			*entry = None;
-		}
+		let encoders = entries_slice.iter_mut().filter_map(Option::take).collect();
 		CoTaskMemFree(Some(entries.cast()));
-		selected.ok_or(UNAVAILABLE)
+		Ok(encoders)
 	}
 }
 

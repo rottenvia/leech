@@ -2,13 +2,14 @@ use super::{
 	MAX_FRAME_HEIGHT, MAX_FRAME_WIDTH, MAX_RAW_BYTES, MAX_SOURCE_HEIGHT, MAX_SOURCE_WIDTH,
 	MAX_SOURCES, bounded_name,
 };
-use crate::screen::{AudioChunk, RawFrame, Settings as CaptureSettings, Source, SourceId};
+use crate::screen::{AudioChunk, RawFrame, Settings as CaptureSettings, Source, SourceId, gpu};
 use std::sync::{
-	Arc,
+	Arc, Mutex,
 	atomic::{AtomicBool, AtomicU64, Ordering},
 	mpsc::SyncSender,
 };
 use std::time::{Duration, Instant};
+use windows::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D};
 use windows_capture::{
 	capture::{CaptureControl, Context, GraphicsCaptureApiHandler},
 	frame::Frame,
@@ -90,16 +91,23 @@ struct Flags {
 	pending: Arc<AtomicBool>,
 	next_frame: Instant,
 	interval: Duration,
+	/// Shared with the encoder: send GPU pictures while set.
+	gpu: Arc<AtomicBool>,
+	/// GPU pictures have no pixels for the encoder thread to preview, so capture publishes it.
+	preview: Arc<Mutex<Option<image::RgbaImage>>>,
+	next_preview: Instant,
+	/// Stream picture size.
+	output: (u32, u32),
 }
 
-struct Handler(Flags);
+struct Handler(Flags, Option<gpu::Converter>);
 
 impl GraphicsCaptureApiHandler for Handler {
 	type Flags = Flags;
 	type Error = &'static str;
 
 	fn new(context: Context<Self::Flags>) -> Result<Self, Self::Error> {
-		Ok(Self(context.flags))
+		Ok(Self(context.flags, None))
 	}
 
 	fn on_frame_arrived(
@@ -134,6 +142,19 @@ impl GraphicsCaptureApiHandler for Handler {
 			control.stop();
 			return Err("Captured frame exceeds the 4K limit");
 		}
+		if self.0.gpu.load(Ordering::Acquire) {
+			match self.send_surface(frame) {
+				Ok(sent) => {
+					if !sent {
+						self.0.pending.store(false, Ordering::Release);
+					}
+					return Ok(());
+				}
+				// The memory path below carries the stream from here on.
+				Err(_) => self.0.gpu.store(false, Ordering::Release),
+			}
+		}
+		self.1 = None;
 		let mut buffer = frame.buffer().map_err(|_| {
 			self.0.stop.store(true, Ordering::Release);
 			"Captured frame could not be read"
@@ -164,6 +185,7 @@ impl GraphicsCaptureApiHandler for Handler {
 				height,
 				stride: row_bytes,
 				data,
+				surface: None,
 			})
 			.is_err()
 		{
@@ -178,12 +200,65 @@ impl GraphicsCaptureApiHandler for Handler {
 	}
 }
 
+impl Handler {
+	/// Send `frame` scaled to NV12 in video memory. `Ok(false)` drops it while the encoder
+	/// still holds every pooled picture.
+	#[allow(unsafe_code)] // Rebinding windows-capture COM pointers.
+	fn send_surface(&mut self, frame: &Frame) -> Result<bool, &'static str> {
+		// SAFETY: windows-capture's objects are these same COM interfaces in its windows-rs.
+		let (device, context, texture) = unsafe {
+			(
+				gpu::rebind::<_, ID3D11Device>(frame.device()),
+				gpu::rebind::<_, ID3D11DeviceContext>(frame.device_context()),
+				gpu::rebind::<_, ID3D11Texture2D>(frame.as_raw_texture()),
+			)
+		};
+		let (Some(device), Some(context), Some(texture)) = (device, context, texture) else {
+			return Err("Captured frame could not be bound");
+		};
+		let input = (frame.width(), frame.height());
+		if self
+			.1
+			.as_ref()
+			.is_none_or(|converter| converter.input() != input)
+		{
+			self.1 = None;
+			self.1 = Some(gpu::Converter::new(device, context, input, self.0.output)?);
+		}
+		let converter = self.1.as_mut().expect("GPU screen converter");
+		let now = Instant::now();
+		if now >= self.0.next_preview {
+			self.0.next_preview = now + Duration::from_millis(100);
+			if let Some(image) = converter.preview(&texture)
+				&& let Ok(mut slot) = self.0.preview.try_lock()
+			{
+				*slot = Some(image);
+			}
+		}
+		let Some(surface) = converter.convert(&texture)? else {
+			return Ok(false);
+		};
+		Ok(self
+			.0
+			.frames
+			.try_send(RawFrame {
+				width: self.0.output.0,
+				height: self.0.output.1,
+				stride: 0,
+				data: Vec::new(),
+				surface: Some(surface),
+			})
+			.is_ok())
+	}
+}
+
 pub(crate) struct Capture {
 	control: Option<CaptureControl<Handler, &'static str>>,
 	audio: Option<audio::Audio>,
 }
 
 impl Capture {
+	#[allow(clippy::too_many_arguments)] // Media outputs of one explicitly started capture.
 	pub(crate) fn start(
 		settings: CaptureSettings,
 		frames: SyncSender<RawFrame>,
@@ -192,6 +267,8 @@ impl Capture {
 		ready: Arc<AtomicBool>,
 		audio_epoch: Arc<AtomicU64>,
 		pending: Arc<AtomicBool>,
+		gpu: Arc<AtomicBool>,
+		preview: Arc<Mutex<Option<image::RgbaImage>>>,
 	) -> Result<Self, &'static str> {
 		if settings.width == 0
 			|| settings.height == 0
@@ -208,7 +285,15 @@ impl Capture {
 					.into_iter()
 					.find(|monitor| monitor_id(monitor) == id)
 					.ok_or("Selected display is no longer available")?;
-				start_item(settings, monitor, frames, stop.clone(), pending)
+				start_item(
+					settings,
+					monitor,
+					frames,
+					stop.clone(),
+					pending,
+					gpu,
+					preview,
+				)
 			}
 			SourceId::Window(id) => {
 				let window = Window::enumerate()
@@ -216,7 +301,15 @@ impl Capture {
 					.into_iter()
 					.find(|window| window_id(window) == id)
 					.ok_or("Selected window is no longer available")?;
-				start_item(settings, window, frames, stop.clone(), pending)
+				start_item(
+					settings,
+					window,
+					frames,
+					stop.clone(),
+					pending,
+					gpu,
+					preview,
+				)
 			}
 			#[allow(unreachable_patterns)] // Portal may be absent from platform-scoped models.
 			_ => return Err("The desktop screen picker is available only on Linux"),
@@ -263,6 +356,8 @@ fn start_item<T>(
 	frames: SyncSender<RawFrame>,
 	stop: Arc<AtomicBool>,
 	pending: Arc<AtomicBool>,
+	gpu: Arc<AtomicBool>,
+	preview: Arc<Mutex<Option<image::RgbaImage>>>,
 ) -> Result<Capture, &'static str>
 where
 	T: NativeSource,
@@ -279,6 +374,10 @@ where
 		pending,
 		next_frame: Instant::now(),
 		interval: Duration::from_secs_f64(1.0 / f64::from(settings.fps)),
+		gpu,
+		preview,
+		next_preview: Instant::now(),
+		output: (settings.width, settings.height),
 	};
 	let native = Settings::new(
 		item,
