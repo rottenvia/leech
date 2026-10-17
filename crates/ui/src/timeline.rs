@@ -2625,6 +2625,13 @@ impl TimelineView {
 		let allow_hover = !session.holding()
 			&& !ui.input(|input| input.is_scrolling())
 			&& ui.ctx().dragged_id().is_none();
+		// The theme's chat picture stays put under the scrolling messages.
+		crate::design::paint_surface(
+			ui,
+			ui.available_rect_before_wrap(),
+			0,
+			extensions::ThemeSurface::MessageList,
+		);
 		let output = scroll.show_viewport(ui, |ui, viewport| {
 			ui.spacing_mut().item_spacing.y = 0.0;
 			if welcome && let Some(channel) = state.selected.and_then(|id| state.channel(id)) {

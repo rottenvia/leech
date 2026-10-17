@@ -264,6 +264,8 @@ pub enum BackgroundTarget {
 #[serde(rename_all = "snake_case")]
 pub enum ThemeSurface {
 	CallStage,
+	/// The conversation area behind messages.
+	MessageList,
 	Composer,
 	ChannelList,
 	VoicePanel,
@@ -274,8 +276,9 @@ pub enum ThemeSurface {
 }
 
 impl ThemeSurface {
-	pub const ALL: [Self; 8] = [
+	pub const ALL: [Self; 9] = [
 		Self::CallStage,
+		Self::MessageList,
 		Self::Composer,
 		Self::ChannelList,
 		Self::VoicePanel,
@@ -293,8 +296,14 @@ pub struct SurfaceImage {
 	/// Strength of the image over the bar's own colour, 0–100.
 	pub opacity: u8,
 	pub fit: SurfaceFit,
-	/// The image point kept in view when `Cover` crops it, in percent of width and height.
-	pub focus: [u8; 2],
+	/// The part of the image `Cover` keeps in view at every bar size: left, top, right and
+	/// bottom in ten-thousandths of the image's width and height.
+	pub area: [u16; 4],
+}
+
+impl SurfaceImage {
+	/// The whole image.
+	pub const FULL: [u16; 4] = [0, 0, 10_000, 10_000];
 }
 
 impl Default for SurfaceImage {
@@ -302,7 +311,7 @@ impl Default for SurfaceImage {
 		Self {
 			opacity: 70,
 			fit: SurfaceFit::Cover,
-			focus: [50, 50],
+			area: Self::FULL,
 		}
 	}
 }
@@ -310,7 +319,7 @@ impl Default for SurfaceImage {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SurfaceFit {
-	/// Fill the bar at any size, keeping the aspect and cropping around `focus`.
+	/// Fill the bar at any size, keeping the aspect and as much of `area` as fits.
 	#[default]
 	Cover,
 	/// Fill the bar exactly, distorting the image when the shapes differ.
@@ -875,7 +884,12 @@ impl Theme {
 				.flatten()
 				.any(|size| size > 24)
 			|| self.surfaces.values().any(|surface| {
-				surface.opacity > 100 || surface.focus.into_iter().any(|focus| focus > 100)
+				let [left, top, right, bottom] = surface.area;
+				surface.opacity > 100
+					|| right > 10_000
+					|| bottom > 10_000
+					|| right < left.saturating_add(100)
+					|| bottom < top.saturating_add(100)
 			}) {
 			return Err(Error::Invalid);
 		}

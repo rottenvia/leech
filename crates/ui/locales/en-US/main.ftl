@@ -3827,7 +3827,7 @@ theme-editor-bars-title = Bar images
 # Context: bars
 theme-editor-bars-description = Put a picture behind any bar, like a Firefox theme. Each picture is cropped to its bar's shape, so it fits every window size.
 # Context: bars
-theme-editor-bars-formats = PNG, JPEG or WebP. Pictures are scaled down to the bar's ideal size and compressed to 1 MB at most. Pick a picture close to the bar's shape and keep the important part near the focus point.
+theme-editor-bars-formats = PNG, JPEG or WebP. Each picture is resized to its bar's ideal size and compressed to 1 MB at most. After choosing one, you frame it: a smart crop comes first, and you can move it right in the app.
 # Context: bars
 theme-editor-bars-aim-for = Ideal size
 # Context: bars
@@ -3843,9 +3843,7 @@ theme-editor-bars-strength = Strength
 # Context: bars
 theme-editor-bars-strength-detail = How strongly the picture shows through the bar.
 # Context: bars
-theme-editor-bars-focus-x = Focus left to right
 # Context: bars
-theme-editor-bars-focus-y = Focus top to bottom
 # Context: bars
 theme-editor-bar-call-stage = Call stage
 # Context: bars
@@ -3878,6 +3876,58 @@ theme-editor-bar-title-bar-where = The strip across the top of the window.
 theme-editor-bar-member-list = Member list
 # Context: bars
 theme-editor-bar-member-list-where = Members on the right of a channel.
+
+theme-editor-bar-message-list = Chat area
+
+theme-editor-bar-message-list-where = Behind the messages of a conversation.
+
+theme-editor-bars-frame = Adjust framing
+
+theme-editor-bars-frame-detail = Choose which part of the picture stays in view, then fine-tune it in the app.
+
+theme-editor-framing-title = Frame your picture
+
+theme-editor-framing-subtitle = drag the box over the part that must stay in view
+
+theme-editor-framing-smart = Smart pick
+
+theme-editor-framing-smart-detail = Picks the most detailed part of the picture in the bar's shape.
+
+theme-editor-framing-whole = Whole picture
+
+theme-editor-framing-legend = The box stays in view at every window size; drag it or its corners. The dashed line is what the bar shows in this window.
+
+theme-editor-framing-tips = Use a picture at least this big and close to the bar's shape, keep the subject near the middle, and prefer calm pictures behind text. Next, you can move it right in the app.
+
+theme-editor-framing-continue = Continue in app
+
+theme-editor-framing-cancel = Cancel
+
+theme-editor-framing-in-app = Drag the picture to move it and scroll to zoom, then click Done.
+
+theme-editor-framing-off-screen = This bar is not on screen now. Open the place where it appears, or click Done to keep this framing.
+
+theme-editor-framing-done = Done
+
+theme-editor-framing-back = Back
+
+theme-editor-section-only-here = Only here
+
+theme-editor-section-only-here-detail = Show the picture fully in this section and cover every other section with its solid color.
+
+theme-editor-section-everywhere = Same everywhere
+
+theme-editor-section-everywhere-detail = Give every section the coverage of this one.
+
+theme-editor-show-image-fit = Image fit
+
+theme-editor-discard-title = Discard unsaved theme?
+
+theme-editor-discard-detail = Your changes have not been saved.
+
+theme-editor-discard-confirm = Discard changes
+
+theme-editor-discard-keep = Keep editing
 # Context: toolbar
 theme-editor-toolbar-back = Back
 # Context: toolbar

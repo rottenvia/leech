@@ -2,7 +2,7 @@
 use crate::{ExtensionRequest, design, dialog, icons};
 use extensions::{
 	Background, BackgroundFit, BackgroundTarget, ExtensionKind, Manifest, Package, SectionOpacity,
-	SurfaceFit, Theme, ThemeSurface,
+	SurfaceFit, SurfaceImage, Theme, ThemeSurface,
 };
 use std::sync::{
 	Arc,
@@ -94,7 +94,257 @@ fn surface_info(surface: ThemeSurface) -> (&'static str, &'static str, egui::Vec
 			"theme-editor-bar-member-list-where",
 			egui::vec2(240.0, 640.0),
 		),
+		ThemeSurface::MessageList => (
+			"theme-editor-bar-message-list",
+			"theme-editor-bar-message-list-where",
+			egui::vec2(1000.0, 640.0),
+		),
 	}
+}
+
+/// The translation key naming `surface`.
+pub(crate) fn surface_name(surface: ThemeSurface) -> &'static str {
+	surface_info(surface).0
+}
+
+/// The picture size to aim for on `surface`: twice its size on screen, so it stays sharp in a
+/// larger or maximized window.
+fn aim_size(ctx: &egui::Context, surface: ThemeSurface) -> egui::Vec2 {
+	let shown = design::surface_size(surface).unwrap_or(surface_info(surface).2);
+	(shown * ctx.pixels_per_point() * 2.0)
+		.min(egui::vec2(2560.0, 1440.0))
+		.round()
+}
+
+/// The part of `image` a bar of `aspect` (width / height) keeps in view by default: the
+/// window of the bar's shape along the picture's free axis that holds the most edge detail,
+/// mildly pulled toward the middle, where subjects usually are.
+fn smart_area(image: &egui::ColorImage, aspect: f32) -> [u16; 4] {
+	let small = thumbnail_image(image, 96);
+	let [width, height] = small.size;
+	if width < 3 || height < 3 {
+		return SurfaceImage::FULL;
+	}
+	let luma: Vec<f32> = small
+		.pixels
+		.iter()
+		.map(|p| 0.299 * f32::from(p.r()) + 0.587 * f32::from(p.g()) + 0.114 * f32::from(p.b()))
+		.collect();
+	let (mut columns, mut rows) = (vec![0.0; width], vec![0.0; height]);
+	for y in 1..height - 1 {
+		for x in 1..width - 1 {
+			let at = |dx: usize, dy: usize| luma[(y + dy - 1) * width + x + dx - 1];
+			let gx = at(2, 0) + 2.0 * at(2, 1) + at(2, 2) - at(0, 0) - 2.0 * at(0, 1) - at(0, 2);
+			let gy = at(0, 2) + 2.0 * at(1, 2) + at(2, 2) - at(0, 0) - 2.0 * at(1, 0) - at(2, 0);
+			let edge = gx.hypot(gy);
+			columns[x] += edge;
+			rows[y] += edge;
+		}
+	}
+	// The bar's shape in picture units: above one, the bar is wider than the picture.
+	let ratio = aspect / (image.size[0] as f32 / image.size[1].max(1) as f32);
+	if ratio >= 1.0 {
+		let (top, bottom) = best_window(&rows, 1.0 / ratio);
+		[0, top, 10_000, bottom]
+	} else {
+		let (left, right) = best_window(&columns, ratio);
+		[left, 0, right, 10_000]
+	}
+}
+
+/// The run covering `share` of `energy` that holds the most of it, favouring the middle; its
+/// start and end in ten-thousandths.
+fn best_window(energy: &[f32], share: f32) -> (u16, u16) {
+	let count = energy.len();
+	let len = ((count as f32 * share).round() as usize).clamp(1, count);
+	let mut sum: f32 = energy[..len].iter().sum();
+	let mut best = (f32::MIN, 0);
+	for start in 0..=count - len {
+		if start > 0 {
+			sum += energy[start + len - 1] - energy[start - 1];
+		}
+		let offset = ((start as f32 + len as f32 / 2.0) / count as f32 - 0.5).abs();
+		// The constant keeps a flat picture centred instead of stuck at the first window.
+		let score = (sum + 1.0) * (1.0 - 0.6 * offset);
+		if score > best.0 {
+			best = (score, start);
+		}
+	}
+	let size = (share.min(1.0) * 10_000.0).round().max(200.0);
+	let start = (best.1 as f32 / count as f32 * 10_000.0)
+		.round()
+		.min(10_000.0 - size);
+	(start as u16, (start + size) as u16)
+}
+
+/// The crop box after dragging `grip` (a corner clockwise from the top left, or 4 for the whole
+/// box) by `delta` ten-thousandths, kept inside the picture.
+fn drag_area(start: [u16; 4], grip: usize, delta: egui::Vec2) -> [u16; 4] {
+	const MIN: f32 = 200.0;
+	let [mut left, mut top, mut right, mut bottom] = start.map(f32::from);
+	if grip == 4 {
+		let dx = delta.x.max(-left).min(10_000.0 - right);
+		let dy = delta.y.max(-top).min(10_000.0 - bottom);
+		(left, right, top, bottom) = (left + dx, right + dx, top + dy, bottom + dy);
+	} else {
+		if matches!(grip, 0 | 3) {
+			left = (left + delta.x).min(right - MIN).max(0.0);
+		} else {
+			right = (right + delta.x).max(left + MIN).min(10_000.0);
+		}
+		if grip < 2 {
+			top = (top + delta.y).min(bottom - MIN).max(0.0);
+		} else {
+			bottom = (bottom + delta.y).max(top + MIN).min(10_000.0);
+		}
+	}
+	[left, top, right, bottom].map(|value| value.round() as u16)
+}
+
+/// The crop that shows `view` (texture units) panned by `pan` and scaled by `zoom` around
+/// `anchor`, inside the picture and no smaller than `min` on either axis.
+fn reframe(
+	view: egui::Rect,
+	pan: egui::Vec2,
+	zoom: f32,
+	anchor: egui::Pos2,
+	min: egui::Vec2,
+) -> [u16; 4] {
+	let size = view.size();
+	let zoom = zoom
+		.max((min.x / size.x).max(min.y / size.y))
+		.min(1.0 / size.x.max(size.y));
+	let size = size * zoom;
+	let start = (anchor - (anchor - view.min) * zoom + pan).clamp(
+		egui::Pos2::ZERO,
+		(egui::Vec2::splat(1.0) - size)
+			.max(egui::Vec2::ZERO)
+			.to_pos2(),
+	);
+	let rect = egui::Rect::from_min_size(start, size);
+	[rect.left(), rect.top(), rect.right(), rect.bottom()]
+		.map(|value| (value * 10_000.0).round().clamp(0.0, 10_000.0) as u16)
+}
+
+/// A bar picture on its way into the draft: first the crop dialog, then the overlay in the
+/// app. The package only changes once the user accepts the framing.
+pub(crate) struct Framing {
+	pub surface: ThemeSurface,
+	/// A newly picked picture; `None` reframes the one already in the draft.
+	bytes: Option<Vec<u8>>,
+	image: Arc<egui::ColorImage>,
+	pub area: [u16; 4],
+	pub smart: [u16; 4],
+	/// The overlay in the app is showing instead of the crop dialog.
+	pub in_app: bool,
+	texture: Option<egui::TextureHandle>,
+	/// The crop dialog's drag: a corner clockwise from the top left or 4 for the whole box,
+	/// and the box when it began.
+	grip: Option<(usize, [u16; 4])>,
+}
+
+impl Framing {
+	fn new(
+		surface: ThemeSurface,
+		bytes: Option<Vec<u8>>,
+		image: Arc<egui::ColorImage>,
+		area: [u16; 4],
+	) -> Self {
+		let shown = design::surface_size(surface).unwrap_or(surface_info(surface).2);
+		let smart = smart_area(&image, shown.x / shown.y.max(1.0));
+		Self {
+			surface,
+			area: if bytes.is_some() { smart } else { area },
+			bytes,
+			image,
+			smart,
+			in_app: false,
+			texture: None,
+			grip: None,
+		}
+	}
+	/// Dim the app around the bar being framed and make the bar a handle: dragging moves the
+	/// picture, scrolling or pinching zooms around the pointer. `top` is where the app starts
+	/// under the framing bar.
+	pub(crate) fn overlay(
+		&mut self,
+		ctx: &egui::Context,
+		rect: egui::Rect,
+		top: f32,
+		accent: egui::Color32,
+	) {
+		let screen = ctx.content_rect();
+		let below = egui::Rect::from_min_max(egui::pos2(screen.left(), top), screen.max);
+		let painter = ctx.layer_painter(egui::LayerId::new(
+			egui::Order::Foreground,
+			egui::Id::unique("bar-framing-shade"),
+		));
+		for part in around(below, rect) {
+			painter.rect_filled(part, 0, egui::Color32::from_black_alpha(110));
+		}
+		painter.rect_stroke(
+			rect,
+			0,
+			egui::Stroke::new(2.0, accent),
+			egui::StrokeKind::Inside,
+		);
+		let image = egui::vec2(self.image.size[0] as f32, self.image.size[1] as f32);
+		let view = design::surface_uv(
+			image,
+			rect.size(),
+			SurfaceImage {
+				opacity: 100,
+				fit: SurfaceFit::Cover,
+				area: self.area,
+			},
+		);
+		let response = egui::Area::new(egui::Id::unique("bar-framing-handle"))
+			.order(egui::Order::Foreground)
+			.fixed_pos(rect.min)
+			.show(ctx, |ui| {
+				ui.allocate_exact_size(rect.size(), egui::Sense::drag()).1
+			})
+			.inner;
+		let pan = -response.drag_delta() / rect.size() * view.size();
+		let mut zoom = 1.0;
+		if response.hovered() || response.dragged() {
+			zoom = ctx.input_mut(|input| {
+				let factor = (input.smooth_scroll_delta.y * 0.002).exp() * input.zoom_delta();
+				input.smooth_scroll_delta = egui::Vec2::ZERO;
+				1.0 / factor
+			});
+			ctx.set_cursor_icon(if response.dragged() {
+				egui::CursorIcon::Grabbing
+			} else {
+				egui::CursorIcon::Grab
+			});
+		}
+		if pan != egui::Vec2::ZERO || zoom != 1.0 {
+			let anchor = response.hover_pos().map_or(view.center(), |pointer| {
+				view.min + (pointer - rect.min) / rect.size() * view.size()
+			});
+			// No closer than twice the picture's own pixels, so zooming never turns it to mush.
+			let min = rect.size() * ctx.pixels_per_point() / (image * 2.0);
+			self.area = reframe(view, pan, zoom, anchor, min.max(egui::Vec2::splat(0.01)));
+		}
+	}
+}
+
+/// The parts of `outer` around `hole`.
+fn around(outer: egui::Rect, hole: egui::Rect) -> [egui::Rect; 4] {
+	let hole = hole.intersect(outer);
+	[
+		egui::Rect::from_min_max(outer.min, egui::pos2(outer.max.x, hole.top())),
+		egui::Rect::from_min_max(egui::pos2(outer.min.x, hole.bottom()), outer.max),
+		egui::Rect::from_min_max(
+			egui::pos2(outer.min.x, hole.top()),
+			egui::pos2(hole.left(), hole.bottom()),
+		),
+		egui::Rect::from_min_max(
+			egui::pos2(hole.right(), hole.top()),
+			egui::pos2(outer.max.x, hole.bottom()),
+		),
+	]
 }
 
 /// A small copy of `image` for editor thumbnails, so a 4K bar picture costs no 4K texture.
@@ -108,6 +358,15 @@ fn thumbnail_image(image: &egui::ColorImage, max: usize) -> egui::ColorImage {
 		.collect();
 	egui::ColorImage::new(size, pixels)
 }
+
+const REGIONS: [ImageRegion; 6] = [
+	ImageRegion::TopBars,
+	ImageRegion::ServerList,
+	ImageRegion::PeopleChannels,
+	ImageRegion::MessageList,
+	ImageRegion::MemberList,
+	ImageRegion::InputArea,
+];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum ImageRegion {
@@ -181,6 +440,7 @@ pub(crate) struct ThemeEditor {
 	/// Decoded bar images for the live preview and thumbnails; bytes live in the package.
 	pub surfaces: design::SurfaceImages,
 	surface_thumbnails: Vec<Option<egui::TextureHandle>>,
+	pub framing: Option<Framing>,
 }
 
 fn identity() -> String {
@@ -247,6 +507,7 @@ impl ThemeEditor {
 			cover_thumbnail: None,
 			surfaces: Default::default(),
 			surface_thumbnails: vec![None; ThemeSurface::ALL.len()],
+			framing: None,
 		}
 	}
 	pub fn edit(
@@ -298,28 +559,110 @@ impl ThemeEditor {
 			}
 		}
 	}
+	/// A picked bar picture opens the crop dialog on its smart crop; tiles and stretched
+	/// pictures have nothing to frame and go straight into the draft.
 	pub fn receive_surface(
 		&mut self,
 		surface: ThemeSurface,
 		bytes: Vec<u8>,
 		image: Arc<egui::ColorImage>,
 	) {
-		self.package.surface_images.insert(surface, bytes);
-		let mut surfaces = (*self.surfaces).clone();
-		surfaces.insert(surface, image);
-		self.surfaces = Arc::new(surfaces);
-		self.surface_thumbnails[surface as usize] = None;
+		let cover = self
+			.package
+			.theme
+			.as_ref()
+			.and_then(|theme| theme.surfaces.get(&surface))
+			.is_none_or(|settings| settings.fit == SurfaceFit::Cover);
+		self.framing = Some(Framing::new(
+			surface,
+			Some(bytes),
+			image,
+			SurfaceImage::FULL,
+		));
+		if !cover {
+			self.accept_framing();
+		}
+	}
+	/// Put the framed picture and its crop into the draft.
+	pub(crate) fn accept_framing(&mut self) {
+		let Some(framing) = self.framing.take() else {
+			return;
+		};
+		let surface = framing.surface;
+		if let Some(bytes) = framing.bytes {
+			self.package.surface_images.insert(surface, bytes);
+			let mut surfaces = (*self.surfaces).clone();
+			surfaces.insert(surface, framing.image);
+			self.surfaces = Arc::new(surfaces);
+			self.surface_thumbnails[surface as usize] = None;
+		}
 		if let Some(theme) = self.package.theme.as_mut() {
-			theme.surfaces.entry(surface).or_default();
+			theme.surfaces.entry(surface).or_default().area = framing.area;
 		}
 		self.dirty = true;
 	}
+	/// What the app paints on the bar being framed, ahead of the theme it will be saved to.
+	pub(crate) fn framing_override(&self) -> Option<(ThemeSurface, SurfaceImage)> {
+		let framing = self
+			.framing
+			.as_ref()
+			.filter(|framing| framing.in_app && self.preview)?;
+		let settings = self
+			.package
+			.theme
+			.as_ref()
+			.and_then(|theme| theme.surfaces.get(&framing.surface).copied())
+			.unwrap_or_default();
+		Some((
+			framing.surface,
+			SurfaceImage {
+				fit: SurfaceFit::Cover,
+				area: framing.area,
+				..settings
+			},
+		))
+	}
 	pub fn preview_request(&self) -> ExtensionRequest {
-		ExtensionRequest::PreviewTheme {
-			theme: self.package.theme.clone().map(Box::new),
-			image: self.image.clone(),
-			surfaces: self.surfaces.clone(),
+		let mut theme = self.package.theme.clone();
+		let mut surfaces = self.surfaces.clone();
+		if let Some(framing) = &self.framing {
+			if let Some(theme) = theme.as_mut() {
+				theme.surfaces.entry(framing.surface).or_default().area = framing.area;
+			}
+			if framing.bytes.is_some() {
+				let mut images = (*surfaces).clone();
+				images.insert(framing.surface, framing.image.clone());
+				surfaces = Arc::new(images);
+			}
 		}
+		ExtensionRequest::PreviewTheme {
+			theme: theme.map(Box::new),
+			image: self.image.clone(),
+			surfaces,
+		}
+	}
+	/// Queue a save of the draft, or open the first thing that blocks it.
+	pub(crate) fn request_save(&mut self, requests: &mut Vec<ExtensionRequest>) -> bool {
+		self.show_errors = true;
+		if self.ready_to_save() {
+			self.validation_error = None;
+			requests.push(ExtensionRequest::SaveTheme {
+				package: self.package.clone(),
+			});
+			return true;
+		}
+		self.reveal_save_error();
+		false
+	}
+	fn reveal_save_error(&mut self) {
+		let (tab, message, dark, reveal_colors) = self.save_error();
+		self.tab = tab;
+		if let Some(dark) = dark {
+			self.dark = dark;
+		}
+		self.reveal_advanced_colors = reveal_colors;
+		self.reveal_gradient = self.invalid_gradient();
+		self.validation_error = Some((tab, message));
 	}
 	pub fn tab_key(&self) -> u8 {
 		self.tab as u8
@@ -498,22 +841,7 @@ impl ThemeEditor {
 				)
 				.clicked()
 				{
-					self.show_errors = true;
-					if self.ready_to_save() {
-						self.validation_error = None;
-						requests.push(ExtensionRequest::SaveTheme {
-							package: self.package.clone(),
-						});
-					} else {
-						let (tab, message, dark, reveal_colors) = self.save_error();
-						self.tab = tab;
-						if let Some(dark) = dark {
-							self.dark = dark;
-						}
-						self.reveal_advanced_colors = reveal_colors;
-						self.reveal_gradient = self.invalid_gradient();
-						self.validation_error = Some((tab, message));
-					}
+					self.request_save(requests);
 				}
 			});
 		});
@@ -674,7 +1002,7 @@ impl ThemeEditor {
 								.changed();
 							}
 						}
-						changed |= row(ui, "Image fit", |ui| {
+						changed |= row(ui, "theme-editor-show-image-fit", |ui| {
 							let mut changed = false;
 							crate::design::combo("image-fit")
 								.selected_text(crate::i18n::translate_if_key(
@@ -1097,14 +1425,7 @@ impl ThemeEditor {
 										.open_url(egui::OpenUrl::new_tab(MARKETPLACE_UPLOAD));
 								}
 							} else {
-								let (tab, message, dark, reveal_colors) = self.save_error();
-								self.tab = tab;
-								if let Some(dark) = dark {
-									self.dark = dark;
-								}
-								self.reveal_advanced_colors = reveal_colors;
-								self.reveal_gradient = self.invalid_gradient();
-								self.validation_error = Some((tab, message));
+								self.reveal_save_error();
 							}
 						}
 					});
@@ -1124,14 +1445,15 @@ impl ThemeEditor {
 				}
 			}
 		});
+		self.framing_dialog(ui.ctx(), requests);
 		if self.discard {
 			match dialog::Confirm::new(
 				"discard-theme-draft",
-				"Discard unsaved theme?",
-				"Your changes have not been saved.",
+				crate::i18n::translate("theme-editor-discard-title"),
+				crate::i18n::translate("theme-editor-discard-detail"),
 			)
-			.confirm_label("Discard changes")
-			.cancel_label("Keep editing")
+			.confirm_label(crate::i18n::translate("theme-editor-discard-confirm"))
+			.cancel_label(crate::i18n::translate("theme-editor-discard-keep"))
 			.danger()
 			.show(ui.ctx())
 			{
@@ -1236,8 +1558,193 @@ impl ThemeEditor {
 		);
 	}
 
+	/// The crop dialog after a pick: the whole picture with a box over the part that must stay
+	/// in view, what the bar shows in this window dashed, and what makes a good picture.
+	fn framing_dialog(&mut self, ctx: &egui::Context, requests: &mut Vec<ExtensionRequest>) {
+		let Some(framing) = self.framing.as_mut().filter(|framing| !framing.in_app) else {
+			return;
+		};
+		let (name, _, typical) = surface_info(framing.surface);
+		let shown = design::surface_size(framing.surface).unwrap_or(typical);
+		let aim = aim_size(ctx, framing.surface);
+		let image = framing.image.clone();
+		let texture = framing
+			.texture
+			.get_or_insert_with(|| {
+				ctx.load_texture(
+					"bar-framing",
+					thumbnail_image(&image, 1024),
+					egui::TextureOptions::LINEAR,
+				)
+			})
+			.clone();
+		let picture = egui::vec2(image.size[0] as f32, image.size[1] as f32);
+		let max_height = (ctx.content_rect().height() - 360.0).clamp(160.0, 420.0);
+		let (mut proceed, mut cancel) = (false, false);
+		let response = dialog::Dialog::new(
+			"bar-framing",
+			crate::i18n::translate("theme-editor-framing-title"),
+		)
+		.subtitle(format!(
+			"{} · {}",
+			crate::i18n::translate(name),
+			crate::i18n::translate("theme-editor-framing-subtitle")
+		))
+		.icon(icons::Icon::Image)
+		.width(680.0)
+		.show(ctx, |body| {
+			body.content(|ui| {
+				let colors = design::palette(ui);
+				// A margin keeps the corner handles whole at the picture's edges.
+				let scale = ((ui.available_width() - 16.0) / picture.x).min(max_height / picture.y);
+				let (slot, _) = ui.allocate_exact_size(
+					egui::vec2(ui.available_width(), picture.y * scale + 16.0),
+					egui::Sense::hover(),
+				);
+				let canvas = egui::Rect::from_center_size(slot.center(), picture * scale);
+				let response = ui.interact(
+					canvas.expand(8.0),
+					ui.scope_id().with("framing-canvas"),
+					egui::Sense::drag(),
+				);
+				let to_screen = |area: [u16; 4]| {
+					let [left, top, right, bottom] = area.map(|value| f32::from(value) / 10_000.0);
+					egui::Rect::from_min_max(
+						canvas.lerp_inside(egui::vec2(left, top)),
+						canvas.lerp_inside(egui::vec2(right, bottom)),
+					)
+				};
+				let corners = |rect: egui::Rect| {
+					[
+						rect.left_top(),
+						rect.right_top(),
+						rect.right_bottom(),
+						rect.left_bottom(),
+					]
+				};
+				let corner = response
+					.hover_pos()
+					.or(response.interact_pointer_pos())
+					.and_then(|pointer| {
+						corners(to_screen(framing.area))
+							.iter()
+							.position(|corner| corner.distance(pointer) <= 14.0)
+					});
+				if response.drag_started() {
+					framing.grip = Some((corner.unwrap_or(4), framing.area));
+				}
+				if let Some((grip, start)) = framing.grip
+					&& let (Some(origin), Some(pointer)) = (
+						ui.input(|input| input.pointer.press_origin()),
+						response.interact_pointer_pos(),
+					) {
+					framing.area =
+						drag_area(start, grip, (pointer - origin) / canvas.size() * 10_000.0);
+				}
+				if response.drag_stopped() {
+					framing.grip = None;
+				}
+				if response.hovered() || framing.grip.is_some() {
+					ui.ctx()
+						.set_cursor_icon(match framing.grip.map(|(grip, _)| grip).or(corner) {
+							Some(0 | 2) => egui::CursorIcon::ResizeNwSe,
+							Some(1 | 3) => egui::CursorIcon::ResizeNeSw,
+							_ if framing.grip.is_some() => egui::CursorIcon::Grabbing,
+							_ => egui::CursorIcon::Grab,
+						});
+				}
+				let boxed = to_screen(framing.area);
+				let painter = ui.painter_at(slot);
+				painter.image(
+					texture.id(),
+					canvas,
+					egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+					egui::Color32::WHITE,
+				);
+				for part in around(canvas, boxed) {
+					painter.rect_filled(part, 0, egui::Color32::from_black_alpha(150));
+				}
+				let view = design::surface_uv(
+					picture,
+					shown,
+					SurfaceImage {
+						opacity: 100,
+						fit: SurfaceFit::Cover,
+						area: framing.area,
+					},
+				);
+				let view = egui::Rect::from_min_max(
+					canvas.lerp_inside(view.min.to_vec2()),
+					canvas.lerp_inside(view.max.to_vec2()),
+				);
+				let mut outline = corners(view).to_vec();
+				outline.push(view.left_top());
+				painter.extend(egui::Shape::dashed_line(
+					&outline,
+					egui::Stroke::new(1.5, egui::Color32::WHITE),
+					6.0,
+					4.0,
+				));
+				painter.rect_stroke(
+					boxed,
+					0,
+					egui::Stroke::new(2.0, colors.accent),
+					egui::StrokeKind::Middle,
+				);
+				for corner in corners(boxed) {
+					painter.circle(
+						corner,
+						5.0,
+						egui::Color32::WHITE,
+						egui::Stroke::new(2.0, colors.accent),
+					);
+				}
+				ui.add_space(8.0);
+				ui.horizontal_wrapped(|ui| {
+					if dialog::action(ui, "theme-editor-framing-smart", dialog::Action::Outline)
+						.on_hover_text(crate::i18n::translate("theme-editor-framing-smart-detail"))
+						.clicked()
+					{
+						framing.area = framing.smart;
+					}
+					if dialog::action(ui, "theme-editor-framing-whole", dialog::Action::Outline)
+						.clicked()
+					{
+						framing.area = SurfaceImage::FULL;
+					}
+				});
+				design::hint(ui, "theme-editor-framing-legend");
+				design::hint(
+					ui,
+					&format!(
+						"{} {} × {} px. {}",
+						crate::i18n::translate("theme-editor-bars-aim-for"),
+						aim.x,
+						aim.y,
+						crate::i18n::translate("theme-editor-framing-tips")
+					),
+				);
+			});
+			body.footer(|ui| {
+				proceed =
+					dialog::action(ui, "theme-editor-framing-continue", dialog::Action::Primary)
+						.clicked();
+				cancel = dialog::action(ui, "theme-editor-framing-cancel", dialog::Action::Neutral)
+					.clicked();
+			});
+		});
+		if cancel || response.close {
+			self.framing = None;
+		} else if proceed {
+			framing.in_app = true;
+			framing.grip = None;
+			self.preview = true;
+			requests.push(self.preview_request());
+		}
+	}
+
 	/// Bar images: one row per bar with its thumbnail in the bar's own shape, the size to
-	/// aim for, and fit, strength and focus once it has a picture.
+	/// aim for, and fit, strength and framing once it has a picture.
 	fn bars(
 		&mut self,
 		ui: &mut egui::Ui,
@@ -1282,11 +1789,8 @@ impl ThemeEditor {
 		}
 		let (name, place, typical) = surface_info(surface);
 		let shown = design::surface_size(surface).unwrap_or(typical);
-		// Twice the size on screen keeps the picture sharp in a larger or maximized window.
 		let pixels_per_point = ui.ctx().pixels_per_point();
-		let aim = (shown * pixels_per_point * 2.0)
-			.min(egui::vec2(2560.0, 1440.0))
-			.round();
+		let aim = aim_size(ui.ctx(), surface);
 		let colors = design::palette(ui);
 		let theme = self
 			.package
@@ -1296,7 +1800,7 @@ impl ThemeEditor {
 		ui.push_id(index, |ui| {
 			ui.horizontal(|ui| {
 				ui.spacing_mut().item_spacing.x = 12.0;
-				// The thumbnail takes the bar's own proportions, so fit and focus read true.
+				// The thumbnail takes the bar's own proportions, so fit and framing read true.
 				let (slot, _) =
 					ui.allocate_exact_size(egui::vec2(96.0, 56.0), egui::Sense::hover());
 				let aspect = (shown.x / shown.y.max(1.0)).clamp(0.1, 10.0);
@@ -1365,6 +1869,22 @@ impl ThemeEditor {
 								[aim.x as u32, aim.y as u32],
 							));
 						}
+						if let Some(image) = &image
+							&& let Some(settings) = theme
+								.surfaces
+								.get(&surface)
+								.filter(|settings| settings.fit == SurfaceFit::Cover)
+							&& dialog::action(
+								ui,
+								"theme-editor-bars-frame",
+								dialog::Action::Outline,
+							)
+							.on_hover_text(crate::i18n::translate("theme-editor-bars-frame-detail"))
+							.clicked()
+						{
+							self.framing =
+								Some(Framing::new(surface, None, image.clone(), settings.area));
+						}
 						if image.is_some()
 							&& dialog::action(
 								ui,
@@ -1422,15 +1942,6 @@ impl ThemeEditor {
 				"%",
 			)
 			.changed();
-			if settings.fit == SurfaceFit::Cover {
-				let [x, y] = &mut settings.focus;
-				*changed |=
-					design::slider_row(ui, "theme-editor-bars-focus-x", None, x, 0..=100, "%")
-						.changed();
-				*changed |=
-					design::slider_row(ui, "theme-editor-bars-focus-y", None, y, 0..=100, "%")
-						.changed();
-			}
 		});
 	}
 
@@ -1636,14 +2147,7 @@ fn section_controls(
 			.width(ui.available_width())
 			.selected_text(crate::i18n::translate_if_key(selected.label_key()))
 			.show_ui(ui, |ui| {
-				for region in [
-					ImageRegion::TopBars,
-					ImageRegion::ServerList,
-					ImageRegion::PeopleChannels,
-					ImageRegion::MessageList,
-					ImageRegion::MemberList,
-					ImageRegion::InputArea,
-				] {
+				for region in REGIONS {
 					ui.selectable_value(
 						selected,
 						region,
@@ -1668,6 +2172,43 @@ fn section_controls(
 				"theme-editor-section-controls-0-shows-the-image-100-is-a-solid-section-color",
 			),
 		);
+		ui.add_space(8.0);
+		// The picture always spans the window; these set every other section in one go.
+		ui.horizontal_wrapped(|ui| {
+			let only_here = dialog::action(
+				ui,
+				"theme-editor-section-only-here",
+				dialog::Action::Outline,
+			)
+			.on_hover_text(crate::i18n::translate(
+				"theme-editor-section-only-here-detail",
+			))
+			.clicked();
+			let everywhere = dialog::action(
+				ui,
+				"theme-editor-section-everywhere",
+				dialog::Action::Neutral,
+			)
+			.on_hover_text(crate::i18n::translate(
+				"theme-editor-section-everywhere-detail",
+			))
+			.clicked();
+			if only_here || everywhere {
+				let shown = if only_here {
+					0
+				} else {
+					*selected.opacity(sections)
+				};
+				for region in REGIONS {
+					*region.opacity(sections) = if region == *selected || everywhere {
+						shown
+					} else {
+						100
+					};
+				}
+				changed = true;
+			}
+		});
 	});
 	changed
 }
@@ -2336,5 +2877,108 @@ mod tests {
 		assert!(toolbar_click(&ctx, &mut editor, "Dark").is_empty());
 		toolbar_frame(&ctx, &mut editor, vec![]);
 		assert!(editor.dark);
+	}
+
+	#[test]
+	fn dragging_the_bar_in_the_app_moves_the_picture_with_the_pointer() {
+		let ctx = egui::Context::default();
+		let image = Arc::new(egui::ColorImage::new(
+			[200, 100],
+			vec![egui::Color32::BLACK; 200 * 100],
+		));
+		let mut framing = Framing::new(ThemeSurface::Composer, None, image, SurfaceImage::FULL);
+		// Twice as wide as the picture: the full width and the middle half of its height.
+		let bar = egui::Rect::from_min_size(egui::pos2(100.0, 300.0), egui::vec2(400.0, 100.0));
+		let mut frame = |events: Vec<egui::Event>| {
+			let output = ctx.run_ui(
+				egui::RawInput {
+					screen_rect: Some(egui::Rect::from_min_size(
+						egui::Pos2::ZERO,
+						egui::vec2(800.0, 600.0),
+					)),
+					events,
+					focused: true,
+					..Default::default()
+				},
+				|ui| framing.overlay(ui.ctx(), bar, 0.0, egui::Color32::WHITE),
+			);
+			output.drop_without_applying_deltas();
+		};
+		let button = |pressed| egui::Event::PointerButton {
+			pos: egui::pos2(300.0, 350.0),
+			button: egui::PointerButton::Primary,
+			pressed,
+			modifiers: egui::Modifiers::NONE,
+		};
+		// A new area sizes itself in its first pass before it takes input.
+		for _ in 0..3 {
+			frame(vec![egui::Event::PointerMoved(egui::pos2(300.0, 350.0))]);
+		}
+		frame(vec![button(true)]);
+		// Pulling the picture up by a quarter of the bar shows a lower part of it.
+		for y in [340.0, 330.0, 325.0] {
+			frame(vec![egui::Event::PointerMoved(egui::pos2(300.0, y))]);
+		}
+		frame(vec![button(false)]);
+		let [left, top, right, bottom] = framing.area;
+		assert_eq!((left, right, bottom - top), (0, 10_000, 5_000));
+		assert!((3_500..=3_750).contains(&top), "{top}");
+	}
+
+	#[test]
+	fn framing_finds_the_detail_and_keeps_every_crop_inside_the_picture() {
+		// A dark 200 x 100 picture with a checkered band across its bottom quarter.
+		let picture = |band: bool| {
+			let pixels = (0..100)
+				.flat_map(|y| (0..200).map(move |x| (x, y)))
+				.map(|(x, y)| {
+					if band && y >= 75 && (x / 2 + y / 2) % 2 == 0 {
+						egui::Color32::WHITE
+					} else {
+						egui::Color32::BLACK
+					}
+				})
+				.collect();
+			egui::ColorImage::new([200, 100], pixels)
+		};
+		// A bar eight times wider than tall shows a quarter of the height: the band.
+		let [left, top, right, bottom] = smart_area(&picture(true), 8.0);
+		assert_eq!((left, right, bottom - top), (0, 10_000, 2_500));
+		assert!(top >= 7_000, "{top}");
+		// A flat picture stays centred, and a tall bar picks columns instead.
+		let [_, top, _, _] = smart_area(&picture(false), 8.0);
+		assert!((3_400..=4_100).contains(&top), "{top}");
+		let [left, top, right, bottom] = smart_area(&picture(false), 1.0);
+		assert_eq!((top, bottom, right - left), (0, 10_000, 5_000));
+		// Dragging the box or a corner never leaves the picture or collapses the box.
+		let boxed = [1_000, 1_000, 3_000, 3_000];
+		assert_eq!(
+			drag_area(boxed, 4, egui::vec2(-5_000.0, 0.0)),
+			[0, 1_000, 2_000, 3_000]
+		);
+		assert_eq!(
+			drag_area(boxed, 2, egui::vec2(-9_000.0, -9_000.0)),
+			[1_000, 1_000, 1_200, 1_200]
+		);
+		assert_eq!(
+			drag_area(boxed, 0, egui::vec2(-9_000.0, 500.0)),
+			[0, 1_500, 3_000, 3_000]
+		);
+		// Zooming in the app scales around the pointer; zooming out stops at the picture.
+		let view = egui::Rect::from_min_max(egui::pos2(0.0, 0.25), egui::pos2(1.0, 0.75));
+		let center = egui::pos2(0.5, 0.5);
+		let min = egui::Vec2::splat(0.01);
+		assert_eq!(
+			reframe(view, egui::Vec2::ZERO, 0.5, center, min),
+			[2_500, 3_750, 7_500, 6_250]
+		);
+		assert_eq!(
+			reframe(view, egui::vec2(-1.0, 0.0), 4.0, center, min),
+			[0, 2_500, 10_000, 7_500]
+		);
+		assert_eq!(
+			reframe(view, egui::vec2(0.0, 1.0), 1.0, center, min),
+			[0, 5_000, 10_000, 10_000]
+		);
 	}
 }
