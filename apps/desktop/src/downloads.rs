@@ -43,6 +43,8 @@ pub struct Downloads {
 	clipboard_thread: Option<std::thread::JoinHandle<()>>,
 	clipboard_done: Arc<AtomicBool>,
 	copy_cleanup_failed: Arc<AtomicBool>,
+	/// The last outcome handed to [`Downloads::take_notice`].
+	noticed: Status,
 }
 impl Downloads {
 	pub fn start(
@@ -269,6 +271,15 @@ impl Downloads {
 			self.status = Status::Failed("Could not release clipboard temporary media");
 		}
 		&self.status
+	}
+	/// A finished copy or a failure, once per outcome, so it can be announced.
+	pub fn take_notice(&mut self) -> Option<Status> {
+		let status = self.poll().clone();
+		if status == self.noticed {
+			return None;
+		}
+		self.noticed = status.clone();
+		matches!(status, Status::Copied | Status::Failed(_)).then_some(status)
 	}
 	pub fn is_active(&self) -> bool {
 		self.job.is_some()
@@ -579,12 +590,14 @@ async fn download(
 	} else {
 		expected
 	};
-	if response
-		.content_length()
-		.is_some_and(|length| length != expected)
-	{
-		return Err("Attachment size changed; reload the conversation");
-	}
+	// Discord can list a size that differs from the original it serves: pasted PNGs are
+	// listed as WebP at the WebP's size but served as the larger PNG. Check the transfer
+	// against the length the CDN declares.
+	let expected = match response.content_length() {
+		Some(length) if (1..=MAX_BYTES).contains(&length) => length,
+		Some(_) => return Err("Attachment must be nonempty and at most 100 MiB"),
+		None => expected,
+	};
 	let mut response = response;
 	let cleanup_failed = AtomicBool::new(false);
 	let mut partial = Partial::create(destination, &cleanup_failed)?;
@@ -677,6 +690,7 @@ mod tests {
 			clipboard_thread: None,
 			clipboard_done: Arc::new(AtomicBool::new(false)),
 			copy_cleanup_failed: Arc::new(AtomicBool::new(false)),
+			noticed: Status::Idle,
 		};
 		downloads.cancel();
 		status.send_replace(Status::Copied);
@@ -1136,6 +1150,23 @@ mod tests {
 		.unwrap();
 		task.await.unwrap();
 		assert_eq!(fs::read(&destination).unwrap(), content);
+		// The CDN's declared length wins over a smaller listed size.
+		let (url, task) = endpoint(content.clone(), false, false).await;
+		download(
+			&client,
+			url,
+			&root.join("served.bin"),
+			content.len() as u64 / 2,
+			false,
+			&cancelled,
+			&wake,
+			&|_| {},
+		)
+		.await
+		.unwrap();
+		task.await.unwrap();
+		assert_eq!(fs::read(root.join("served.bin")).unwrap(), content);
+		fs::remove_file(root.join("served.bin")).unwrap();
 		// A failed or oversized stream cannot truncate the existing destination.
 		for (chunked, truncated, expected) in
 			[(true, false, 1024), (false, true, content.len() as u64 + 1)]
