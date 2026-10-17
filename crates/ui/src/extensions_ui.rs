@@ -80,7 +80,8 @@ pub enum ExtensionRequest {
 	},
 	PickThemeImage,
 	PickThemeCover,
-	PickThemeSurface(extensions::ThemeSurface),
+	/// A bar image for `surface`, scaled to fill this many pixels.
+	PickThemeSurface(extensions::ThemeSurface, [u32; 2]),
 	SaveTheme {
 		package: Box<extensions::Package>,
 	},
@@ -2393,7 +2394,7 @@ fn request_bytes(request: &ExtensionRequest) -> usize {
 		+ match request {
 			ExtensionRequest::PickThemeImage => 0,
 			ExtensionRequest::PickThemeCover => 0,
-			ExtensionRequest::PickThemeSurface(_) => 0,
+			ExtensionRequest::PickThemeSurface(..) => 0,
 			ExtensionRequest::EditTheme { id, .. } => id.len(),
 			ExtensionRequest::SaveTheme { package } | ExtensionRequest::ExportTheme { package } => {
 				package.background_image.len()

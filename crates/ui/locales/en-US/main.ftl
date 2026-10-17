@@ -3735,6 +3735,12 @@ theme-editor-show-conversation-colors = Conversation colors
 theme-editor-show-created-by = Created by
 # Context: show
 theme-editor-show-creator-name-is-required = Creator name is required.
+# Context: sharing
+theme-editor-publish = Publish to marketplace
+# Context: sharing
+theme-editor-publish-hint = Publish saves the theme file and opens the Leech theme marketplace on GitHub. Upload the file there; once it is reviewed, everyone can install it from Themes. Needs a free GitHub account.
+# Context: sharing
+theme-editor-publish-needs-source = Add a source URL first, such as your GitHub profile.
 # Context: show
 theme-editor-show-export-theme = Export theme
 # Context: show
@@ -3819,7 +3825,7 @@ theme-editor-bars-title = Bar images
 # Context: bars
 theme-editor-bars-description = Put a picture behind any bar, like a Firefox theme. Each picture is cropped to its bar's shape, so it fits every window size.
 # Context: bars
-theme-editor-bars-formats = PNG, JPEG or WebP. Larger pictures are scaled down to 2560 × 1440 and compressed to 1 MB. Pick a picture close to the bar's shape and keep the important part near the focus point.
+theme-editor-bars-formats = PNG, JPEG or WebP. Pictures are scaled down to the bar's ideal size and compressed to 1 MB at most. Pick a picture close to the bar's shape and keep the important part near the focus point.
 # Context: bars
 theme-editor-bars-aim-for = Ideal size
 # Context: bars

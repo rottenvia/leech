@@ -3724,6 +3724,12 @@ theme-editor-show-conversation-colors = Цвета разговора
 theme-editor-show-created-by = Создано
 # Context: show
 theme-editor-show-creator-name-is-required = Требуется имя создателя.
+# Context: sharing
+theme-editor-publish = Опубликовать в магазине
+# Context: sharing
+theme-editor-publish-hint = Публикация сохраняет файл темы и открывает магазин тем Leech на GitHub. Загрузите файл туда; после проверки любой сможет установить тему в разделе «Темы». Нужен бесплатный аккаунт GitHub.
+# Context: sharing
+theme-editor-publish-needs-source = Сначала укажите ссылку на источник, например ваш профиль GitHub.
 # Context: show
 theme-editor-show-export-theme = Экспортировать тему
 # Context: show
@@ -3808,7 +3814,7 @@ theme-editor-bars-title = Картинки панелей
 # Context: bars
 theme-editor-bars-description = Поставьте картинку за любую панель, как тему в Firefox. Каждая картинка обрезается под форму панели и подходит к любому размеру окна.
 # Context: bars
-theme-editor-bars-formats = PNG, JPEG или WebP. Большие картинки уменьшаются до 2560 × 1440 и сжимаются до 1 МБ. Выбирайте картинку близкую по форме к панели, а главное держите у точки фокуса.
+theme-editor-bars-formats = PNG, JPEG или WebP. Картинки уменьшаются до лучшего размера панели и занимают не больше 1 МБ. Выбирайте картинку близкую по форме к панели, а главное держите у точки фокуса.
 # Context: bars
 theme-editor-bars-aim-for = Лучший размер
 # Context: bars

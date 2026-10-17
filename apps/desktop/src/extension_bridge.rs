@@ -1097,14 +1097,16 @@ impl Bridge {
 					});
 					self.theme_picker = Some(receive);
 				}
-				ExtensionRequest::PickThemeSurface(surface) if self.theme_picker.is_none() => {
+				ExtensionRequest::PickThemeSurface(surface, fill)
+					if self.theme_picker.is_none() =>
+				{
 					let (send, receive) = mpsc::sync_channel(1);
 					let future = platform::save::theme_surface_source(window.clone());
 					let ctx = ctx.clone();
 					runtime.spawn(async move {
 						let result = if let Some(path) = future.await {
 							tokio::task::spawn_blocking(move || {
-								crate::extensions::read_surface(&path)
+								crate::extensions::read_surface(&path, fill)
 									.map(|(bytes, image)| Some((bytes, Arc::new(image))))
 							})
 							.await
@@ -1152,7 +1154,7 @@ impl Bridge {
 				}
 				ExtensionRequest::PickThemeImage
 				| ExtensionRequest::PickThemeCover
-				| ExtensionRequest::PickThemeSurface(_)
+				| ExtensionRequest::PickThemeSurface(..)
 				| ExtensionRequest::ExportTheme { .. } => {}
 				ExtensionRequest::SelectTheme { id } => {
 					self.submit(

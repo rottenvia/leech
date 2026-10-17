@@ -1,6 +1,6 @@
-# Serein extensions
+# Leech extensions
 
-The extension SDK and the official theme and plugin catalog for Serein. Plugins build
+The extension SDK and the theme and plugin catalog Leech installs from. Plugins build
 against the one [SDK](sdk); the [authoring guide](../examples/extensions/README.md)
 covers writing your own.
 
@@ -22,6 +22,13 @@ client's explicit consent flow.
 
 ## Publishing a package
 
+From the app: Settings > Themes > Create theme (or Customize), fill in Sharing, and choose
+Publish to marketplace. Leech saves the package and opens GitHub's upload page for
+`themes/`; uploading there forks this repository and opens a pull request. Packages need
+a credential-free HTTPS `source` URL, such as the author's GitHub profile.
+
+By hand:
+
 1. Edit a theme under `themes/` or plugin source under `plugins/`. Preserve
    `manifest.id` and bump `manifest.version` for any changed package.
 2. For a plugin, rebuild and repackage it under `plugins/packages/` (see
@@ -32,6 +39,9 @@ client's explicit consent flow.
 5. After merge, the [catalog workflow](../.github/workflows/extension-catalog.yml) runs
    `catalog.py --pin` on the merged commit and commits the regenerated catalog to `main`.
    Pull requests are squash-merged, so only a commit on `main` is a durable pin.
+   While Actions are disabled on this repository, a maintainer does the same by hand:
+   `python3 extensions/catalog.py --pin <merged commit>`, then commits `catalog.json`
+   alone. The pin names a commit already on `main`, so it stays valid.
 
 Do not commit `catalog.json` changes in a pull request. To check a catalog locally
 against its pinned commit, run `python3 catalog.py --check`; `python3 test_catalog.py`
