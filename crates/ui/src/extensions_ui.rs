@@ -80,6 +80,7 @@ pub enum ExtensionRequest {
 	},
 	PickThemeImage,
 	PickThemeCover,
+	PickThemeSurface(extensions::ThemeSurface),
 	SaveTheme {
 		package: Box<extensions::Package>,
 	},
@@ -89,6 +90,7 @@ pub enum ExtensionRequest {
 	PreviewTheme {
 		theme: Option<Box<extensions::Theme>>,
 		image: Option<Arc<egui::ColorImage>>,
+		surfaces: crate::design::SurfaceImages,
 	},
 	SelectTheme {
 		id: Option<String>,
@@ -194,6 +196,7 @@ impl ExtensionUi {
 		package: Box<extensions::Package>,
 		image: Option<Arc<egui::ColorImage>>,
 		cover: Option<Arc<egui::ColorImage>>,
+		surfaces: crate::design::SurfaceImages,
 		local_theme: bool,
 		preview: bool,
 	) {
@@ -205,9 +208,9 @@ impl ExtensionUi {
 			// Gallery notices such as a finished removal do not belong in the editor.
 			self.status.clear();
 			self.theme_editor = Some(if local_theme {
-				crate::theme_editor::ThemeEditor::edit(package, image, cover)
+				crate::theme_editor::ThemeEditor::edit(package, image, cover, surfaces)
 			} else {
-				crate::theme_editor::ThemeEditor::duplicate(package, image, cover)
+				crate::theme_editor::ThemeEditor::duplicate(package, image, cover, surfaces)
 			});
 		}
 	}
@@ -217,11 +220,13 @@ impl ExtensionUi {
 			editor.preview_tab(label);
 		}
 	}
-	/// Fixture-only entry point: opens the theme maker on `label` with a fresh draft.
+	/// Fixture-only entry point: opens the theme maker on `label`, with a fresh draft unless a
+	/// package is already open in it.
 	#[cfg(feature = "demo")]
 	pub fn preview_theme_maker(&mut self, label: &str) {
 		self.themes = true;
-		self.theme_editor = Some(crate::theme_editor::ThemeEditor::new());
+		self.theme_editor
+			.get_or_insert_with(crate::theme_editor::ThemeEditor::new);
 		self.preview_theme_editor_tab(label);
 	}
 	pub fn receive_theme_image(&mut self, bytes: Vec<u8>, image: Arc<egui::ColorImage>) {
@@ -235,18 +240,42 @@ impl ExtensionUi {
 		}
 		if let Some(editor) = &mut self.theme_editor {
 			editor.receive_image(bytes, image);
-			if editor.preview {
-				self.requests
-					.retain(|request| !matches!(request, ExtensionRequest::PreviewTheme { .. }));
-				let request = editor.preview_request();
-				if self.requests.len() < 4
-					&& request_bytes(&request)
-						.saturating_add(self.requests.iter().map(request_bytes).sum::<usize>())
-						<= 2 * extensions::MAX_PACKAGE_BYTES
-				{
-					self.requests.push(request);
-				}
-			}
+			self.refresh_theme_preview();
+		}
+	}
+	pub fn receive_theme_surface(
+		&mut self,
+		surface: extensions::ThemeSurface,
+		bytes: Vec<u8>,
+		image: Arc<egui::ColorImage>,
+	) {
+		if bytes.is_empty()
+			|| bytes.len() > extensions::MAX_SURFACE_BYTES
+			|| image.size.contains(&0)
+			|| image.size.into_iter().any(|side| side > 4096)
+			|| image.pixels.len() != image.size[0] * image.size[1]
+		{
+			return;
+		}
+		if let Some(editor) = &mut self.theme_editor {
+			editor.receive_surface(surface, bytes, image);
+			self.refresh_theme_preview();
+		}
+	}
+	/// Replace a queued live preview with the editor's current draft.
+	fn refresh_theme_preview(&mut self) {
+		let Some(editor) = self.theme_editor.as_ref().filter(|editor| editor.preview) else {
+			return;
+		};
+		self.requests
+			.retain(|request| !matches!(request, ExtensionRequest::PreviewTheme { .. }));
+		let request = editor.preview_request();
+		if self.requests.len() < 4
+			&& request_bytes(&request)
+				.saturating_add(self.requests.iter().map(request_bytes).sum::<usize>())
+				<= 2 * extensions::MAX_PACKAGE_BYTES
+		{
+			self.requests.push(request);
 		}
 	}
 	pub fn receive_theme_cover(&mut self, bytes: Vec<u8>, image: Arc<egui::ColorImage>) {
@@ -280,6 +309,7 @@ impl ExtensionUi {
 				ExtensionRequest::PreviewTheme {
 					theme: None,
 					image: None,
+					surfaces: Default::default(),
 				},
 			);
 		}
@@ -444,6 +474,7 @@ impl ExtensionUi {
 					ExtensionRequest::PreviewTheme {
 						theme: None,
 						image: None,
+						surfaces: Default::default(),
 					},
 				);
 			}
@@ -2362,14 +2393,17 @@ fn request_bytes(request: &ExtensionRequest) -> usize {
 		+ match request {
 			ExtensionRequest::PickThemeImage => 0,
 			ExtensionRequest::PickThemeCover => 0,
+			ExtensionRequest::PickThemeSurface(_) => 0,
 			ExtensionRequest::EditTheme { id, .. } => id.len(),
 			ExtensionRequest::SaveTheme { package } | ExtensionRequest::ExportTheme { package } => {
 				package.background_image.len()
 					+ package.cover_image.len()
+					+ package.surface_images.values().map(Vec::len).sum::<usize>()
 					+ package.wasm.len()
 					+ 16384
 			}
-			ExtensionRequest::PreviewTheme { theme, image } => {
+			// Bar images are shared with the open editor, so a queued preview adds no copy.
+			ExtensionRequest::PreviewTheme { theme, image, .. } => {
 				usize::from(theme.is_some()) * 16384
 					+ image.as_ref().map_or(0, |image| image.pixels.len() * 4)
 			}

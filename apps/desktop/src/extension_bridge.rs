@@ -52,6 +52,7 @@ fn blend_theme(from: &extensions::Theme, to: &extensions::Theme, t: f64) -> exte
 		light: blend_palette(&from.light, &to.light, t),
 		dark: blend_palette(&from.dark, &to.dark, t),
 		style: to.style,
+		surfaces: to.surfaces.clone(),
 	}
 }
 
@@ -166,8 +167,24 @@ type PickedBackground = (Vec<u8>, Arc<egui::ColorImage>);
 enum ThemePickerResult {
 	Image(Result<Option<PickedBackground>, String>),
 	Cover(Result<Option<PickedBackground>, String>),
+	Surface(
+		extensions::ThemeSurface,
+		Result<Option<PickedBackground>, String>,
+	),
 	Export(Option<PathBuf>, Box<extensions::Package>),
 }
+/// A theme shown before it is selected: its appearance, background and bar images.
+#[cfg(feature = "demo")]
+type DemoMakerSeed = (
+	Box<extensions::Package>,
+	Option<Arc<egui::ColorImage>>,
+	ui::design::SurfaceImages,
+);
+type ThemePreview = (
+	Box<extensions::Theme>,
+	Option<Arc<egui::ColorImage>>,
+	ui::design::SurfaceImages,
+);
 #[derive(Default)]
 pub struct Bridge {
 	rich_presence_changed: bool,
@@ -185,10 +202,13 @@ pub struct Bridge {
 	imported: Option<InstallSource>,
 	picker: Option<mpsc::Receiver<Option<PathBuf>>>,
 	theme_picker: Option<mpsc::Receiver<ThemePickerResult>>,
-	theme_preview: Option<(Box<extensions::Theme>, Option<Arc<egui::ColorImage>>)>,
+	theme_preview: Option<ThemePreview>,
 	/// Offline demo theme; account resets keep it, unlike `theme_preview`.
 	#[cfg(feature = "demo")]
-	demo_theme: Option<(Box<extensions::Theme>, Option<Arc<egui::ColorImage>>)>,
+	demo_theme: Option<ThemePreview>,
+	/// Offline demo theme maker tab and package, opened after the first account reset.
+	#[cfg(feature = "demo")]
+	pub(crate) demo_maker: Option<(String, Option<DemoMakerSeed>)>,
 	message_events: VecDeque<QueuedEvent>,
 	message_event_at: Option<Instant>,
 	message_events_dropped: bool,
@@ -586,6 +606,15 @@ impl Bridge {
 			self.installed.clear();
 			self.disabled.clear();
 			messaging.extensions.reset_runtime();
+			#[cfg(feature = "demo")]
+			if let Some((tab, seed)) = self.demo_maker.take() {
+				if let Some((package, image, surfaces)) = seed {
+					messaging
+						.extensions
+						.receive_theme_edit(package, image, None, surfaces, false, false);
+				}
+				messaging.extensions.preview_theme_maker(&tab);
+			}
 			self.scope = Some(scope);
 			self.submit(
 				Job::Load {
@@ -773,6 +802,7 @@ impl Bridge {
 				Ok(Event::ThemeSelected {
 					id,
 					background_image,
+					surface_images,
 				}) => {
 					self.theme_preview = None;
 					for entry in &mut self.installed {
@@ -781,6 +811,11 @@ impl Bridge {
 							background_image.clone()
 						} else {
 							None
+						};
+						entry.surface_images = if entry.active_theme {
+							surface_images.clone()
+						} else {
+							Default::default()
 						};
 					}
 					self.apply_theme(ctx);
@@ -802,6 +837,7 @@ impl Bridge {
 						for old in &mut self.installed {
 							old.active_theme = false;
 							old.background_image = None;
+							old.surface_images = Default::default();
 						}
 					}
 					self.installed
@@ -928,12 +964,14 @@ impl Bridge {
 					package,
 					image,
 					cover,
+					surfaces,
 					local_theme,
 					preview,
 				}) => messaging.extensions.receive_theme_edit(
 					package,
 					image,
 					cover,
+					surfaces,
 					local_theme,
 					preview,
 				),
@@ -973,6 +1011,12 @@ impl Bridge {
 						ThemePickerResult::Cover(Ok(Some((bytes, image)))) => {
 							messaging.extensions.receive_theme_cover(bytes, image)
 						}
+						ThemePickerResult::Surface(surface, Ok(Some((bytes, image)))) => messaging
+							.extensions
+							.receive_theme_surface(surface, bytes, image),
+						ThemePickerResult::Surface(_, Err(error)) => {
+							messaging.extensions.report_error(error)
+						}
 						ThemePickerResult::Image(Err(error)) => {
 							messaging.extensions.report_error(error)
 						}
@@ -1011,8 +1055,12 @@ impl Bridge {
 				self.pending.clear();
 			}
 			match request {
-				ExtensionRequest::PreviewTheme { theme, image } => {
-					self.theme_preview = theme.map(|theme| (theme, image));
+				ExtensionRequest::PreviewTheme {
+					theme,
+					image,
+					surfaces,
+				} => {
+					self.theme_preview = theme.map(|theme| (theme, image, surfaces));
 					self.apply_theme(ctx);
 				}
 				ExtensionRequest::EditTheme { id, preview } => self.submit(
@@ -1045,6 +1093,26 @@ impl Bridge {
 							Ok(None)
 						};
 						let _ = send.send(ThemePickerResult::Image(result));
+						ctx.request_repaint();
+					});
+					self.theme_picker = Some(receive);
+				}
+				ExtensionRequest::PickThemeSurface(surface) if self.theme_picker.is_none() => {
+					let (send, receive) = mpsc::sync_channel(1);
+					let future = platform::save::theme_surface_source(window.clone());
+					let ctx = ctx.clone();
+					runtime.spawn(async move {
+						let result = if let Some(path) = future.await {
+							tokio::task::spawn_blocking(move || {
+								crate::extensions::read_surface(&path)
+									.map(|(bytes, image)| Some((bytes, Arc::new(image))))
+							})
+							.await
+							.unwrap_or_else(|_| Err("Bar image worker failed.".into()))
+						} else {
+							Ok(None)
+						};
+						let _ = send.send(ThemePickerResult::Surface(surface, result));
 						ctx.request_repaint();
 					});
 					self.theme_picker = Some(receive);
@@ -1084,6 +1152,7 @@ impl Bridge {
 				}
 				ExtensionRequest::PickThemeImage
 				| ExtensionRequest::PickThemeCover
+				| ExtensionRequest::PickThemeSurface(_)
 				| ExtensionRequest::ExportTheme { .. } => {}
 				ExtensionRequest::SelectTheme { id } => {
 					self.submit(
@@ -1720,8 +1789,9 @@ impl Bridge {
 		ctx: &egui::Context,
 		theme: extensions::Theme,
 		image: Option<Arc<egui::ColorImage>>,
+		surfaces: ui::design::SurfaceImages,
 	) {
-		self.demo_theme = Some((Box::new(theme), image));
+		self.demo_theme = Some((Box::new(theme), image, surfaces));
 		self.apply_theme(ctx);
 	}
 	fn apply_theme(&self, ctx: &egui::Context) {
@@ -1747,7 +1817,7 @@ impl Bridge {
 			)
 		});
 		let mut appearance =
-			preview.map_or_else(extensions::Theme::default, |(theme, _)| (**theme).clone());
+			preview.map_or_else(extensions::Theme::default, |(theme, ..)| (**theme).clone());
 		for entry in &entries {
 			let blended = self.blended_theme(&entry.manifest.id);
 			appearance.overlay(
@@ -1768,7 +1838,20 @@ impl Bridge {
 						.find(|entry| entry.active_theme)
 						.and_then(|entry| entry.background_image.clone())
 				},
-				|(_, image)| image.clone(),
+				|(_, image, _)| image.clone(),
+			),
+		);
+		ui::design::set_surface_images(
+			ctx,
+			preview.map_or_else(
+				|| {
+					entries
+						.iter()
+						.find(|entry| entry.active_theme)
+						.map(|entry| entry.surface_images.clone())
+						.unwrap_or_default()
+				},
+				|(.., surfaces)| surfaces.clone(),
 			),
 		);
 		ui::design::apply(ctx);
@@ -1826,6 +1909,7 @@ mod tests {
 		.unwrap();
 		let installed = InstalledExtension {
 			background_image: None,
+			surface_images: Default::default(),
 			cover_image: None,
 			local_theme: false,
 			active_theme: false,

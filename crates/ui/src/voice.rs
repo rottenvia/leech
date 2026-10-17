@@ -876,6 +876,7 @@ impl MessagingUi {
 			.is_some_and(|call| call.channel == channel);
 		let stage = ui.available_rect_before_wrap();
 		ui.painter().rect_filled(stage, 0, stage_tones().fill);
+		design::paint_surface(ui, stage, 0, extensions::ThemeSurface::CallStage);
 		let (rect, _) = ui.allocate_exact_size(stage.size(), egui::Sense::hover());
 		let notices = self.stage_notices(state, channel, connected);
 		let bottom = CONTROL_HEIGHT + 2.0 * STAGE_MARGIN;
@@ -4172,6 +4173,7 @@ impl MessagingUi {
 			.frame(egui::Frame::new().fill(stage_tones().fill))
 			.show(ui, |ui| {
 				let visible = ui.max_rect();
+				design::paint_surface(ui, visible, 0, extensions::ThemeSurface::CallStage);
 				ui.expand_to_include_rect(visible);
 				ui.set_clip_rect(visible.intersect(ui.clip_rect()));
 				let rect =
@@ -4354,6 +4356,7 @@ impl MessagingUi {
 				.frame(egui::Frame::new().fill(stage_tones().fill))
 				.show(ui, |ui| {
 					let visible = ui.max_rect();
+					design::paint_surface(ui, visible, 0, extensions::ThemeSurface::CallStage);
 					// The children below do not grow this Ui; claim the whole panel so its
 					// background follows a resize and egui keeps the dragged size.
 					ui.expand_to_include_rect(visible);

@@ -308,6 +308,8 @@ pub fn demo_check_examples() -> Result<bool, String> {
 #[derive(Clone)]
 pub struct InstalledExtension {
 	pub background_image: Option<Arc<eframe::egui::ColorImage>>,
+	/// Bar images of the active theme; empty for every other entry, like the background.
+	pub surface_images: ui::design::SurfaceImages,
 	pub cover_image: Option<Arc<eframe::egui::ColorImage>>,
 	pub local_theme: bool,
 	pub active_theme: bool,
@@ -327,11 +329,13 @@ pub enum Event {
 	ThemeSelected {
 		id: Option<String>,
 		background_image: Option<Arc<eframe::egui::ColorImage>>,
+		surface_images: ui::design::SurfaceImages,
 	},
 	EditTheme {
 		package: Box<Package>,
 		image: Option<Arc<eframe::egui::ColorImage>>,
 		cover: Option<Arc<eframe::egui::ColorImage>>,
+		surfaces: ui::design::SurfaceImages,
 		local_theme: bool,
 		preview: bool,
 	},
@@ -545,6 +549,14 @@ impl Stored {
 		} else {
 			None
 		};
+		let surface_images = if active {
+			package_surfaces(&self.package).unwrap_or_else(|error| {
+				result = Err(error);
+				Default::default()
+			})
+		} else {
+			Default::default()
+		};
 		let cover_image = match package_cover(&self.package) {
 			Ok(image) => image,
 			Err(error) => {
@@ -554,6 +566,7 @@ impl Stored {
 		};
 		InstalledExtension {
 			background_image,
+			surface_images,
 			cover_image,
 			local_theme: self.local_theme,
 			active_theme: self.package.manifest.kind == ExtensionKind::Theme,
@@ -699,6 +712,7 @@ fn run(root: &Path, job: Job, gate: &Gate) -> Result<Event, String> {
 			}
 			let image = package_background(&package)?;
 			let cover = package_cover(&package)?;
+			let surfaces = package_surfaces(&package)?;
 			gate.check()?;
 			Ok(Event::EditTheme {
 				local_theme,
@@ -706,11 +720,13 @@ fn run(root: &Path, job: Job, gate: &Gate) -> Result<Event, String> {
 				package: Box::new(package),
 				image,
 				cover,
+				surfaces,
 			})
 		}
 		Job::SaveTheme { package } => {
 			let bytes = encode_theme(&package)?;
 			let _ = package_cover(&package)?;
+			let _ = package_surfaces(&package)?;
 			let directory = root.join("themes").join(&package.manifest.id);
 			if directory.exists() && !read_stored(&directory.join("package.json"))?.local_theme {
 				return Err(
@@ -732,12 +748,14 @@ fn run(root: &Path, job: Job, gate: &Gate) -> Result<Event, String> {
 			// Reject invalid images before creating or replacing the user's export.
 			let _ = package_background(&package)?;
 			let _ = package_cover(&package)?;
+			let _ = package_surfaces(&package)?;
 			export_theme(&path, &bytes, gate)?;
 			Ok(Event::ThemeExported)
 		}
 		Job::SelectTheme { id } => {
 			let parent = root.join("themes");
 			let mut background_image = None;
+			let mut surface_images = ui::design::SurfaceImages::default();
 			if let Some(id) = &id {
 				valid_id(id)?;
 				let stored = read_stored(&parent.join(id).join("package.json"))?;
@@ -748,6 +766,7 @@ fn run(root: &Path, job: Job, gate: &Gate) -> Result<Event, String> {
 					return Err("Theme is not installed".into());
 				}
 				background_image = package_background(&stored.package)?;
+				surface_images = package_surfaces(&stored.package)?;
 				atomic_write(&parent.join("active.json"), id.as_bytes(), gate)?;
 			} else {
 				remove_file(&parent.join("active.json"))?;
@@ -755,6 +774,7 @@ fn run(root: &Path, job: Job, gate: &Gate) -> Result<Event, String> {
 			Ok(Event::ThemeSelected {
 				id,
 				background_image,
+				surface_images,
 			})
 		}
 		Job::Load { account } => Ok(Event::Loaded {
@@ -991,6 +1011,7 @@ fn install_stored(
 	summary.active_theme = stored.package.manifest.kind == ExtensionKind::Theme && activate;
 	if !activate {
 		summary.background_image = None;
+		summary.surface_images = Default::default();
 	}
 	if let Some(error) = &summary.error {
 		return Err(error.clone());
@@ -1158,6 +1179,7 @@ fn load(
 					},
 					Err(error) => InstalledExtension {
 						background_image: None,
+						surface_images: Default::default(),
 						cover_image: None,
 						local_theme: false,
 						active_theme: false,
@@ -1495,6 +1517,86 @@ fn package_background(package: &Package) -> Result<Option<Arc<eframe::egui::Colo
 	}
 }
 
+pub(crate) fn package_surfaces(package: &Package) -> Result<ui::design::SurfaceImages, String> {
+	package
+		.surface_images
+		.iter()
+		.map(|(surface, bytes)| {
+			if bytes.len() > extensions::MAX_SURFACE_BYTES {
+				return Err("Bar image exceeds 1 MiB".to_string());
+			}
+			let image = decode_static_image(bytes, 8_000_000)
+				.ok_or("Bar images must be static PNG or JPEG within 4096 pixels per edge")?
+				.into_rgba8();
+			Ok((
+				*surface,
+				Arc::new(eframe::egui::ColorImage::from_rgba_unmultiplied(
+					[image.width() as usize, image.height() as usize],
+					image.as_raw(),
+				)),
+			))
+		})
+		.collect::<Result<_, _>>()
+		.map(Arc::new)
+}
+
+/// The largest bar image kept from a pick: sharp on a 1440p window, and eight bars at most
+/// stay within a sensible amount of memory.
+const SURFACE_MAX: (u32, u32) = (2560, 1440);
+
+/// Read a picked bar image and re-encode it small enough for a theme package: PNG when it has
+/// transparency, JPEG otherwise, shrunk to fit [`SURFACE_MAX`] and then until it fits
+/// [`extensions::MAX_SURFACE_BYTES`]. Photos straight from a phone are fine.
+pub fn read_surface(path: &Path) -> Result<(Vec<u8>, eframe::egui::ColorImage), String> {
+	const UNREADABLE: &str = "Choose a PNG, JPEG or WebP image within 8192 pixels per edge";
+	let bytes = read_bounded(path, 64 * 1024 * 1024)?;
+	let format = image::guess_format(&bytes).map_err(|_| UNREADABLE)?;
+	if !matches!(
+		format,
+		image::ImageFormat::Png | image::ImageFormat::Jpeg | image::ImageFormat::WebP
+	) {
+		return Err(UNREADABLE.into());
+	}
+	let mut reader = image::ImageReader::with_format(Cursor::new(&bytes), format);
+	let mut limits = image::Limits::default();
+	limits.max_image_width = Some(8192);
+	limits.max_image_height = Some(8192);
+	limits.max_alloc = Some(320 * 1024 * 1024);
+	reader.limits(limits);
+	let mut picture = reader.decode().map_err(|_| UNREADABLE)?;
+	let transparent =
+		picture.color().has_alpha() && picture.to_rgba8().pixels().any(|p| p[3] < 255);
+	let (mut width, mut height) = SURFACE_MAX;
+	for quality in [88, 82, 76, 70, 64] {
+		if picture.width() > width || picture.height() > height {
+			picture = picture.resize(width, height, image::imageops::FilterType::Lanczos3);
+		}
+		let mut encoded = Vec::new();
+		if transparent {
+			picture
+				.write_to(&mut Cursor::new(&mut encoded), image::ImageFormat::Png)
+				.map_err(|_| "Cannot encode the bar image")?;
+		} else {
+			image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, quality)
+				.encode_image(&picture.to_rgb8())
+				.map_err(|_| "Cannot encode the bar image")?;
+		}
+		if encoded.len() <= extensions::MAX_SURFACE_BYTES {
+			let rgba = picture.to_rgba8();
+			return Ok((
+				encoded,
+				eframe::egui::ColorImage::from_rgba_unmultiplied(
+					[rgba.width() as usize, rgba.height() as usize],
+					rgba.as_raw(),
+				),
+			));
+		}
+		width = width * 3 / 4;
+		height = height * 3 / 4;
+	}
+	Err("This image stays over 1 MiB even when shrunk; choose a simpler one".into())
+}
+
 fn decode_static_image(bytes: &[u8], max_pixels: u64) -> Option<image::DynamicImage> {
 	use image::ImageDecoder;
 	let format = image::guess_format(bytes).ok()?;
@@ -1721,6 +1823,7 @@ mod tests {
 			theme: Some(Theme::default()),
 			background_image: Vec::new(),
 			cover_image: Vec::new(),
+			surface_images: Default::default(),
 			wasm: Vec::new(),
 		}
 	}

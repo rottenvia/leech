@@ -1447,20 +1447,25 @@ impl Desktop {
 			}
 		}
 		// Catalog theme preview from the repository's packages, e.g.
-		// `--demo --demo-catalog-theme=forest-piano`.
+		// `--demo --demo-catalog-theme=forest-piano`, or from any package file path.
 		#[cfg(feature = "demo")]
 		let demo_catalog_theme = match std::env::args()
 			.find_map(|arg| arg.strip_prefix("--demo-catalog-theme=").map(str::to_owned))
 			.filter(|_| demo)
 		{
 			Some(id) => {
-				let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-					.join(format!("../../extensions/themes/{id}.serein-extension"));
+				let path = if id.ends_with(".serein-extension") {
+					std::path::PathBuf::from(id)
+				} else {
+					std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+						.join(format!("../../extensions/themes/{id}.serein-extension"))
+				};
 				let package = ::extensions::parse_package(&std::fs::read(path)?)?;
 				let image = (!package.background_image.is_empty())
 					.then(|| extensions::decode_background(&package.background_image))
 					.transpose()?;
-				package.theme.map(|theme| (theme, image.map(Arc::new)))
+				let surfaces = extensions::package_surfaces(&package)?;
+				Some((package, image.map(Arc::new), surfaces))
 			}
 			None => None,
 		};
@@ -2404,10 +2409,26 @@ impl Desktop {
 		#[cfg(feature = "demo")]
 		let desktop = {
 			let mut desktop = desktop;
-			if let Some((theme, image)) = demo_catalog_theme {
+			// The first account reset closes the theme maker, so the bridge reopens it, editing
+			// a copy of `--demo-catalog-theme` when one is given.
+			desktop.extensions.demo_maker = std::env::args()
+				.filter(|_| demo)
+				.find_map(|arg| {
+					arg.strip_prefix("--demo-theme-maker")
+						.map(|rest| rest.trim_start_matches('=').to_owned())
+				})
+				.map(|tab| {
+					let seed = demo_catalog_theme
+						.clone()
+						.map(|(package, image, surfaces)| (Box::new(package), image, surfaces));
+					(tab, seed)
+				});
+			if let Some((package, image, surfaces)) = demo_catalog_theme
+				&& let Some(theme) = package.theme
+			{
 				desktop
 					.extensions
-					.preview_demo_theme(&cc.egui_ctx, theme, image);
+					.preview_demo_theme(&cc.egui_ctx, theme, image, surfaces);
 			}
 			desktop
 		};
