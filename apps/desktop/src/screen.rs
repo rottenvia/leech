@@ -33,6 +33,8 @@ struct Live {
 	task: JoinHandle<()>,
 	events: watch::Receiver<Option<Notice>>,
 	reported: Option<Notice>,
+	/// The share's system-audio warning has been toasted.
+	warned: bool,
 }
 struct SourceScan {
 	generation: u64,
@@ -192,7 +194,14 @@ impl Screen {
 						Some(ctx.load_texture("local-screen", image, egui::TextureOptions::LINEAR));
 				}
 			}
-			ui.screen.capture_status = live.worker.capture_status();
+			let warning = live.worker.audio_warning();
+			if let Some(warning) = warning
+				&& !std::mem::replace(&mut live.warned, true)
+			{
+				note("share_audio_off", warning);
+				ui.toasts.push(ui::design::Level::Warning, warning);
+			}
+			ui.screen.capture_status = live.worker.capture_status().or(warning);
 			if notice.is_some() && notice != live.reported {
 				live.reported = notice;
 				let id = live.id;
@@ -337,6 +346,7 @@ impl Screen {
 			task,
 			events,
 			reported: None,
+			warned: false,
 		});
 		Ok(())
 	}

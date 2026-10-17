@@ -612,7 +612,7 @@ fn demo_check_updates() {
 	messaging.updates.restart_requested = true;
 	assert!(!updater.sync(&ctx, &runtime, &mut messaging.updates, false));
 	let restored: local_store::AppPreferences = serde_json::from_str("{}").unwrap();
-	assert!(!restored.auto_update && restored.update_nightly);
+	assert!(restored.auto_update && !restored.update_nightly);
 	let mut settings = app_settings::Settings::default();
 	messaging.updates.nightly = true;
 	settings.observe(&messaging);
