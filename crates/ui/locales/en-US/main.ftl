@@ -3812,6 +3812,64 @@ theme-editor-tab-background = Background
 theme-editor-tab-basics = Basics
 # Context: key
 theme-editor-tab-colors = Colors
+# Context: bars
+theme-editor-tab-bars = Bars
+# Context: bars
+theme-editor-bars-title = Bar images
+# Context: bars
+theme-editor-bars-description = Put a picture behind any bar, like a Firefox theme. Each picture is cropped to its bar's shape, so it fits every window size.
+# Context: bars
+theme-editor-bars-formats = PNG, JPEG or WebP. Larger pictures are scaled down to 2560 × 1440 and compressed to 1 MB. Pick a picture close to the bar's shape and keep the important part near the focus point.
+# Context: bars
+theme-editor-bars-aim-for = Ideal size
+# Context: bars
+theme-editor-bars-fit = How the picture fills its bar
+# Context: bars
+theme-editor-bars-fit-cover = Fill and crop
+# Context: bars
+theme-editor-bars-fit-stretch = Stretch
+# Context: bars
+theme-editor-bars-fit-tile = Tile
+# Context: bars
+theme-editor-bars-strength = Strength
+# Context: bars
+theme-editor-bars-strength-detail = How strongly the picture shows through the bar.
+# Context: bars
+theme-editor-bars-focus-x = Focus left to right
+# Context: bars
+theme-editor-bars-focus-y = Focus top to bottom
+# Context: bars
+theme-editor-bar-call-stage = Call stage
+# Context: bars
+theme-editor-bar-call-stage-where = Behind the video tiles in a call.
+# Context: bars
+theme-editor-bar-composer = Message box
+# Context: bars
+theme-editor-bar-composer-where = The bar where you type messages.
+# Context: bars
+theme-editor-bar-channel-list = Channel list
+# Context: bars
+theme-editor-bar-channel-list-where = Channels and direct messages on the left.
+# Context: bars
+theme-editor-bar-voice-panel = Voice connected
+# Context: bars
+theme-editor-bar-voice-panel-where = The call controls above your account.
+# Context: bars
+theme-editor-bar-account-panel = Account bar
+# Context: bars
+theme-editor-bar-account-panel-where = Your name with the mute, deafen and settings buttons.
+# Context: bars
+theme-editor-bar-server-list = Server rail
+# Context: bars
+theme-editor-bar-server-list-where = The column of server icons.
+# Context: bars
+theme-editor-bar-title-bar = Title bar
+# Context: bars
+theme-editor-bar-title-bar-where = The strip across the top of the window.
+# Context: bars
+theme-editor-bar-member-list = Member list
+# Context: bars
+theme-editor-bar-member-list-where = Members on the right of a channel.
 # Context: toolbar
 theme-editor-toolbar-back = Back
 # Context: toolbar

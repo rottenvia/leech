@@ -389,7 +389,17 @@ thread_local! {
 	static EXTENSION_STYLE: std::cell::Cell<extensions::ThemeStyle> = std::cell::Cell::new(extensions::ThemeStyle::default());
 	static WINDOW_EFFECTS: std::cell::Cell<(bool, u8, u8)> = const { std::cell::Cell::new((false, 15, 50)) };
 	static BACKGROUND_IMAGE: std::cell::RefCell<Option<(std::sync::Arc<egui::ColorImage>, egui::TextureHandle)>> = const { std::cell::RefCell::new(None) };
+	static SURFACE_SETTINGS: std::cell::Cell<[Option<extensions::SurfaceImage>; SURFACES]> = const { std::cell::Cell::new([None; SURFACES]) };
+	static SURFACE_TEXTURES: std::cell::RefCell<(SurfaceImages, Vec<Option<egui::TextureHandle>>)> = std::cell::RefCell::new(Default::default());
+	static SURFACE_RECTS: std::cell::Cell<[Option<egui::Rect>; SURFACES]> = const { std::cell::Cell::new([None; SURFACES]) };
 }
+
+const SURFACES: usize = extensions::ThemeSurface::ALL.len();
+/// Decoded bar images of the active theme, shared without copying between the worker, the
+/// theme editor and the painter.
+pub type SurfaceImages = std::sync::Arc<
+	std::collections::BTreeMap<extensions::ThemeSurface, std::sync::Arc<egui::ColorImage>>,
+>;
 
 /// Transparency always covers every surface: rail, sidebars, headers, chat and composer.
 pub fn set_window_effects(enabled: bool, transparency: u8, blur: u8) {
@@ -465,6 +475,14 @@ pub fn set_extension_theme(theme: Option<&extensions::Theme>) {
 	});
 	EXTENSION_THEME.set(palettes);
 	EXTENSION_STYLE.set(theme.map_or_else(extensions::ThemeStyle::default, |theme| theme.style));
+	SURFACE_SETTINGS.set(std::array::from_fn(|index| {
+		theme.and_then(|theme| {
+			theme
+				.surfaces
+				.get(&extensions::ThemeSurface::ALL[index])
+				.copied()
+		})
+	}));
 	if theme.is_none() {
 		BACKGROUND_IMAGE.with(|image| *image.borrow_mut() = None);
 	}
@@ -499,6 +517,149 @@ pub fn set_background_image(ctx: &egui::Context, image: Option<std::sync::Arc<eg
 			*current = None;
 		}
 	});
+}
+
+/// Upload the bar images of the active theme. Unchanged images keep their textures, so
+/// editor slider changes upload nothing.
+pub fn set_surface_images(ctx: &egui::Context, images: SurfaceImages) {
+	SURFACE_TEXTURES.with(|current| {
+		let mut current = current.borrow_mut();
+		if std::sync::Arc::ptr_eq(&current.0, &images) {
+			return;
+		}
+		let max_side = ctx.input(|input| input.max_texture_side);
+		let textures = extensions::ThemeSurface::ALL
+			.iter()
+			.enumerate()
+			.map(|(index, surface)| {
+				let image = images
+					.get(surface)
+					.filter(|image| image.size.iter().all(|side| *side <= max_side))?;
+				let reused = current
+					.0
+					.get(surface)
+					.filter(|old| std::sync::Arc::ptr_eq(old, image))
+					.and_then(|_| current.1.get(index).cloned().flatten());
+				Some(reused.unwrap_or_else(|| {
+					// Bars shrink large pictures a lot; mipmaps keep them from shimmering.
+					ctx.load_texture(
+						format!("theme-surface-{index}"),
+						image.clone(),
+						egui::TextureOptions {
+							mipmap_mode: Some(egui::TextureFilter::Linear),
+							..egui::TextureOptions::LINEAR_REPEAT
+						},
+					)
+				}))
+			})
+			.collect();
+		*current = (images, textures);
+	});
+}
+
+/// The size in points `surface` last had on screen, for recommending image resolutions.
+pub fn surface_size(surface: extensions::ThemeSurface) -> Option<egui::Vec2> {
+	SURFACE_RECTS.get()[surface as usize].map(|rect| rect.size())
+}
+
+/// Paint the theme's image for `surface` over the bar's own colour, under its content: one
+/// textured quad, with the bar's corners. A no-op when the theme gives the bar no image.
+pub fn paint_surface(
+	ui: &egui::Ui,
+	rect: egui::Rect,
+	corner_radius: impl Into<egui::CornerRadius>,
+	surface: extensions::ThemeSurface,
+) {
+	if let Some(shape) = surface_shape(ui, rect, corner_radius, surface) {
+		ui.painter().add(shape);
+	}
+}
+
+/// Reserve the image layer of a bar whose size is known only after its content: call it
+/// first inside the bar's frame, then [`fill_surface_slot`] with the frame's rect.
+pub fn surface_slot(ui: &egui::Ui) -> egui::layers::ShapeIdx {
+	ui.painter().add(egui::Shape::Noop)
+}
+
+pub fn fill_surface_slot(
+	ui: &egui::Ui,
+	slot: egui::layers::ShapeIdx,
+	rect: egui::Rect,
+	corner_radius: impl Into<egui::CornerRadius>,
+	surface: extensions::ThemeSurface,
+) {
+	if let Some(shape) = surface_shape(ui, rect, corner_radius, surface) {
+		ui.painter().set(slot, shape);
+	}
+}
+
+fn surface_shape(
+	ui: &egui::Ui,
+	rect: egui::Rect,
+	corner_radius: impl Into<egui::CornerRadius>,
+	surface: extensions::ThemeSurface,
+) -> Option<egui::Shape> {
+	let index = surface as usize;
+	let mut rects = SURFACE_RECTS.get();
+	rects[index] = Some(rect);
+	SURFACE_RECTS.set(rects);
+	let settings = SURFACE_SETTINGS.get()[index]?;
+	let texture = SURFACE_TEXTURES.with(|textures| textures.borrow().1.get(index).cloned())??;
+	if rect.width() < 1.0 || rect.height() < 1.0 || settings.opacity == 0 {
+		return None;
+	}
+	let (enabled, transparency, _) = window_effects();
+	let mut opacity = u16::from(settings.opacity);
+	if enabled {
+		opacity = opacity * u16::from(100 - transparency) / 100;
+	}
+	let uv = surface_uv(
+		texture.size_vec2() / ui.ctx().pixels_per_point(),
+		rect.size(),
+		settings,
+	);
+	Some(
+		egui::epaint::RectShape::filled(
+			rect,
+			corner_radius,
+			Color32::from_white_alpha((opacity * 255 / 100) as u8),
+		)
+		.with_texture(texture.id(), uv)
+		.into(),
+	)
+}
+
+/// Texture coordinates that map an `image` (in points) onto a bar of `size`.
+pub(crate) fn surface_uv(
+	image: egui::Vec2,
+	size: egui::Vec2,
+	settings: extensions::SurfaceImage,
+) -> egui::Rect {
+	let full = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
+	match settings.fit {
+		extensions::SurfaceFit::Stretch => full,
+		extensions::SurfaceFit::Tile => {
+			egui::Rect::from_min_size(egui::Pos2::ZERO, size / image.max(egui::Vec2::splat(1.0)))
+		}
+		extensions::SurfaceFit::Cover => {
+			// The visible share of each axis; the cropped axis slides toward the focus.
+			let image_aspect = image.x / image.y.max(1.0);
+			let bar_aspect = size.x / size.y.max(1.0);
+			let visible = if bar_aspect > image_aspect {
+				egui::vec2(1.0, image_aspect / bar_aspect)
+			} else {
+				egui::vec2(bar_aspect / image_aspect, 1.0)
+			};
+			let focus = egui::vec2(
+				f32::from(settings.focus[0].min(100)),
+				f32::from(settings.focus[1].min(100)),
+			) / 100.0;
+			egui::Rect::from_min_size(
+				(focus * (egui::Vec2::splat(1.0) - visible)).to_pos2(),
+				visible,
+			)
+		}
+	}
 }
 
 pub fn has_window_background(ui: &egui::Ui) -> bool {
@@ -3860,5 +4021,53 @@ mod sign_in_widget_tests {
 				assert_eq!(clicks, (row, !row));
 			}
 		}
+	}
+
+	#[test]
+	fn bar_images_crop_toward_the_focus_and_tile_at_native_size() {
+		let settings = |fit, focus| extensions::SurfaceImage {
+			opacity: 70,
+			fit,
+			focus,
+		};
+		let image = egui::vec2(1000.0, 500.0);
+		// A bar four times wider than tall keeps the full width and half the height.
+		let wide = surface_uv(
+			image,
+			egui::vec2(400.0, 100.0),
+			settings(extensions::SurfaceFit::Cover, [50, 0]),
+		);
+		assert_eq!(
+			wide,
+			egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1.0, 0.5))
+		);
+		let bottom = surface_uv(
+			image,
+			egui::vec2(400.0, 100.0),
+			settings(extensions::SurfaceFit::Cover, [50, 100]),
+		);
+		assert_eq!(bottom.min, egui::pos2(0.0, 0.5));
+		// A square bar keeps half the width, centred.
+		let square = surface_uv(
+			image,
+			egui::vec2(100.0, 100.0),
+			settings(extensions::SurfaceFit::Cover, [50, 50]),
+		);
+		assert_eq!(
+			square,
+			egui::Rect::from_min_size(egui::pos2(0.25, 0.0), egui::vec2(0.5, 1.0))
+		);
+		let tile = surface_uv(
+			image,
+			egui::vec2(2000.0, 250.0),
+			settings(extensions::SurfaceFit::Tile, [50, 50]),
+		);
+		assert_eq!(tile.max, egui::pos2(2.0, 0.5));
+		let stretch = surface_uv(
+			image,
+			egui::vec2(10.0, 900.0),
+			settings(extensions::SurfaceFit::Stretch, [0, 0]),
+		);
+		assert_eq!(stretch.max, egui::pos2(1.0, 1.0));
 	}
 }

@@ -2,7 +2,7 @@
 use crate::{ExtensionRequest, design, dialog, icons};
 use extensions::{
 	Background, BackgroundFit, BackgroundTarget, ExtensionKind, Manifest, Package, SectionOpacity,
-	Theme,
+	SurfaceFit, Theme, ThemeSurface,
 };
 use std::sync::{
 	Arc,
@@ -14,16 +14,24 @@ enum EditorTab {
 	#[default]
 	Basics,
 	Background,
+	Bars,
 	Colors,
 	Advanced,
 }
 impl EditorTab {
-	const ALL: [Self; 4] = [Self::Basics, Self::Background, Self::Colors, Self::Advanced];
+	const ALL: [Self; 5] = [
+		Self::Basics,
+		Self::Background,
+		Self::Bars,
+		Self::Colors,
+		Self::Advanced,
+	];
 	#[cfg(feature = "demo")]
 	fn label(self) -> &'static str {
 		match self {
 			Self::Basics => "Basics",
 			Self::Background => "Background",
+			Self::Bars => "Bars",
 			Self::Colors => "Colors",
 			Self::Advanced => "Advanced",
 		}
@@ -32,10 +40,69 @@ impl EditorTab {
 		match self {
 			Self::Basics => "theme-editor-tab-basics",
 			Self::Background => "theme-editor-tab-background",
+			Self::Bars => "theme-editor-tab-bars",
 			Self::Colors => "theme-editor-tab-colors",
 			Self::Advanced => "theme-editor-tab-advanced",
 		}
 	}
+}
+
+/// Name, location hint and a typical size in points of each bar, for bars not on screen.
+fn surface_info(surface: ThemeSurface) -> (&'static str, &'static str, egui::Vec2) {
+	match surface {
+		ThemeSurface::CallStage => (
+			"theme-editor-bar-call-stage",
+			"theme-editor-bar-call-stage-where",
+			egui::vec2(1100.0, 300.0),
+		),
+		ThemeSurface::Composer => (
+			"theme-editor-bar-composer",
+			"theme-editor-bar-composer-where",
+			egui::vec2(1000.0, 48.0),
+		),
+		ThemeSurface::ChannelList => (
+			"theme-editor-bar-channel-list",
+			"theme-editor-bar-channel-list-where",
+			egui::vec2(240.0, 640.0),
+		),
+		ThemeSurface::VoicePanel => (
+			"theme-editor-bar-voice-panel",
+			"theme-editor-bar-voice-panel-where",
+			egui::vec2(270.0, 110.0),
+		),
+		ThemeSurface::AccountPanel => (
+			"theme-editor-bar-account-panel",
+			"theme-editor-bar-account-panel-where",
+			egui::vec2(270.0, 52.0),
+		),
+		ThemeSurface::ServerList => (
+			"theme-editor-bar-server-list",
+			"theme-editor-bar-server-list-where",
+			egui::vec2(72.0, 800.0),
+		),
+		ThemeSurface::TitleBar => (
+			"theme-editor-bar-title-bar",
+			"theme-editor-bar-title-bar-where",
+			egui::vec2(1400.0, 36.0),
+		),
+		ThemeSurface::MemberList => (
+			"theme-editor-bar-member-list",
+			"theme-editor-bar-member-list-where",
+			egui::vec2(240.0, 640.0),
+		),
+	}
+}
+
+/// A small copy of `image` for editor thumbnails, so a 4K bar picture costs no 4K texture.
+fn thumbnail_image(image: &egui::ColorImage, max: usize) -> egui::ColorImage {
+	let [width, height] = image.size;
+	let step = width.max(height).div_ceil(max).max(1);
+	let size = [width.div_ceil(step), height.div_ceil(step)];
+	let pixels = (0..size[1])
+		.flat_map(|y| (0..size[0]).map(move |x| (x, y)))
+		.map(|(x, y)| image.pixels[(y * step).min(height - 1) * width + (x * step).min(width - 1)])
+		.collect();
+	egui::ColorImage::new(size, pixels)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -107,6 +174,9 @@ pub(crate) struct ThemeEditor {
 	open_metrics: bool,
 	thumbnail: Option<egui::TextureHandle>,
 	cover_thumbnail: Option<egui::TextureHandle>,
+	/// Decoded bar images for the live preview and thumbnails; bytes live in the package.
+	pub surfaces: design::SurfaceImages,
+	surface_thumbnails: Vec<Option<egui::TextureHandle>>,
 }
 
 fn identity() -> String {
@@ -150,6 +220,7 @@ impl ThemeEditor {
 				wasm: vec![],
 				background_image: vec![],
 				cover_image: vec![],
+				surface_images: Default::default(),
 			}),
 			image: None,
 			cover: None,
@@ -170,17 +241,21 @@ impl ThemeEditor {
 			open_metrics: false,
 			thumbnail: None,
 			cover_thumbnail: None,
+			surfaces: Default::default(),
+			surface_thumbnails: vec![None; ThemeSurface::ALL.len()],
 		}
 	}
 	pub fn edit(
 		package: Box<Package>,
 		image: Option<Arc<egui::ColorImage>>,
 		cover: Option<Arc<egui::ColorImage>>,
+		surfaces: design::SurfaceImages,
 	) -> Self {
 		Self {
 			package,
 			image,
 			cover,
+			surfaces,
 			..Self::new()
 		}
 	}
@@ -188,13 +263,14 @@ impl ThemeEditor {
 		mut package: Box<Package>,
 		image: Option<Arc<egui::ColorImage>>,
 		cover: Option<Arc<egui::ColorImage>>,
+		surfaces: design::SurfaceImages,
 	) -> Self {
 		package.manifest.id = identity();
 		package.manifest.name = format!(
 			"{} copy",
 			package.manifest.name.chars().take(30).collect::<String>()
 		);
-		let mut editor = Self::edit(package, image, cover);
+		let mut editor = Self::edit(package, image, cover, surfaces);
 		editor.dirty = true;
 		editor
 	}
@@ -218,10 +294,27 @@ impl ThemeEditor {
 			}
 		}
 	}
+	pub fn receive_surface(
+		&mut self,
+		surface: ThemeSurface,
+		bytes: Vec<u8>,
+		image: Arc<egui::ColorImage>,
+	) {
+		self.package.surface_images.insert(surface, bytes);
+		let mut surfaces = (*self.surfaces).clone();
+		surfaces.insert(surface, image);
+		self.surfaces = Arc::new(surfaces);
+		self.surface_thumbnails[surface as usize] = None;
+		if let Some(theme) = self.package.theme.as_mut() {
+			theme.surfaces.entry(surface).or_default();
+		}
+		self.dirty = true;
+	}
 	pub fn preview_request(&self) -> ExtensionRequest {
 		ExtensionRequest::PreviewTheme {
 			theme: self.package.theme.clone().map(Box::new),
 			image: self.image.clone(),
+			surfaces: self.surfaces.clone(),
 		}
 	}
 	pub fn tab_key(&self) -> u8 {
@@ -442,7 +535,8 @@ impl ThemeEditor {
 			if let Some(index) = design::segmented(ui, &labels, current) {
 				self.tab = EditorTab::ALL[index];
 			}
-			if self.tab != EditorTab::Basics {
+			// Bar images are shared by both appearances, so that tab has no switch either.
+			if !matches!(self.tab, EditorTab::Basics | EditorTab::Bars) {
 				if ui.available_size_before_wrap().x >= 230.0 {
 					ui.add_space((ui.available_size_before_wrap().x - 220.0).max(0.0));
 				}
@@ -639,6 +733,7 @@ impl ThemeEditor {
 						);
 					}
 				}
+				EditorTab::Bars => self.bars(ui, requests, &mut changed),
 				EditorTab::Colors => {
 					design::section(
 						ui,
@@ -1111,6 +1206,201 @@ impl ThemeEditor {
 				"theme-editor-cover-card-png-or-jpeg-up-to-2-mib-this-image-does",
 			),
 		);
+	}
+
+	/// Bar images: one row per bar with its thumbnail in the bar's own shape, the size to
+	/// aim for, and fit, strength and focus once it has a picture.
+	fn bars(
+		&mut self,
+		ui: &mut egui::Ui,
+		requests: &mut Vec<ExtensionRequest>,
+		changed: &mut bool,
+	) {
+		design::section(
+			ui,
+			&crate::i18n::translate("theme-editor-bars-title"),
+			Some(&crate::i18n::translate("theme-editor-bars-description")),
+		);
+		design::card(ui, |ui| {
+			for (index, surface) in ThemeSurface::ALL.into_iter().enumerate() {
+				if index > 0 {
+					design::card_divider(ui);
+				}
+				self.bar_row(ui, surface, requests, changed);
+			}
+		});
+		design::hint(ui, &crate::i18n::translate("theme-editor-bars-formats"));
+	}
+
+	fn bar_row(
+		&mut self,
+		ui: &mut egui::Ui,
+		surface: ThemeSurface,
+		requests: &mut Vec<ExtensionRequest>,
+		changed: &mut bool,
+	) {
+		let index = surface as usize;
+		let image = self.surfaces.get(&surface).cloned();
+		match &image {
+			Some(image) if self.surface_thumbnails[index].is_none() => {
+				self.surface_thumbnails[index] = Some(ui.ctx().load_texture(
+					format!("theme-bar-thumbnail-{index}"),
+					thumbnail_image(image, 256),
+					egui::TextureOptions::LINEAR_REPEAT,
+				));
+			}
+			None => self.surface_thumbnails[index] = None,
+			_ => {}
+		}
+		let (name, place, typical) = surface_info(surface);
+		let shown = design::surface_size(surface).unwrap_or(typical);
+		// Twice the size on screen keeps the picture sharp in a larger or maximized window.
+		let pixels_per_point = ui.ctx().pixels_per_point();
+		let aim = (shown * pixels_per_point * 2.0)
+			.min(egui::vec2(2560.0, 1440.0))
+			.round();
+		let colors = design::palette(ui);
+		let theme = self
+			.package
+			.theme
+			.as_mut()
+			.expect("theme editor always holds a theme");
+		ui.push_id(index, |ui| {
+			ui.horizontal(|ui| {
+				ui.spacing_mut().item_spacing.x = 12.0;
+				// The thumbnail takes the bar's own proportions, so fit and focus read true.
+				let (slot, _) =
+					ui.allocate_exact_size(egui::vec2(96.0, 56.0), egui::Sense::hover());
+				let aspect = (shown.x / shown.y.max(1.0)).clamp(0.1, 10.0);
+				let size = if aspect >= slot.width() / slot.height() {
+					egui::vec2(slot.width(), slot.width() / aspect)
+				} else {
+					egui::vec2(slot.height() * aspect, slot.height())
+				}
+				.max(egui::vec2(8.0, 8.0));
+				let frame = egui::Rect::from_center_size(slot.center(), size);
+				ui.painter().rect_filled(frame, 4, colors.base);
+				match (
+					&self.surface_thumbnails[index],
+					&image,
+					theme.surfaces.get(&surface),
+				) {
+					(Some(texture), Some(image), Some(settings)) => {
+						// Tiles keep their size relative to the real bar.
+						let picture = egui::vec2(image.size[0] as f32, image.size[1] as f32)
+							/ pixels_per_point * (frame.width() / shown.x.max(1.0));
+						ui.painter().add(
+							egui::epaint::RectShape::filled(frame, 4, egui::Color32::WHITE)
+								.with_texture(
+									texture.id(),
+									design::surface_uv(picture, frame.size(), *settings),
+								),
+						);
+					}
+					_ => crate::icons::paint(
+						ui.painter(),
+						crate::icons::Icon::Image,
+						egui::Rect::from_center_size(frame.center(), egui::Vec2::splat(18.0)),
+						colors.muted,
+					),
+				}
+				ui.vertical(|ui| {
+					ui.spacing_mut().item_spacing.y = 2.0;
+					ui.label(
+						design::medium(ui, crate::i18n::translate(name), 15.0)
+							.color(colors.text_strong),
+					);
+					design::hint(ui, &crate::i18n::translate(place));
+					let aim_for = crate::i18n::translate("theme-editor-bars-aim-for");
+					let size_hint = match &image {
+						Some(image) => format!(
+							"{} × {} px · {aim_for} {} × {} px",
+							image.size[0], image.size[1], aim.x, aim.y
+						),
+						None => format!("{aim_for} {} × {} px", aim.x, aim.y),
+					};
+					design::hint(ui, &size_hint);
+					ui.horizontal_wrapped(|ui| {
+						if dialog::action(
+							ui,
+							if image.is_some() {
+								"theme-editor-image-card-replace-image"
+							} else {
+								"theme-editor-image-card-choose-image"
+							},
+							dialog::Action::Outline,
+						)
+						.clicked()
+						{
+							requests.push(ExtensionRequest::PickThemeSurface(surface));
+						}
+						if image.is_some()
+							&& dialog::action(
+								ui,
+								"theme-editor-image-card-remove",
+								dialog::Action::Neutral,
+							)
+							.clicked()
+						{
+							self.package.surface_images.remove(&surface);
+							let mut surfaces = (*self.surfaces).clone();
+							surfaces.remove(&surface);
+							self.surfaces = Arc::new(surfaces);
+							theme.surfaces.remove(&surface);
+							*changed = true;
+						}
+						if let Some(settings) =
+							theme.surfaces.get_mut(&surface).filter(|_| image.is_some())
+						{
+							let label = |fit| match fit {
+								SurfaceFit::Cover => "theme-editor-bars-fit-cover",
+								SurfaceFit::Stretch => "theme-editor-bars-fit-stretch",
+								SurfaceFit::Tile => "theme-editor-bars-fit-tile",
+							};
+							design::combo("bar-fit")
+								.selected_text(crate::i18n::translate(label(settings.fit)))
+								.show_ui(ui, |ui| {
+									for fit in
+										[SurfaceFit::Cover, SurfaceFit::Stretch, SurfaceFit::Tile]
+									{
+										*changed |= ui
+											.selectable_value(
+												&mut settings.fit,
+												fit,
+												crate::i18n::translate(label(fit)),
+											)
+											.changed();
+									}
+								})
+								.response
+								.on_hover_text(crate::i18n::translate("theme-editor-bars-fit"));
+						}
+					});
+				});
+			});
+			let Some(settings) = theme.surfaces.get_mut(&surface).filter(|_| image.is_some())
+			else {
+				return;
+			};
+			*changed |= design::slider_row(
+				ui,
+				"theme-editor-bars-strength",
+				Some("theme-editor-bars-strength-detail"),
+				&mut settings.opacity,
+				0..=100,
+				"%",
+			)
+			.changed();
+			if settings.fit == SurfaceFit::Cover {
+				let [x, y] = &mut settings.focus;
+				*changed |=
+					design::slider_row(ui, "theme-editor-bars-focus-x", None, x, 0..=100, "%")
+						.changed();
+				*changed |=
+					design::slider_row(ui, "theme-editor-bars-focus-y", None, y, 0..=100, "%")
+						.changed();
+			}
+		});
 	}
 
 	fn image_card(

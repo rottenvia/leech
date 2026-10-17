@@ -117,7 +117,7 @@ cargo run --locked -p ui --example theme_api
 ## Theme maker and embedded backgrounds
 
 Settings > Themes > Create theme opens the editor inside the Themes settings page.
-Basics, Background, Colors and Advanced tabs keep required identity fields visible
+Basics, Background, Bars, Colors and Advanced tabs keep required identity fields visible
 and related controls together. Preview and Save stay above the scrolling controls.
 Background shows a clickable synthetic app map: select a top bar, list or message
 area to edit that section's opacity. The image is shared, while colors and surface
@@ -205,3 +205,40 @@ readable composited surfaces. Opacity changes reuse the texture;
 changing, removing or resetting the background releases the previous texture.
 The custom accent preference still overrides theme accents, and Ctrl+Shift+F12
 remains available during editing and app preview.
+
+## Bar images
+
+The Bars tab of the theme maker puts a separate picture behind individual bars, like
+a browser theme. Each bar has its own image, so a theme can mix them freely with the
+window background above. The package stores the bytes in `surface_images` and the
+settings in the theme's `surfaces`, both keyed by bar:
+
+```json
+{
+  "surface_images": { "call_stage": [137, 80, 78, 71], "composer": [255, 216, 255] },
+  "theme": {
+    "surfaces": {
+      "call_stage": { "opacity": 80, "fit": "cover", "focus": [50, 60] },
+      "composer": { "opacity": 60, "fit": "stretch" }
+    }
+  }
+}
+```
+
+Bars are `call_stage` (behind call tiles), `composer` (message box), `channel_list`
+(channels and direct messages), `voice_panel` (Voice Connected), `account_panel`
+(name, mute and settings), `server_list` (server rail), `title_bar` and
+`member_list`. Opacity runs from 0 to 100 and defaults to 70. Fit is `cover`, which
+fills the bar and crops toward `focus` (`[x, y]` percentages, default `[50, 50]`),
+`stretch`, or `tile`, which repeats the picture at its own size. Because the crop
+follows the bar's live size, one image looks right at any window size or display
+scale. The editor shows each bar's ideal pixel size: twice its size on screen, which
+stays sharp when the window grows.
+
+Each image is a PNG or JPEG of at most 1 MiB, decoded with the edge and allocation
+limits above and at most 8,000,000 pixels. The editor accepts PNG, JPEG or WebP, scales a picture down to fit 2560 x 1440,
+and re-encodes it (PNG when it has transparency, JPEG otherwise) until it fits.
+Plugins cannot carry bar images, and a supplied `surfaces` entry merges over the
+selected theme's settings for that bar. Bars without an image paint as before. Each
+image is uploaded once as a mipmapped texture and drawn as one textured rectangle
+under the bar's content, so bar images add no per-frame decoding.

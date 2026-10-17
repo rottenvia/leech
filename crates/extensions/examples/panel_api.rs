@@ -75,6 +75,7 @@ fn main() {
 		theme: None,
 		background_image: Vec::new(),
 		cover_image: Vec::new(),
+		surface_images: Default::default(),
 		wasm: module,
 	};
 	assert!(matches!(

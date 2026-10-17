@@ -105,9 +105,15 @@ impl eframe::App for Preview {
 			});
 		}
 		for request in std::mem::take(&mut self.messaging.extensions.requests) {
-			if let ui::ExtensionRequest::PreviewTheme { theme, image } = request {
+			if let ui::ExtensionRequest::PreviewTheme {
+				theme,
+				image,
+				surfaces,
+			} = request
+			{
 				ui::design::set_extension_theme(theme.as_deref());
 				ui::design::set_background_image(&ctx, image);
+				ui::design::set_surface_images(&ctx, surfaces);
 				ui::design::apply(&ctx);
 			}
 		}
@@ -1076,6 +1082,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 							Box::new(package),
 							None,
 							None,
+							Default::default(),
 							false,
 							true,
 						);
@@ -1091,6 +1098,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 							Box::new(package),
 							None,
 							None,
+							Default::default(),
 							true,
 							false,
 						);

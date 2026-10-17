@@ -1228,6 +1228,7 @@ impl MessagingUi {
 				// Caption text belongs to the window drag region, not text selection.
 				ui.style_mut().interaction.selectable_labels = false;
 				let rect = ui.max_rect();
+				design::paint_surface(ui, rect, 0, extensions::ThemeSurface::TitleBar);
 				design::window_drag(ui, rect);
 				let title_rect = egui::Rect::from_center_size(
 					rect.center(),
@@ -2019,9 +2020,12 @@ impl MessagingUi {
 					);
 					ui.painter().rect_filled(line, 0, colors.border);
 				};
+				// Whether a banner sits above, so the bar images below keep square tops.
+				let mut above = false;
 				if self.shows_update_banner() {
 					self.update_banner(ui);
 					divider(ui);
+					above = true;
 				}
 				if !state.demo
 					&& state.auth == client_core::auth::AuthState::Authenticated
@@ -2030,9 +2034,27 @@ impl MessagingUi {
 					let first = !self.shows_update_banner();
 					self.reconnecting_banner(ui, first);
 					divider(ui);
+					above = true;
 				}
 				if in_call {
-					self.voice_card_section(ui, state);
+					let slot = design::surface_slot(ui);
+					let section = ui
+						.scope(|ui| self.voice_card_section(ui, state))
+						.response
+						.rect;
+					let top = if above { 0 } else { 12 };
+					design::fill_surface_slot(
+						ui,
+						slot,
+						section,
+						egui::CornerRadius {
+							nw: top,
+							ne: top,
+							sw: 0,
+							se: 0,
+						},
+						extensions::ThemeSurface::VoicePanel,
+					);
 					if std::mem::take(&mut self.open_call)
 						&& let Some(channel) = state.voice.active.as_ref().map(|call| call.channel)
 						&& let Some(command) = state.select(channel)
@@ -2041,7 +2063,8 @@ impl MessagingUi {
 					}
 					divider(ui);
 				}
-				egui::Frame::new()
+				let account_slot = design::surface_slot(ui);
+				let account_row = egui::Frame::new()
 					.inner_margin(egui::Margin::symmetric(8, 6))
 					.show(ui, |ui| {
 						ui.set_width(ui.available_width());
@@ -2228,6 +2251,18 @@ impl MessagingUi {
 							);
 						});
 					});
+				design::fill_surface_slot(
+					ui,
+					account_slot,
+					account_row.response.rect,
+					egui::CornerRadius {
+						nw: if above || in_call { 0 } else { 12 },
+						ne: if above || in_call { 0 } else { 12 },
+						sw: 12,
+						se: 12,
+					},
+					extensions::ThemeSurface::AccountPanel,
+				);
 			});
 		// Painted over the frame rather than as its stroke, so the card keeps the composer's height.
 		ui.painter()
@@ -3424,13 +3459,22 @@ impl MessagingUi {
 			// The cap and the input form one block: undo the automatic vertical item gap.
 			ui.add_space(-ui.spacing().item_spacing.y);
 		}
-		design::glass_frame(ui, colors.raised, egui::Margin::symmetric(10, 6))
-            .corner_radius(if cap_top.is_some() {
-                egui::CornerRadius { nw: 0, ne: 0, sw: 12, se: 12 }
-            } else {
-                egui::CornerRadius::same(12)
-            })
+		let composer_corners = if cap_top.is_some() {
+			egui::CornerRadius {
+				nw: 0,
+				ne: 0,
+				sw: 12,
+				se: 12,
+			}
+		} else {
+			egui::CornerRadius::same(12)
+		};
+		// The bar image goes over the frame's fill and under the draft, once the size is known.
+		let mut composer_slot = None;
+		let composer_frame = design::glass_frame(ui, colors.raised, egui::Margin::symmetric(10, 6))
+            .corner_radius(composer_corners)
             .show(ui, |ui| {
+                composer_slot = Some(design::surface_slot(ui));
                 // Outer frame bounds for the autocomplete popout: undo the inner margin and
                 // include the reply/edit cap so the popout never covers it.
                 let composer_anchor = egui::Rect::from_min_max(
@@ -3889,6 +3933,15 @@ impl MessagingUi {
                     ui.weak(crate::i18n::translate("lib-ime-updates-text-attaching-files-is-unavailable-here-remove-the-attachment-to-send"));
                 }
             });
+		if let Some(slot) = composer_slot {
+			design::fill_surface_slot(
+				ui,
+				slot,
+				composer_frame.response.rect,
+				composer_corners,
+				extensions::ThemeSurface::Composer,
+			);
+		}
 		if editing_here {
 			self.editing = if cancel_edit { None } else { editing };
 			if cancel_edit {
@@ -4428,25 +4481,27 @@ impl MessagingUi {
 				}
 				// A window image continues the lists into the card strip, so only it stays square.
 				let rounded = !design::has_window_background(ui);
+				let corners = if floating {
+					egui::CornerRadius::same(design::PANEL_RADIUS as u8)
+				} else if rounded {
+					egui::CornerRadius {
+						nw: 8,
+						sw: 8,
+						..Default::default()
+					}
+				} else {
+					egui::CornerRadius::ZERO
+				};
 				ui.painter().rect_filled(
 					lists,
-					if floating {
-						egui::CornerRadius::same(design::PANEL_RADIUS as u8)
-					} else if rounded {
-						egui::CornerRadius {
-							nw: 8,
-							sw: 8,
-							..Default::default()
-						}
-					} else {
-						egui::CornerRadius::ZERO
-					},
+					corners,
 					design::section_surface(
 						ui,
 						background.sidebar,
 						design::ImageSection::ChannelList,
 					),
 				);
+				design::paint_surface(ui, lists, corners, extensions::ThemeSurface::ChannelList);
 				if rounded && layered {
 					// No column coat sits under the corners, so the rail's material fills the
 					// notches and the curve still reads from the title bar into the account strip.
@@ -4643,6 +4698,9 @@ impl MessagingUi {
 							.outer_margin(around),
 					)
 					.show(ui, |ui| {
+						// The frame's 8-point margin is part of the pane.
+						let pane = ui.max_rect().expand(8.0);
+						design::paint_surface(ui, pane, 0, extensions::ThemeSurface::MemberList);
 						self.member_rows(ui, state, &mut commands);
 					});
 				if floating {

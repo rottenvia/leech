@@ -20,6 +20,7 @@ PACKAGE_DIRS = ("themes", "plugins/packages")
 CAPABILITIES = {"selected_message", "composer", "storage", "deleted_messages", "image_sharing", "appearance", "rich_presence", "api_proxy"}
 RESERVED = {"con", "prn", "aux", "nul"} | {f"{prefix}{n}" for prefix in ("com", "lpt") for n in range(1, 10)}
 MAX_PREVIEW = 256 * 1024
+SURFACES = {"call_stage", "composer", "channel_list", "voice_panel", "account_panel", "server_list", "title_bar", "member_list"}
 
 
 def require(condition, message):
@@ -57,10 +58,12 @@ def validate(data):
     for field, limit in (("wasm", 4 * 1024 * 1024), ("background_image", 2 * 1024 * 1024), ("cover_image", 2 * 1024 * 1024)):
         values = package.get(field, [])
         require(isinstance(values, list) and len(values) <= limit and all(type(b) is int and 0 <= b <= 255 for b in values), f"invalid {field} bytes")
+    surfaces = package.get("surface_images", {})
+    require(isinstance(surfaces, dict) and set(surfaces) <= SURFACES and all(isinstance(v, list) and 0 < len(v) <= 1024 * 1024 and all(type(b) is int and 0 <= b <= 255 for b in v) for v in surfaces.values()), "invalid surface_images bytes")
     if manifest["kind"] == "theme":
         require(isinstance(package.get("theme"), dict) and not package.get("wasm") and not capabilities and not actions, "invalid declarative theme")
     else:
-        require(manifest["kind"] == "plugin" and actions and package.get("theme") is None and not package.get("background_image") and not package.get("cover_image"), "invalid plugin")
+        require(manifest["kind"] == "plugin" and actions and package.get("theme") is None and not package.get("background_image") and not package.get("cover_image") and not package.get("surface_images"), "invalid plugin")
         require(bytes(package.get("wasm", [])).startswith(b"\0asm\x01\0\0\0"), "Wasm v1 module required")
     return manifest
 
