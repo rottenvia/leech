@@ -2008,6 +2008,8 @@ profile-edit-form-png-jpeg-gif-or-webp-up-to-8-mb-cropped = PNG, JPEG, GIF ил�
 # Context: form
 profile-edit-form-profile-color = Цвет профиля
 # Context: form
+profile-edit-form-public-profile = Публичный профиль
+# Context: form
 profile-edit-form-profile-picture = Изображение профиля
 # Context: form
 profile-edit-form-remove = Удалять
