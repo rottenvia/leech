@@ -15,7 +15,7 @@ SetCompressor /SOLID lzma
 
 !define PRODUCT_NAME "Leech"
 !define PRODUCT_PUBLISHER "Leech contributors"
-!define PRODUCT_WEB_SITE "https://github.com/ViceVerse-cz/Serein"
+!define PRODUCT_WEB_SITE "https://github.com/rottenvia/leech"
 !define APP_EXE "leech.exe"
 !define APP_ID "io.github.rottenvia.leech"
 
@@ -186,7 +186,7 @@ Section "MainSection" SEC01
   SetOverwrite on
 
   ; Copy all package payload files
-  File /r /x install-notifications.ps1 /x setup.ps1 "${DIST_DIR}\*.*"
+  File /r /x install-notifications.ps1 /x setup.ps1 /x *.WebView2 "${DIST_DIR}\*.*"
   ; Remove legacy installer utilities when upgrading an existing installation.
   Delete "$INSTDIR\install-notifications.ps1"
   Delete "$INSTDIR\setup.ps1"
