@@ -112,11 +112,13 @@ impl MessagingUi {
 		ui.add_space(12.0);
 		heading(ui, "settings-activity-added-games");
 		if self.registered_games.is_empty() {
-			ui.label(
-				RichText::new(tr("settings-activity-no-games-added"))
-					.size(14.0)
-					.color(p.muted),
-			);
+			design::card(ui, |ui| {
+				ui.label(
+					RichText::new(tr("settings-activity-no-games-added"))
+						.size(14.0)
+						.color(p.muted),
+				);
+			});
 			return;
 		}
 		ui.add_space(4.0);

@@ -226,7 +226,9 @@ impl Editor {
 					egui::Layout::top_down(egui::Align::Min),
 					|ui| {
 						ui.add_enabled_ui(editable, |ui| {
-							action = form(ui, draft, profile, self.choosing);
+							action = design::group(ui, "profile-edit-form-public-profile", |ui| {
+								form(ui, draft, profile, self.choosing)
+							});
 						});
 					},
 				);
@@ -248,7 +250,9 @@ impl Editor {
 			});
 		} else {
 			ui.add_enabled_ui(editable, |ui| {
-				action = form(ui, draft, profile, self.choosing);
+				action = design::group(ui, "profile-edit-form-public-profile", |ui| {
+					form(ui, draft, profile, self.choosing)
+				});
 			});
 		}
 		match action {
