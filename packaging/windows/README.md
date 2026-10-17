@@ -1,4 +1,4 @@
-Build `cargo xtask package` using Rust 1.98.1 MSVC and Visual Studio C++ build tools. The executable is `dist/leech.exe`; distribute it with the adjacent docs and licenses. The login flow requires WebView2. Source builds require CMake for the built-in voice engine.
+Build `cargo xtask package` using Rust 1.98.1 MSVC and Visual Studio C++ build tools. The executable is `dist/leech.exe`; distribute it with the adjacent docs and licenses. The login flow requires WebView2. Source builds require CMake for the built-in voice engine. On x64, packaging also requires [NASM](https://www.nasm.us) 2.14 or later on `PATH` (or in `NASM`) so the software H.264 encoder keeps its SIMD code; `OPENH264_NO_ASM=1` packages a slower build.
 
 Run `dist/leech.exe --demo` for an offline synthetic preview with no saved-login lookup or account storage. Run without `--demo` only when the owner is ready to operate their account. See [platform support](../../docs/platform-support.md) for the live-test boundary and limitations.
 

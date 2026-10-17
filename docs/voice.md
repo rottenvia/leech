@@ -580,6 +580,31 @@ Encoders that provide their own samples do not require a caller-owned output all
 Synthetic native-buffer tests cover these contracts without opening an encoder or
 capture device; hardware acceptance and live Discord delivery remain unverified.
 
+Discovery tries every hardware H.264 encoder the system lists, not only the first. On
+multi-GPU machines an integrated encoder ranked first can refuse the configuration, and
+NVIDIA's encoder can refuse `ActivateObject` with `MF_E_GRL_VERSION_TOO_LOW` on Windows 11;
+its CLSID is then created directly. Before this, such machines streamed 1080p through
+OpenH264, built without its x86 assembly: about 39 ms per frame, so 30 and 60 fps both
+lagged. `cargo xtask package` now requires NASM on x86, which brings that to about 9 ms.
+
+Windows screen sharing keeps pictures on the GPU. The D3D11 video processor scales each
+captured BGRA texture to NV12 at the stream size (BT.601 limited range, letterboxed like
+the memory path) on windows-capture's device, and that adapter's hardware encoder reads
+the texture in place. The local preview is a small readback every 100 ms. If the video
+processor or encoder refuses, capture returns to frames in memory and the fallbacks above;
+frames in flight are dropped and the next memory frame starts with a keyframe. Scheduled
+IDR pictures are 3,000 frames apart: viewers request others with PLI/FIR, and DAVE
+transitions force one. In a synthetic 2560×1440 to 1080p60 test on one Windows 11 desktop
+with an NVIDIA GPU, encoding took about 7 ms per frame on this path, 15 ms plus readback on
+the memory path, and OpenH264 took 9 ms (39 ms without NASM) after CPU conversion. A synthetic test compares the GPU conversion with
+the memory path and decodes an in-place encode; live Discord delivery remains unverified.
+
+A game that saturates the CPU used to starve normal-priority threads, freezing voice and
+the stream together. Media loops now join the MMCSS `Audio` task and audio callbacks
+`Pro Audio` (priority 13 and 15 instead of 0 on Windows 11), and the capture device asks for
+the highest GPU scheduling priority, as OBS does. Windows caps MMCSS threads' share, so
+the game keeps most of the machine. Behavior under a real game load is not yet measured.
+
 ### Camera capture and delivery
 
 The voice build can send a native camera after an explicit camera-on click in a

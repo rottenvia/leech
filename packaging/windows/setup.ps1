@@ -11,7 +11,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $appName = 'Leech'
 $publisher = 'Leech contributors'
-$website = 'https://github.com/ViceVerse-cz/Serein'
+$website = 'https://github.com/rottenvia/leech'
 $installDir = Join-Path $env:LOCALAPPDATA "Programs\$appName"
 $uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$appName"
 $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) "$appName.lnk"

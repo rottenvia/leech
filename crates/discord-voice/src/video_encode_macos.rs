@@ -139,7 +139,8 @@ impl Encoder {
 		let config = self.config;
 		let bit_rate = CFNumber::new_i32(i32::try_from(config.bit_rate).map_err(|_| UNAVAILABLE)?);
 		let fps = CFNumber::new_i32(i32::try_from(config.fps).map_err(|_| UNAVAILABLE)?);
-		let gop = CFNumber::new_i32(i32::try_from(config.fps * 2).map_err(|_| UNAVAILABLE)?);
+		let gop =
+			CFNumber::new_i32(i32::try_from(config.keyframe_interval).map_err(|_| UNAVAILABLE)?);
 		// Cap bursts at 1.5x the average over any one-second window so a keyframe on a busy
 		// desktop cannot balloon past the transport's per-frame limit.
 		let bytes_per_second =
@@ -495,6 +496,7 @@ mod tests {
 		fps: 30,
 		bit_rate: 4_000_000,
 		max_bytes: 2 * 1024 * 1024,
+		keyframe_interval: 60,
 		profile: Profile::Main,
 	};
 	const CAMERA: Config = Config {
@@ -503,6 +505,7 @@ mod tests {
 		fps: 15,
 		bit_rate: 600_000,
 		max_bytes: 128 * 1024,
+		keyframe_interval: 30,
 		profile: Profile::Baseline,
 	};
 
