@@ -1446,6 +1446,24 @@ impl Desktop {
 				ui::design::set_variant(variant);
 			}
 		}
+		// Catalog theme preview from the repository's packages, e.g.
+		// `--demo --demo-catalog-theme=forest-piano`.
+		#[cfg(feature = "demo")]
+		let demo_catalog_theme = match std::env::args()
+			.find_map(|arg| arg.strip_prefix("--demo-catalog-theme=").map(str::to_owned))
+			.filter(|_| demo)
+		{
+			Some(id) => {
+				let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+					.join(format!("../../extensions/themes/{id}.serein-extension"));
+				let package = ::extensions::parse_package(&std::fs::read(path)?)?;
+				let image = (!package.background_image.is_empty())
+					.then(|| extensions::decode_background(&package.background_image))
+					.transpose()?;
+				package.theme.map(|theme| (theme, image.map(Arc::new)))
+			}
+			None => None,
+		};
 		ui::design::apply(&cc.egui_ctx);
 		cc.egui_ctx.set_theme(
 			if demo && std::env::args().any(|arg| arg == "--demo-light") {
@@ -2250,7 +2268,7 @@ impl Desktop {
 			.ok()
 			.map(|menu| (menu, ui::i18n::Language::System))
 		};
-		Ok(Self {
+		let desktop = Self {
 			proxy_auth: proxy_auth::Authentication::default(),
 			api_proxy: tokio::sync::watch::channel(None).0,
 			extensions: extension_bridge::Bridge::default(),
@@ -2382,7 +2400,18 @@ impl Desktop {
 			#[cfg(feature = "demo")]
 			synthetic_id,
 			token_input: Zeroizing::new(String::new()),
-		})
+		};
+		#[cfg(feature = "demo")]
+		let desktop = {
+			let mut desktop = desktop;
+			if let Some((theme, image)) = demo_catalog_theme {
+				desktop
+					.extensions
+					.preview_demo_theme(&cc.egui_ctx, theme, image);
+			}
+			desktop
+		};
+		Ok(desktop)
 	}
 	fn connect(&mut self, secret: SessionSecret, save: bool, ctx: &egui::Context) {
 		if self.presence_load_pending {

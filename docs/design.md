@@ -241,8 +241,8 @@ Pause and the macOS Fn key, when the OS delivers them to the focused window. The
 persist through the existing device settings. Global availability remains limited by the
 native shortcut adapter; unsupported global bindings continue to work while Leech is focused.
 
-Voice follows Discord's call screens: a stage that stays dark in every appearance, in the house
-plum cast rather than black and neutral grey, with 80px participant avatars (DM calls, above
+Voice follows Discord's call screens: a stage that stays dark in every appearance and takes
+its tones from the active theme's dark palette (plum in the house theme), with 80px participant avatars (DM calls, above
 the conversation; everyone else first and you last, names on hover, a red badge for a mute; a
 voice-only DM call opens only as tall as its avatars and the bar) or hairlined 16:9 tiles with
 name badges (guild channels), a bottom control bar of dark pills (mute with settings chevron,
