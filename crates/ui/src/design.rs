@@ -3485,12 +3485,16 @@ pub fn slider_row<T: egui::emath::Numeric>(
 	let title = crate::i18n::translate_if_key(title);
 	let detail = detail.map(crate::i18n::translate_if_key);
 	let p = palette(ui);
-	ui.spacing_mut().item_spacing.y = 4.0;
-	ui.add(egui::Label::new(medium(ui, &title, 15.0).color(p.text_strong)).wrap());
-	if let Some(detail) = detail {
-		ui.add(egui::Label::new(RichText::new(detail).size(13.0).color(p.muted)).wrap());
-	}
-	slider(ui, value, range, suffix)
+	// Scoped, so the tight label spacing does not leak into the rows after the slider.
+	ui.scope(|ui| {
+		ui.spacing_mut().item_spacing.y = 4.0;
+		ui.add(egui::Label::new(medium(ui, &title, 15.0).color(p.text_strong)).wrap());
+		if let Some(detail) = detail {
+			ui.add(egui::Label::new(RichText::new(detail).size(13.0).color(p.muted)).wrap());
+		}
+		slider(ui, value, range, suffix)
+	})
+	.inner
 }
 
 /// Hairline between rows inside a [`card`], with the card's vertical rhythm.

@@ -81,7 +81,7 @@ impl MessagingUi {
 			.show(ctx, |ui| {
 				ui.set_min_size(screen.size());
 				let rect = egui::Rect::from_min_size(screen.min, screen.size());
-				ui.painter().rect_filled(rect, 0, STAGE_FILL);
+				ui.painter().rect_filled(rect, 0, stage_tones().fill);
 				match focus {
 					StageFocus::LocalScreen => self.screen_tile(ui, rect, false),
 					StageFocus::Stream(user) => {
@@ -875,7 +875,7 @@ impl MessagingUi {
 			.as_ref()
 			.is_some_and(|call| call.channel == channel);
 		let stage = ui.available_rect_before_wrap();
-		ui.painter().rect_filled(stage, 0, STAGE_FILL);
+		ui.painter().rect_filled(stage, 0, stage_tones().fill);
 		let (rect, _) = ui.allocate_exact_size(stage.size(), egui::Sense::hover());
 		let notices = self.stage_notices(state, channel, connected);
 		let bottom = CONTROL_HEIGHT + 2.0 * STAGE_MARGIN;
@@ -919,7 +919,7 @@ impl MessagingUi {
 				RichText::new(crate::i18n::translate(
 					"voice-voice-channel-participant-list-unavailable-with-the-current-access",
 				))
-				.color(STAGE_MUTED),
+				.color(stage_tones().muted),
 			);
 		} else {
 			let entries = stage_participants(state, channel);
@@ -938,7 +938,7 @@ impl MessagingUi {
 							),
 							18.0,
 						)
-						.color(STAGE_TEXT),
+						.color(stage_tones().text),
 					);
 				});
 			} else {
@@ -948,7 +948,7 @@ impl MessagingUi {
 							"voice-voice-channel-last-known-participants-a-reconnect-to-refresh",
 						))
 						.small()
-						.color(STAGE_MUTED),
+						.color(stage_tones().muted),
 					);
 				}
 				self.voice_chrome_hidden = 1.0 - reveal;
@@ -1350,8 +1350,13 @@ impl MessagingUi {
 				content
 			}
 			None => {
-				ui.painter()
-					.rect(rect, 10, TILE_FILL, STAGE_EDGE, egui::StrokeKind::Inside);
+				ui.painter().rect(
+					rect,
+					10,
+					stage_tones().tile,
+					STAGE_EDGE,
+					egui::StrokeKind::Inside,
+				);
 				if rect.height() >= 132.0 {
 					let status = if self.voice_stream_status.is_empty() {
 						"Connecting to the stream…"
@@ -1362,13 +1367,13 @@ impl MessagingUi {
 						rect.center() - egui::vec2(0.0, 18.0),
 						egui::Vec2::splat(24.0),
 					);
-					ui.put(spinner, egui::Spinner::new().color(STAGE_MUTED));
+					ui.put(spinner, egui::Spinner::new().color(stage_tones().muted));
 					ui.painter().text(
 						rect.center() + egui::vec2(0.0, 18.0),
 						egui::Align2::CENTER_CENTER,
 						status,
 						egui::FontId::proportional(13.0),
-						STAGE_MUTED,
+						stage_tones().muted,
 					);
 				}
 				rect
@@ -1473,8 +1478,13 @@ impl MessagingUi {
 		compact: bool,
 	) -> bool {
 		let colors = design::palette(ui);
-		ui.painter()
-			.rect(rect, 10, PILL_FILL, STAGE_EDGE, egui::StrokeKind::Inside);
+		ui.painter().rect(
+			rect,
+			10,
+			stage_tones().pill,
+			STAGE_EDGE,
+			egui::StrokeKind::Inside,
+		);
 		let name = participant_user(state, channel, streamer)
 			.map_or("Participant", |user| user.name.as_str());
 		let (pill, font, margin) = if compact {
@@ -1533,7 +1543,7 @@ impl MessagingUi {
 		let text = if enabled {
 			egui::Color32::WHITE
 		} else {
-			STAGE_MUTED
+			stage_tones().muted
 		};
 		let left = button.center().x - (galley.size().x + icon + 8.0) * 0.5;
 		crate::icons::paint(
@@ -1663,8 +1673,13 @@ impl MessagingUi {
 			None
 		};
 		if !frameless {
-			ui.painter()
-				.rect(rect, 10, TILE_FILL, STAGE_EDGE, egui::StrokeKind::Inside);
+			ui.painter().rect(
+				rect,
+				10,
+				stage_tones().tile,
+				STAGE_EDGE,
+				egui::StrokeKind::Inside,
+			);
 		}
 		if let Some((id, image, mirror)) = video {
 			cover_image(ui, rect, id, image, mirror);
@@ -1754,7 +1769,8 @@ impl MessagingUi {
 			// The badge scales down with small avatars so it never hides the face.
 			let radius = (avatar_size * 0.2).clamp(7.0, 12.0);
 			let badge = avatar.rect.right_bottom() - egui::Vec2::splat(avatar_size * 0.14);
-			ui.painter().circle_filled(badge, radius, STAGE_FILL);
+			ui.painter()
+				.circle_filled(badge, radius, stage_tones().fill);
 			ui.painter()
 				.circle_filled(badge, radius - 2.0, colors.danger);
 			crate::icons::paint(
@@ -1807,7 +1823,7 @@ impl MessagingUi {
 						label.clone()
 					},
 					font.clone(),
-					STAGE_MUTED,
+					stage_tones().muted,
 				);
 				let shown = if ringing {
 					const STEP: f64 = OUTGOING_RING_CYCLE / 4.0;
@@ -1820,7 +1836,7 @@ impl MessagingUi {
 					ui.painter().layout_no_wrap(
 						format!("{base}{}", ".".repeat(dots)),
 						font,
-						STAGE_MUTED,
+						stage_tones().muted,
 					)
 				} else {
 					full.clone()
@@ -1829,7 +1845,7 @@ impl MessagingUi {
 				ui.painter().galley(
 					egui::pos2(rect.center().x - full.size().x * 0.5, top),
 					shown,
-					STAGE_MUTED,
+					stage_tones().muted,
 				);
 			}
 		}
@@ -1857,8 +1873,11 @@ impl MessagingUi {
 			};
 			let live = egui::Rect::from_center_size(center, pill * (0.8 + 0.2 * reveal));
 			if frameless && video.is_none() {
-				ui.painter()
-					.rect_filled(live.expand(2.0), 6, STAGE_FILL.gamma_multiply(reveal));
+				ui.painter().rect_filled(
+					live.expand(2.0),
+					6,
+					stage_tones().fill.gamma_multiply(reveal),
+				);
 			}
 			ui.painter()
 				.rect_filled(live, 4, colors.danger.gamma_multiply(reveal));
@@ -3308,7 +3327,11 @@ impl MessagingUi {
 				},
 				48.0,
 				voice_toggles && (can_speak || state.offline_preview()),
-				if muted { colors.danger } else { STAGE_TEXT },
+				if muted {
+					colors.danger
+				} else {
+					stage_tones().text
+				},
 				if muted { "Unmute" } else { "Mute" },
 				if !can_speak {
 					"Speaking is unavailable in this channel."
@@ -3326,7 +3349,7 @@ impl MessagingUi {
 					crate::icons::Icon::ChevronDown,
 					28.0,
 					true,
-					STAGE_TEXT,
+					stage_tones().text,
 					"Voice settings",
 					"Microphone and speaker settings",
 				);
@@ -3353,7 +3376,11 @@ impl MessagingUi {
 				},
 				48.0,
 				controls && (camera || can_camera),
-				if camera { colors.positive } else { STAGE_TEXT },
+				if camera {
+					colors.positive
+				} else {
+					stage_tones().text
+				},
 				if camera {
 					"Turn off camera"
 				} else {
@@ -3384,7 +3411,7 @@ impl MessagingUi {
 					crate::icons::Icon::ChevronDown,
 					28.0,
 					true,
-					STAGE_TEXT,
+					stage_tones().text,
 					"Camera settings",
 					"Choose a camera",
 				);
@@ -3399,7 +3426,7 @@ impl MessagingUi {
 					crate::icons::Icon::More,
 					48.0,
 					true,
-					STAGE_TEXT,
+					stage_tones().text,
 					"More options",
 					"More call options",
 				);
@@ -3471,7 +3498,7 @@ impl MessagingUi {
 		);
 		view.spacing_mut().item_spacing.x = 4.0;
 		if screen_focused && side_shown {
-			let fullscreen = fullscreen_control(&mut view, STAGE_TEXT);
+			let fullscreen = fullscreen_control(&mut view, stage_tones().text);
 			if fullscreen.clicked() {
 				let previous = view.input(|input| input.viewport().fullscreen.unwrap_or(false));
 				self.voice_fullscreen = self
@@ -3487,7 +3514,11 @@ impl MessagingUi {
 				crate::icons::Icon::People,
 				40.0,
 				true,
-				if shown { colors.accent } else { STAGE_TEXT },
+				if shown {
+					colors.accent
+				} else {
+					stage_tones().text
+				},
 				if shown {
 					"Hide participants"
 				} else {
@@ -3513,7 +3544,7 @@ impl MessagingUi {
 				if self.voice_stream_volume() == 0 {
 					colors.danger
 				} else {
-					STAGE_TEXT
+					stage_tones().text
 				},
 				"Stream volume",
 				"Stream audio",
@@ -3685,7 +3716,7 @@ impl MessagingUi {
 			crate::icons::Icon::ScreenShare,
 			48.0,
 			enabled,
-			STAGE_TEXT.lerp_to_gamma(colors.accent_text, fill),
+			stage_tones().text.lerp_to_gamma(colors.accent_text, fill),
 			label,
 			if enabled {
 				self.screen
@@ -3858,7 +3889,7 @@ impl MessagingUi {
 		egui::Panel::top("dm-call-closing")
 			.exact_size(shot.header + (shot.height - shot.header) * (1.0 - fold))
 			.show_separator_line(false)
-			.frame(egui::Frame::new().fill(STAGE_FILL.gamma_multiply(fill)))
+			.frame(egui::Frame::new().fill(stage_tones().fill.gamma_multiply(fill)))
 			.show(ui, |ui| {
 				let rect = ui.max_rect();
 				ui.expand_to_include_rect(rect);
@@ -4138,7 +4169,7 @@ impl MessagingUi {
 				header_height + (full - header_height) * egui::emath::easing::cubic_out(open),
 			)
 			.show_separator_line(false)
-			.frame(egui::Frame::new().fill(STAGE_FILL))
+			.frame(egui::Frame::new().fill(stage_tones().fill))
 			.show(ui, |ui| {
 				let visible = ui.max_rect();
 				ui.expand_to_include_rect(visible);
@@ -4320,7 +4351,7 @@ impl MessagingUi {
 			};
 			panel
 				.show_separator_line(false)
-				.frame(egui::Frame::new().fill(STAGE_FILL))
+				.frame(egui::Frame::new().fill(stage_tones().fill))
 				.show(ui, |ui| {
 					let visible = ui.max_rect();
 					// The children below do not grow this Ui; claim the whole panel so its
@@ -4691,9 +4722,8 @@ impl MessagingUi {
 							));
 						self.noise_popup(&suppression);
 						ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-							// As in Discord the whole label opens the call's channel; the
-							// channel line underlines under the pointer.
-							let area = ui.available_rect_before_wrap();
+							// As in Discord the channel line opens the call's channel and
+							// underlines only under the pointer, not across the empty row.
 							let line = ui
 								.vertical(|ui| {
 									ui.spacing_mut().item_spacing.y = 3.0;
@@ -4715,7 +4745,7 @@ impl MessagingUi {
 								})
 								.inner;
 							let open = ui
-								.interact(area, egui::Id::unique("voice-card-open"), egui::Sense::click())
+								.interact(line, egui::Id::unique("voice-card-open"), egui::Sense::click())
 								.on_hover_cursor(egui::CursorIcon::PointingHand);
 							let hover = design::hover_motion(ui, &open);
 							if hover > 0.0 {
@@ -4979,13 +5009,26 @@ fn split_chevron(
 	response.on_hover_text(label)
 }
 
-/// The call stage is dark in every appearance, like Discord's, but in the house plum cast
-/// instead of black and neutral grey; pills and tiles sit on it in fixed tones.
-const STAGE_FILL: egui::Color32 = egui::Color32::from_rgb(0x0a, 0x06, 0x08);
-const TILE_FILL: egui::Color32 = egui::Color32::from_rgb(0x24, 0x18, 0x1e);
-const PILL_FILL: egui::Color32 = egui::Color32::from_rgb(0x1d, 0x13, 0x18);
-const STAGE_TEXT: egui::Color32 = egui::Color32::from_rgb(0xec, 0xe2, 0xe6);
-const STAGE_MUTED: egui::Color32 = egui::Color32::from_rgb(0xa3, 0x93, 0x9b);
+/// The call stage's tones. Like Discord's, the stage is dark in every appearance, so it takes
+/// the active theme's dark palette: a theme recolours the stage, its tiles, pills and icons.
+#[derive(Clone, Copy)]
+struct Stage {
+	fill: egui::Color32,
+	tile: egui::Color32,
+	pill: egui::Color32,
+	text: egui::Color32,
+	muted: egui::Color32,
+}
+fn stage_tones() -> Stage {
+	let p = design::control_colors(true, design::variant());
+	Stage {
+		fill: p.base.lerp_to_gamma(egui::Color32::BLACK, 0.35),
+		tile: p.raised,
+		pill: p.chat.lerp_to_gamma(p.raised, 0.5),
+		text: p.text_strong.lerp_to_gamma(p.text, 0.3),
+		muted: p.muted,
+	}
+}
 /// Hairline around stage tiles and pills, the stage's share of the house edge.
 const STAGE_EDGE: egui::Stroke = egui::Stroke {
 	width: 1.0,
@@ -5148,7 +5191,8 @@ fn name_badge(
 	let font = egui::FontId::new(13.0, design::medium_family(ui.ctx()));
 	let icon_width = if icon.is_some() { 20.0 } else { 0.0 };
 	// One line, truncated with an ellipsis; the tile hover text carries the full name.
-	let mut job = egui::text::LayoutJob::simple_singleline(name.to_owned(), font, STAGE_TEXT);
+	let mut job =
+		egui::text::LayoutJob::simple_singleline(name.to_owned(), font, stage_tones().text);
 	job.wrap.max_width = (rect.width() * 0.6 - icon_width).max(20.0);
 	job.wrap.max_rows = 1;
 	job.wrap.break_anywhere = true;
@@ -5161,7 +5205,7 @@ fn name_badge(
 	painter.galley(
 		egui::pos2(badge.left() + 8.0, badge.center().y - galley.size().y * 0.5),
 		galley,
-		STAGE_TEXT,
+		stage_tones().text,
 	);
 	if let Some(icon) = icon {
 		crate::icons::paint(
@@ -5309,7 +5353,7 @@ impl StageMotion {
 pub(crate) fn stage_glow(accent: egui::Color32) -> egui::Color32 {
 	let mut glow = accent.to_opaque();
 	for _ in 0..8 {
-		if design::contrast(glow, STAGE_FILL) >= 6.0 {
+		if design::contrast(glow, stage_tones().fill) >= 6.0 {
 			break;
 		}
 		glow = glow.lerp_to_gamma(egui::Color32::WHITE, 0.12);
@@ -5580,7 +5624,11 @@ fn stage_notices(ui: &mut egui::Ui, notices: &[(String, bool)]) {
 			egui::Label::new(
 				RichText::new(text)
 					.size(if *strong { 13.0 } else { 12.0 })
-					.color(if *strong { STAGE_TEXT } else { STAGE_MUTED }),
+					.color(if *strong {
+						stage_tones().text
+					} else {
+						stage_tones().muted
+					}),
 			)
 			.truncate()
 			.selectable(false),
@@ -5600,14 +5648,20 @@ fn moved_chip(ui: &egui::Ui, top: egui::Pos2, shown: f32) {
 	let galley = painter.layout_no_wrap(
 		crate::i18n::translate_if_key("Call continued on another device"),
 		egui::FontId::proportional(13.0),
-		STAGE_TEXT,
+		stage_tones().text,
 	);
 	let size = egui::vec2(12.0 + 16.0 + 8.0 + galley.size().x + 14.0, NOTICE_HEIGHT);
 	let rect = egui::Rect::from_min_size(
 		egui::pos2(top.x - size.x * 0.5, top.y - 6.0 * (1.0 - shown)),
 		size,
 	);
-	painter.rect(rect, 15, PILL_FILL, STAGE_EDGE, egui::StrokeKind::Inside);
+	painter.rect(
+		rect,
+		15,
+		stage_tones().pill,
+		STAGE_EDGE,
+		egui::StrokeKind::Inside,
+	);
 	let icon = egui::Rect::from_center_size(
 		egui::pos2(rect.left() + 12.0 + 8.0, rect.center().y),
 		egui::Vec2::splat(16.0),
@@ -5616,12 +5670,12 @@ fn moved_chip(ui: &egui::Ui, top: egui::Pos2, shown: f32) {
 		&painter,
 		crate::icons::Icon::DeviceMobile,
 		icon,
-		STAGE_MUTED,
+		stage_tones().muted,
 	);
 	painter.galley(
 		egui::pos2(icon.right() + 8.0, rect.center().y - galley.size().y * 0.5),
 		galley,
-		STAGE_TEXT,
+		stage_tones().text,
 	);
 }
 
@@ -5629,8 +5683,13 @@ fn moved_chip(ui: &egui::Ui, top: egui::Pos2, shown: f32) {
 /// tall and `width` wide so the groups and the hang-up button share one baseline.
 fn pill<R>(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
 	let (rect, _) = ui.allocate_exact_size(egui::vec2(width, CONTROL_HEIGHT), egui::Sense::hover());
-	ui.painter()
-		.rect(rect, 12, PILL_FILL, STAGE_EDGE, egui::StrokeKind::Inside);
+	ui.painter().rect(
+		rect,
+		12,
+		stage_tones().pill,
+		STAGE_EDGE,
+		egui::StrokeKind::Inside,
+	);
 	let mut inner = ui.new_child(
 		egui::UiBuilder::new()
 			.max_rect(rect)
@@ -5683,7 +5742,7 @@ fn control(
 		if enabled {
 			color
 		} else {
-			STAGE_MUTED.gamma_multiply(0.45)
+			stage_tones().muted.gamma_multiply(0.45)
 		},
 	);
 	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &label));
