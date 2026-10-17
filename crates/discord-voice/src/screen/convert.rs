@@ -60,6 +60,17 @@ impl Axis {
 	}
 }
 
+/// Size of a `source` picture scaled to fit `destination` with its aspect ratio; the picture
+/// is centered and the rest letterboxed in black.
+pub(crate) fn fit(source: (usize, usize), destination: (usize, usize)) -> (usize, usize) {
+	let scale =
+		(destination.0 as f64 / source.0 as f64).min(destination.1 as f64 / source.1 as f64);
+	(
+		((source.0 as f64 * scale).round() as usize).clamp(1, destination.0),
+		((source.1 as f64 * scale).round() as usize).clamp(1, destination.1),
+	)
+}
+
 /// Fit `frame` into `width`x`height` 4:2:0 `output` (exactly `width * height * 3 / 2` bytes).
 pub(crate) fn bgra_to_yuv420(
 	frame: &RawFrame,
@@ -78,9 +89,7 @@ pub(crate) fn bgra_to_yuv420(
 		return Err("Invalid screen encoder picture size");
 	}
 	let (source_width, source_height) = (frame.width as usize, frame.height as usize);
-	let scale = (width as f64 / source_width as f64).min(height as f64 / source_height as f64);
-	let scaled_width = ((source_width as f64 * scale).round() as usize).clamp(1, width);
-	let scaled_height = ((source_height as f64 * scale).round() as usize).clamp(1, height);
+	let (scaled_width, scaled_height) = fit((source_width, source_height), (width, height));
 	let columns = Axis::new(source_width, scaled_width, width, 4);
 	let rows = Axis::new(source_height, scaled_height, height, frame.stride);
 
@@ -251,6 +260,8 @@ mod tests {
 			height,
 			stride,
 			data,
+			#[cfg(target_os = "windows")]
+			surface: None,
 		}
 	}
 
