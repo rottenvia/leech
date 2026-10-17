@@ -268,9 +268,10 @@ shows an available or downloaded update on macOS, Windows and Linux. Update cont
 also accessible from the signed-out screen. Automatic checking runs at startup
 once saved preferences are available, then every hour while running; turning
 it off disables automatic downloads while background checks and title-bar notices
-remain active. Nightly is the default channel and automatic downloads are off by
-default. Switching channels never installs an
-older semantic version. Nightly checks inspect the latest 100 published releases.
+remain active. Production is the default channel and automatic downloads are on by
+default. Stable releases reach both channels; Nightly adds nightly prereleases.
+Switching channels never installs an older semantic version. Nightly checks inspect the
+latest 100 published releases.
 
 Packages come from this repository's existing GitHub releases and must match the
 platform/architecture asset name, published length and `SHA256SUMS.txt`. Downloads
@@ -345,7 +346,8 @@ PulseAudio or PipeWire's PulseAudio server. Source builds need the libpulse deve
 package (`libpulse-dev`, `pulseaudio-libs-devel`, `libpulse-devel` or Arch's `libpulse`).
 The existing Flatpak PulseAudio socket permission covers this access; the ScreenCast
 portal's PipeWire remote grants video only. Windows uses native process loopback on
-build 20348+ (Windows 11 / Server 2022), with a visible audio error on older systems.
+build 20348+ (Windows 11 / Server 2022). When it cannot start, the share continues as
+video only and a warning names the failing step.
 Both exclude Leech's playback and capture other applications even when sharing one
 window. There is no whole-output fallback. Hardware exclusion and receiving sound in
 an official client remain unverified.

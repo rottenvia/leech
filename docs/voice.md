@@ -533,9 +533,11 @@ are moved between outputs and no virtual device is installed.
 
 Windows uses native process loopback with `PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE`,
 excluding Leech and its child processes across outputs. This requires Windows build 20348+
-(Windows 11 or Windows Server 2022; ordinary Windows 10 22H2 is older). Unsupported systems
-or failed isolation report an audio error; turn audio off to share video alone. There is no
-whole-output fallback. Neither adapter records to disk.
+(Windows 11 or Windows Server 2022; ordinary Windows 10 22H2 is older). Leech tries float
+with native conversion first, then the plain float and 16-bit PCM setups of Microsoft's
+sample, after system audio failed to start on a tester's Windows 11 23H2 PC. If none starts, or the
+worker stops later, the share continues as video only and a warning names the failing
+WASAPI step and HRESULT. There is no whole-output fallback. Neither adapter records to disk.
 
 Native contracts: [PulseAudio per-stream monitoring](https://www.freedesktop.org/wiki/Software/PulseAudio/Documentation/Developer/Clients/WritingVolumeControlUIs/)
 and [Microsoft process-loopback capture](https://learn.microsoft.com/en-us/samples/microsoft/windows-classic-samples/applicationloopbackaudio-sample/).

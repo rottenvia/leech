@@ -255,6 +255,8 @@ impl Handler {
 pub(crate) struct Capture {
 	control: Option<CaptureControl<Handler, &'static str>>,
 	audio: Option<audio::Audio>,
+	/// Why system audio is off although the share asked for it, until it is reported.
+	audio_warning: Option<&'static str>,
 }
 
 impl Capture {
@@ -315,13 +317,28 @@ impl Capture {
 			_ => return Err("The desktop screen picker is available only on Linux"),
 		}?;
 		if let Some(send) = audio {
-			capture.audio = Some(audio::Audio::start(send, stop, ready, audio_epoch)?);
+			// The video goes on without system audio rather than failing the whole share.
+			match audio::Audio::start(send, ready, audio_epoch) {
+				Ok(audio) => capture.audio = Some(audio),
+				// ponytail: leaks one short string per share whose audio failed to start.
+				Err(error) => {
+					capture.audio_warning = Some(Box::leak(
+						format!("Sharing without system audio: it could not start ({error})")
+							.into_boxed_str(),
+					))
+				}
+			}
 		}
 		Ok(capture)
 	}
 
-	pub(crate) fn failed(&self) -> bool {
-		self.audio.as_ref().is_some_and(audio::Audio::failed)
+	/// Why system audio went off, once: it failed to start or its worker stopped.
+	pub(crate) fn audio_lost(&mut self) -> Option<&'static str> {
+		if self.audio.as_ref().is_some_and(audio::Audio::failed) {
+			self.audio = None;
+			return Some("System audio stopped; sharing continues without it");
+		}
+		self.audio_warning.take()
 	}
 }
 
@@ -403,6 +420,7 @@ where
 	Ok(Capture {
 		control: Some(control),
 		audio: None,
+		audio_warning: None,
 	})
 }
 

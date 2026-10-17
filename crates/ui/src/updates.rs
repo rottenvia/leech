@@ -35,8 +35,8 @@ pub struct Updates {
 impl Default for Updates {
 	fn default() -> Self {
 		Self {
-			auto_update: false,
-			nightly: true,
+			auto_update: true,
+			nightly: false,
 			status: "Updates have not been checked yet.".into(),
 			busy: false,
 			available: false,
