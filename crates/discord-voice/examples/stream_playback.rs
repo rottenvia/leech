@@ -39,21 +39,32 @@ pub(crate) fn main() {
 	send.try_send([f32::NAN; 960]).unwrap();
 	assert_eq!(audio.next(&receive, 100, true, false).unwrap(), [0.0; 960]);
 
+	let now = std::time::Instant::now();
 	let mut video = video_receive::Receivers::default();
 	video.announce(1, 100).unwrap();
 	video.announce_rtx(100, 200).unwrap();
 	assert!(
 		video
-			.push(100, 65534, 9000, false, &[0x7c, 0x85, 1])
-			.is_none()
+			.push(100, 65534, 9000, false, &[0x7c, 0x85, 1], now)
+			.is_empty()
 	);
-	assert!(video.push(100, 0, 9000, true, &[0x7c, 0x45, 3]).is_none());
+	assert!(
+		video
+			.push(100, 0, 9000, true, &[0x7c, 0x45, 3], now)
+			.is_empty()
+	);
 	let mut repaired = vec![0xff, 0xff, 0x7c, 0x05, 2];
 	assert!(video.restore_rtx(201, &mut repaired).is_none());
 	let (ssrc, seq) = video.restore_rtx(200, &mut repaired).unwrap();
-	let (user, frame) = video.push(ssrc, seq, 9000, false, &repaired).unwrap();
-	assert_eq!((user, frame), (1, vec![0, 0, 0, 1, 0x65, 1, 2, 3]));
-	assert!(video.push(100, 65535, 9000, false, &repaired).is_none());
+	assert_eq!(
+		video.push(ssrc, seq, 9000, false, &repaired, now),
+		vec![(1, vec![0, 0, 0, 1, 0x65, 1, 2, 3])]
+	);
+	assert!(
+		video
+			.push(100, 65535, 9000, false, &repaired, now)
+			.is_empty()
+	);
 	assert_eq!(video.take_stats().incomplete, 0);
 	video.remove(1);
 	assert!(video.restore_rtx(200, &mut repaired).is_none());
@@ -64,7 +75,11 @@ pub(crate) fn main() {
 	video.announce(1, 110).unwrap();
 	video.announce_rtx(110, 210).unwrap();
 	video.announce(2, 300).unwrap();
-	assert!(video.push(110, 1, 90, false, &[0x7c, 0x85, 1]).is_none());
+	assert!(
+		video
+			.push(110, 1, 90, false, &[0x7c, 0x85, 1], now)
+			.is_empty()
+	);
 	video.retain_user_sources(1, &[110]);
 	assert!(video.restore_rtx(200, &mut repaired).is_none());
 	assert_eq!(
@@ -72,18 +87,22 @@ pub(crate) fn main() {
 		vec![110, 300]
 	);
 	assert_eq!(
-		video.push(110, 2, 90, true, &[0x7c, 0x45, 2]),
-		Some((1, vec![0, 0, 0, 1, 0x65, 1, 2]))
+		video.push(110, 2, 90, true, &[0x7c, 0x45, 2], now),
+		vec![(1, vec![0, 0, 0, 1, 0x65, 1, 2])]
 	);
 	let mut previous = 110;
 	for ssrc in 1000..1100 {
 		video.retain_user_sources(1, &[ssrc]);
 		video.announce(1, ssrc).unwrap();
-		assert!(video.push(previous, 3, 180, true, &[0x65, 3]).is_none());
+		assert!(
+			video
+				.push(previous, 3, 180, true, &[0x65, 3], now)
+				.is_empty()
+		);
 		assert_eq!(video.keyframe_requests().count(), 2);
 		previous = ssrc;
 	}
-	assert!(video.push(300, 1, 90, true, &[0x65, 4]).is_some());
+	assert_eq!(video.push(300, 1, 90, true, &[0x65, 4], now).len(), 1);
 	video.retain_user_sources(1, &[]);
 	assert_eq!(video.keyframe_requests().collect::<Vec<_>>(), vec![300]);
 

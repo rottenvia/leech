@@ -424,6 +424,7 @@ fn encode_loop(
 		// Drop before encoding while the transport is behind, so the encoder never references
 		// a picture the receiver did not get.
 		if send.capacity() == 0 {
+			crate::stream_log::add(crate::stream_log::Count::Behind, 1);
 			continue;
 		}
 		let target = bitrate
@@ -457,10 +458,19 @@ fn encode_loop(
 			});
 		}
 		let force_keyframe = keyframe.swap(false, Ordering::AcqRel);
+		let started = Instant::now();
 		let (data, is_keyframe) = encoding.as_mut().expect("secure screen encoder").encode(
 			latest_frame.as_ref().expect("latest screen frame"),
 			force_keyframe,
 		)?;
+		if !data.is_empty() {
+			use crate::stream_log::{Count, add, max};
+			let micros = started.elapsed().as_micros() as u64;
+			add(Count::Encoded, 1);
+			add(Count::EncodeMicros, micros);
+			max(Count::EncodeMaxMicros, micros);
+			add(Count::Keyframes, u64::from(is_keyframe));
+		}
 		if force_keyframe && (data.is_empty() || !is_keyframe) {
 			keyframe.store(true, Ordering::Release);
 		}
@@ -539,6 +549,10 @@ struct ScreenEncoder {
 	/// The capture device whose surfaces the hardware encoder reads, when it reads them.
 	#[cfg(target_os = "windows")]
 	device: Option<windows::Win32::Graphics::Direct3D11::ID3D11Device>,
+	/// Recent failures of the GPU encoder. A game can stall one picture; only repeated
+	/// failures move the stream to pictures in memory, which cost the CPU far more.
+	#[cfg(target_os = "windows")]
+	gpu_failures: Vec<Instant>,
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -554,6 +568,8 @@ impl ScreenEncoder {
 			gpu,
 			#[cfg(target_os = "windows")]
 			device: None,
+			#[cfg(target_os = "windows")]
+			gpu_failures: Vec::new(),
 		};
 		// GPU pictures open their encoder on the first surface, for that surface's device.
 		#[cfg(target_os = "windows")]
@@ -597,6 +613,12 @@ impl ScreenEncoder {
 			Some(_) => None,
 			None => Some(encoder(self.settings, self.bitrate)?),
 		};
+		crate::stream_log::event(format_args!(
+			"encoder: {} for pictures in memory",
+			hardware
+				.as_ref()
+				.map_or("OpenH264 (software)", |hardware| hardware.name()),
+		));
 		self.diagnostics.set(Some(hardware.is_some()));
 		self.hardware = hardware;
 		Ok(())
@@ -668,6 +690,9 @@ impl ScreenEncoder {
 				return Ok(encoded);
 			}
 			// The viewer must restart from a keyframe once the software encoder takes over.
+			crate::stream_log::event(
+				"encoder: the hardware encoder failed; OpenH264 (software) from here",
+			);
 			self.hardware = None;
 			self.diagnostics.set(None);
 			self.software = Some(encoder(self.settings, self.bitrate)?);
@@ -715,12 +740,19 @@ impl ScreenEncoder {
 				&surface.device,
 			) {
 				Ok(encoder) => {
+					crate::stream_log::event(format_args!(
+						"encoder: {} reading GPU pictures",
+						encoder.name()
+					));
 					self.hardware = Some(encoder);
 					self.device = Some(surface.device.clone());
 					self.diagnostics.set(Some(true));
 					force_keyframe = true;
 				}
 				Err(_) => {
+					crate::stream_log::event(
+						"encoder: no hardware encoder reads this GPU's pictures; copying them through memory",
+					);
 					self.gpu.store(false, Ordering::Release);
 					return (Vec::new(), false);
 				}
@@ -733,10 +765,23 @@ impl ScreenEncoder {
 		{
 			Some(Ok(encoded)) => encoded,
 			_ => {
+				// Reopen on the next picture, with a keyframe. Only a third failure within a
+				// minute gives up the GPU path.
 				self.hardware = None;
 				self.device = None;
 				self.diagnostics.set(None);
-				self.gpu.store(false, Ordering::Release);
+				let now = Instant::now();
+				self.gpu_failures
+					.retain(|at| now.duration_since(*at) < Duration::from_secs(60));
+				self.gpu_failures.push(now);
+				if self.gpu_failures.len() >= 3 {
+					crate::stream_log::event(
+						"encoder: GPU encoding failed 3 times in a minute; copying pictures through memory",
+					);
+					self.gpu.store(false, Ordering::Release);
+				} else {
+					crate::stream_log::event("encoder: GPU encoding failed; reopening it");
+				}
 				(Vec::new(), false)
 			}
 		}
@@ -1061,6 +1106,60 @@ mod tests {
 				720,
 			)
 			.is_err()
+		);
+	}
+
+	/// Shares the first display for six seconds with no network, consuming encoded frames as
+	/// the transport would, and prints the stream log it wrote. Pictures stay in memory.
+	/// `cargo test -p discord-voice compare_screen_share_log -- --ignored --nocapture`
+	#[cfg(target_os = "windows")]
+	#[test]
+	#[ignore]
+	fn compare_screen_share_log() {
+		let directory =
+			std::env::temp_dir().join(format!("leech-share-log-{}", std::process::id()));
+		crate::stream_log::set_directory(directory.clone());
+		let source = sources()
+			.unwrap()
+			.into_iter()
+			.find(|source| matches!(source.id, SourceId::Display(_)))
+			.unwrap();
+		let settings = Settings {
+			source: source.id,
+			width: 1920,
+			height: 1080,
+			fps: 60,
+			cursor: true,
+			audio: false,
+		};
+		let session = crate::stream_log::Session::sharing(settings);
+		let (worker, mut video) = Worker::start(settings, || {}).unwrap();
+		video.ready.store(true, Ordering::Release);
+		let end = Instant::now() + Duration::from_secs(6);
+		while Instant::now() < end {
+			match video.frames.try_recv() {
+				Ok(frame) => {
+					crate::stream_log::add(crate::stream_log::Count::SentFrames, 1);
+					crate::stream_log::add(
+						crate::stream_log::Count::SentBytes,
+						frame.data.len() as u64,
+					);
+				}
+				Err(_) => std::thread::sleep(Duration::from_millis(1)),
+			}
+		}
+		drop(worker);
+		drop(session);
+		std::thread::sleep(Duration::from_millis(1500));
+		let log = std::fs::read_to_string(directory.join("stream.log")).unwrap();
+		eprintln!("{log}");
+		let _ = std::fs::remove_dir_all(&directory);
+		assert!(log.contains("=== sharing 1920x1080 at 60 fps"));
+		assert!(log.contains("encoder: "));
+		assert!(
+			log.lines()
+				.filter(|line| line.contains(" share capture="))
+				.count() >= 4
 		);
 	}
 

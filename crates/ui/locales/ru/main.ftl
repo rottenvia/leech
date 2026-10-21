@@ -4370,6 +4370,10 @@ voice-voice-processing-controls-suppression-strength = Сила подавлен
 # Context: voice_settings_content
 # Context: voice_settings_content
 voice-voice-settings-content-camera = Камера
+voice-stream-log = Журнал трансляции
+voice-stream-log-file = Файл журнала
+voice-stream-log-show = Показать файл журнала
+voice-stream-log-detail = Пока вы показываете экран или смотрите трансляцию, Leech каждую секунду записывает, насколько она плавная: частоту кадров, потерянные пакеты, нагрузку на видеокарту и процессор. Если трансляция тормозит, пришлите этот файл. В нём нет картинок, имён и сообщений.
 # Context: voice_settings_content
 voice-voice-settings-content-compare-with-the-other-participants-this-code-changes-with-the = Сравните с другими участниками. Этот код меняется в зависимости от зашифрованной группы вызовов.
 # Context: voice_settings_content

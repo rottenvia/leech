@@ -2646,6 +2646,26 @@ impl MessagingUi {
 			&crate::i18n::translate("voice-voice-settings-content-camera"),
 			|ui| self.camera_settings_content(ui, demo),
 		);
+		if !compact {
+			design::group(ui, &crate::i18n::translate("voice-stream-log"), |ui| {
+				design::row(
+					ui,
+					"voice-stream-log-file",
+					Some("voice-stream-log-detail"),
+					|ui| {
+						if design::button(
+							ui,
+							&crate::i18n::translate("voice-stream-log-show"),
+							design::ButtonKind::Outline,
+						)
+						.clicked()
+						{
+							self.show_stream_log_requested = true;
+						}
+					},
+				);
+			});
+		}
 		if active && let Some(code) = &self.voice_privacy_code {
 			egui::CollapsingHeader::new(crate::i18n::translate(
 				"voice-voice-settings-content-voice-privacy-code",

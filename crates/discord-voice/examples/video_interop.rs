@@ -131,13 +131,17 @@ fn main() {
 				let wire = transport.seal(&packet.header, &packet.payload).unwrap();
 				assert!(wire.len() <= 1200);
 				let rtp = transport.open(&wire).unwrap();
-				if let Some((_, frame)) = receiver.push(
-					rtp.ssrc,
-					rtp.sequence,
-					rtp.timestamp,
-					rtp.marker,
-					&rtp.payload,
-				) {
+				if let Some((_, frame)) = receiver
+					.push(
+						rtp.ssrc,
+						rtp.sequence,
+						rtp.timestamp,
+						rtp.marker,
+						&rtp.payload,
+						std::time::Instant::now(),
+					)
+					.pop()
+				{
 					restored = Some(frame);
 				}
 			}
@@ -166,13 +170,17 @@ fn main() {
 	for packet in video::packetize(&encrypted, &mut sequence, 90_000, 42).unwrap() {
 		let wire = transport.seal(&packet.header, &packet.payload).unwrap();
 		let rtp = transport.open(&wire).unwrap();
-		if let Some((user, frame)) = receiver.push(
-			rtp.ssrc,
-			rtp.sequence,
-			rtp.timestamp,
-			rtp.marker,
-			&rtp.payload,
-		) {
+		if let Some((user, frame)) = receiver
+			.push(
+				rtp.ssrc,
+				rtp.sequence,
+				rtp.timestamp,
+				rtp.marker,
+				&rtp.payload,
+				std::time::Instant::now(),
+			)
+			.pop()
+		{
 			received = Some(
 				bob.session
 					.decrypt(user, davey::MediaType::VIDEO, &frame)
