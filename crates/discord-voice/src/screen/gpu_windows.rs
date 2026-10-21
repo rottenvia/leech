@@ -267,6 +267,8 @@ struct Preview {
 	target: ID3D11VideoProcessorOutputView,
 	texture: ID3D11Texture2D,
 	staging: ID3D11Texture2D,
+	/// A copy into `staging` is queued and not read yet.
+	queued: bool,
 }
 
 /// Converts captured textures of one size on windows-capture's device.
@@ -305,9 +307,20 @@ impl Converter {
 				.SetMultithreadProtected(true);
 			// A game keeping the GPU busy must not delay the capture's small conversions: raise
 			// this device's scheduling priority, as OBS does. Windows may refuse; that is harmless.
-			if let Ok(dxgi) = device.cast::<IDXGIDevice>() {
-				let _ = dxgi.SetGPUThreadPriority(7);
-			}
+			let priority = device
+				.cast::<IDXGIDevice>()
+				.and_then(|dxgi| dxgi.SetGPUThreadPriority(7));
+			crate::stream_log::event(format_args!(
+				"capture: {}x{} picture to {}x{} NV12 on the GPU, priority {}",
+				input.0,
+				input.1,
+				output.0,
+				output.1,
+				match priority {
+					Ok(()) => "raised".to_owned(),
+					Err(error) => format!("refused ({:#x})", error.code().0),
+				}
+			));
 			let video: ID3D11VideoDevice = device.cast().map_err(|_| FAILED)?;
 			let context: ID3D11VideoContext = immediate.cast().map_err(|_| FAILED)?;
 			let stream = Scaler::new(&video, &context, input, output, DXGI_FORMAT_NV12)
@@ -369,31 +382,52 @@ impl Converter {
 		Ok(Some(surface))
 	}
 
-	/// A preview image bounded to 640 by 360 pixels, read back from the GPU.
+	/// A preview image bounded to 640 by 360 pixels, read back from the GPU. It is the copy
+	/// queued by the previous call: waiting for this one would stall capture behind whatever
+	/// a game has queued on the GPU. `None` while that copy is still in flight.
 	pub(crate) fn preview(&mut self, source: &ID3D11Texture2D) -> Option<image::RgbaImage> {
 		let preview = self.preview.as_ref()?;
-		// SAFETY: The staging texture is mapped for reading and unmapped before returning;
-		// rows are read within the mapped pitch.
+		let mut image = None;
+		// SAFETY: The staging texture is mapped for reading and unmapped before it is written
+		// again; rows are read within the mapped pitch.
 		unsafe {
-			self.blt(&preview.scaler, source, &preview.target).ok()?;
-			self.immediate
-				.CopyResource(&preview.staging, &preview.texture);
-			let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-			self.immediate
-				.Map(&preview.staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
-				.ok()?;
-			let (width, height) = (preview.size.0 as usize, preview.size.1 as usize);
-			let pitch = mapped.RowPitch as usize;
-			let pixels = std::slice::from_raw_parts(mapped.pData.cast::<u8>(), pitch * height);
-			let mut image = Vec::with_capacity(width * height * 4);
-			for row in pixels.chunks_exact(pitch) {
-				for bgra in row[..width * 4].as_chunks::<4>().0 {
-					image.extend_from_slice(&[bgra[2], bgra[1], bgra[0], 255]);
+			if preview.queued {
+				let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+				if self
+					.immediate
+					.Map(
+						&preview.staging,
+						0,
+						D3D11_MAP_READ,
+						D3D11_MAP_FLAG_DO_NOT_WAIT.0 as u32,
+						Some(&mut mapped),
+					)
+					.is_err()
+				{
+					return None;
 				}
+				let (width, height) = (preview.size.0 as usize, preview.size.1 as usize);
+				let pitch = mapped.RowPitch as usize;
+				let pixels = std::slice::from_raw_parts(mapped.pData.cast::<u8>(), pitch * height);
+				let mut pixels_rgba = Vec::with_capacity(width * height * 4);
+				for row in pixels.chunks_exact(pitch) {
+					for bgra in row[..width * 4].as_chunks::<4>().0 {
+						pixels_rgba.extend_from_slice(&[bgra[2], bgra[1], bgra[0], 255]);
+					}
+				}
+				self.immediate.Unmap(&preview.staging, 0);
+				image = image::RgbaImage::from_raw(preview.size.0, preview.size.1, pixels_rgba);
 			}
-			self.immediate.Unmap(&preview.staging, 0);
-			image::RgbaImage::from_raw(preview.size.0, preview.size.1, image)
+			let queued = self.blt(&preview.scaler, source, &preview.target).is_ok();
+			if queued {
+				self.immediate
+					.CopyResource(&preview.staging, &preview.texture);
+			}
+			if let Some(preview) = self.preview.as_mut() {
+				preview.queued = queued;
+			}
 		}
+		image
 	}
 
 	unsafe fn blt(
@@ -451,6 +485,7 @@ impl Converter {
 				target,
 				texture,
 				staging,
+				queued: false,
 			})
 		}
 	}
@@ -630,7 +665,14 @@ mod tests {
 			&[128, 128]
 		);
 
-		let preview = converter.preview(&texture).unwrap();
+		// The first call only queues the copy; a later one returns it once the GPU is done.
+		assert!(converter.preview(&texture).is_none());
+		let preview = (0..200)
+			.find_map(|_| {
+				std::thread::sleep(std::time::Duration::from_millis(5));
+				converter.preview(&texture)
+			})
+			.unwrap();
 		assert_eq!(preview.dimensions(), (480, 360));
 		let [r, g, b, a] = preview.get_pixel(470, 5).0;
 		assert!(r.abs_diff(40) < 8 && g < 12 && b > 240 && a == 255);
@@ -693,5 +735,339 @@ mod tests {
 			decoded_any = true;
 		}
 		assert!(decoded_any, "the hardware encoder produced no picture");
+	}
+
+	/// A game-like GPU load: a heavy full-screen pixel shader at 4K on its own device, at most
+	/// two frames queued, like a game rendering as fast as it can.
+	struct GpuLoad {
+		stop: Arc<std::sync::atomic::AtomicBool>,
+		thread: Option<std::thread::JoinHandle<u32>>,
+	}
+
+	impl GpuLoad {
+		fn start(iterations: u32) -> Self {
+			use std::sync::atomic::{AtomicBool, Ordering};
+			use windows::Win32::Graphics::Direct3D::{
+				D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, Fxc::D3DCompile, ID3DBlob,
+			};
+			let stop = Arc::new(AtomicBool::new(false));
+			let flag = stop.clone();
+			let thread = std::thread::spawn(move || {
+				let source = format!(
+					"float4 vs(uint id : SV_VertexID) : SV_Position {{
+						float2 uv = float2((id << 1) & 2, id & 2);
+						return float4(uv * float2(2, -2) + float2(-1, 1), 0, 1);
+					}}
+					float4 ps(float4 p : SV_Position) : SV_Target {{
+						float2 v = p.xy * 0.001;
+						[loop] for (int i = 0; i < {iterations}; i++)
+							v = float2(sin(v.y * 1.7 + v.x), cos(v.x * 1.3 - v.y));
+						return float4(v, 0, 1);
+					}}"
+				);
+				let compile = |entry: &[u8], target: &[u8]| -> Vec<u8> {
+					let mut code: Option<ID3DBlob> = None;
+					// SAFETY: The source outlives the call and both names are NUL-terminated.
+					unsafe {
+						D3DCompile(
+							source.as_ptr().cast(),
+							source.len(),
+							None,
+							None,
+							None,
+							windows::core::PCSTR(entry.as_ptr()),
+							windows::core::PCSTR(target.as_ptr()),
+							0,
+							0,
+							&mut code,
+							None,
+						)
+						.unwrap();
+						let code = code.unwrap();
+						std::slice::from_raw_parts(
+							code.GetBufferPointer().cast::<u8>(),
+							code.GetBufferSize(),
+						)
+						.to_vec()
+					}
+				};
+				let (vs, ps) = (compile(b"vs\0", b"vs_5_0\0"), compile(b"ps\0", b"ps_5_0\0"));
+				let (device, context) = windows_capture::d3d11::create_d3d_device().unwrap();
+				let (device, context): (ID3D11Device, ID3D11DeviceContext) =
+					unsafe { (rebind(&device).unwrap(), rebind(&context).unwrap()) };
+				let mut frames = 0;
+				// SAFETY: Owned objects of this thread's device; queries are read as BOOL.
+				unsafe {
+					let mut target = None;
+					device
+						.CreateTexture2D(
+							&D3D11_TEXTURE2D_DESC {
+								Width: 3840,
+								Height: 2160,
+								MipLevels: 1,
+								ArraySize: 1,
+								Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+								SampleDesc: DXGI_SAMPLE_DESC {
+									Count: 1,
+									Quality: 0,
+								},
+								Usage: D3D11_USAGE_DEFAULT,
+								BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32,
+								CPUAccessFlags: 0,
+								MiscFlags: 0,
+							},
+							None,
+							Some(&mut target),
+						)
+						.unwrap();
+					let mut view = None;
+					device
+						.CreateRenderTargetView(&target.unwrap(), None, Some(&mut view))
+						.unwrap();
+					let (mut vertex, mut pixel) = (None, None);
+					device
+						.CreateVertexShader(&vs, None, Some(&mut vertex))
+						.unwrap();
+					device
+						.CreatePixelShader(&ps, None, Some(&mut pixel))
+						.unwrap();
+					context.OMSetRenderTargets(Some(&[view]), None);
+					context.RSSetViewports(Some(&[D3D11_VIEWPORT {
+						Width: 3840.0,
+						Height: 2160.0,
+						MaxDepth: 1.0,
+						..Default::default()
+					}]));
+					context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+					context.VSSetShader(vertex.as_ref(), None);
+					context.PSSetShader(pixel.as_ref(), None);
+					let mut queue = std::collections::VecDeque::new();
+					while !flag.load(Ordering::Relaxed) {
+						context.Draw(3, 0);
+						let mut query = None;
+						device
+							.CreateQuery(
+								&D3D11_QUERY_DESC {
+									Query: D3D11_QUERY_EVENT,
+									MiscFlags: 0,
+								},
+								Some(&mut query),
+							)
+							.unwrap();
+						let query = query.unwrap();
+						context.End(&query);
+						context.Flush();
+						queue.push_back(query);
+						while queue.len() > 2 {
+							let mut done = 0i32;
+							let _ = context.GetData(
+								queue.front().unwrap(),
+								Some((&raw mut done).cast()),
+								4,
+								0,
+							);
+							if done != 0 {
+								queue.pop_front();
+							} else {
+								std::thread::sleep(std::time::Duration::from_micros(200));
+							}
+						}
+						frames += 1;
+					}
+				}
+				frames
+			});
+			Self {
+				stop,
+				thread: Some(thread),
+			}
+		}
+
+		/// Stops the load and returns how many frames it rendered.
+		fn finish(mut self) -> u32 {
+			self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+			self.thread.take().unwrap().join().unwrap()
+		}
+	}
+
+	/// Streams synthetic 1440p pictures through the GPU path at 60 fps and reports the time
+	/// from capture to encoded frame, optionally while a game-like load keeps the GPU busy.
+	/// `cargo test -p discord-voice compare_gpu_stream_pipeline -- --ignored --nocapture`, with
+	/// `LEECH_BENCH_GPU_LOAD=<shader iterations>` for the load (a few hundred saturates a GPU).
+	#[test]
+	#[ignore]
+	fn compare_gpu_stream_pipeline() {
+		const INPUT: (u32, u32) = (2560, 1440);
+		const OUTPUT: (u32, u32) = (1920, 1080);
+		const FRAMES: usize = 600;
+		let (device, immediate) = windows_capture::d3d11::create_d3d_device().unwrap();
+		let (device, immediate): (ID3D11Device, ID3D11DeviceContext) =
+			unsafe { (rebind(&device).unwrap(), rebind(&immediate).unwrap()) };
+		// Eight pictures of blocky noise sliding sideways, so every frame has motion to encode.
+		let (width, height) = (INPUT.0 as usize, INPUT.1 as usize);
+		let mut seed = 0x2545_f491_u32;
+		let mut noise = vec![0u8; (width / 8 + 64) * (height / 8)];
+		for value in &mut noise {
+			seed ^= seed << 13;
+			seed ^= seed >> 17;
+			seed ^= seed << 5;
+			*value = seed as u8;
+		}
+		let textures: Vec<ID3D11Texture2D> = (0..8)
+			.map(|index| {
+				let mut bgra = vec![0u8; width * height * 4];
+				for (pixel, out) in bgra.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+					let (x, y) = (pixel % width, pixel / width);
+					let block = noise[(y / 8) * (width / 8 + 64) + x / 8 + index * 2];
+					*out = [block, block.rotate_left(3), (x * 255 / width) as u8, 255];
+				}
+				let mut texture = None;
+				// SAFETY: The initial data covers every row of the described texture.
+				unsafe {
+					device
+						.CreateTexture2D(
+							&D3D11_TEXTURE2D_DESC {
+								Width: INPUT.0,
+								Height: INPUT.1,
+								MipLevels: 1,
+								ArraySize: 1,
+								Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+								SampleDesc: DXGI_SAMPLE_DESC {
+									Count: 1,
+									Quality: 0,
+								},
+								Usage: D3D11_USAGE_DEFAULT,
+								BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+								CPUAccessFlags: 0,
+								MiscFlags: 0,
+							},
+							Some(&D3D11_SUBRESOURCE_DATA {
+								pSysMem: bgra.as_ptr().cast(),
+								SysMemPitch: INPUT.0 * 4,
+								SysMemSlicePitch: 0,
+							}),
+							Some(&mut texture),
+						)
+						.unwrap();
+				}
+				texture.unwrap()
+			})
+			.collect();
+		let load = std::env::var("LEECH_BENCH_GPU_LOAD")
+			.ok()
+			.and_then(|value| value.parse().ok())
+			.map(GpuLoad::start);
+		std::thread::sleep(std::time::Duration::from_millis(500));
+		let mut converter = Converter::new(device.clone(), immediate, INPUT, OUTPUT).unwrap();
+		let config = crate::video_encode::Config {
+			width: OUTPUT.0,
+			height: OUTPUT.1,
+			fps: 60,
+			bit_rate: 12_000_000,
+			max_bytes: crate::screen::MAX_ENCODED_BYTES,
+			keyframe_interval: 3000,
+			profile: crate::video_encode::Profile::Main,
+		};
+		// `LEECH_BENCH_MEMORY=1` measures the fallback instead: read each picture back like
+		// `Frame::buffer`, convert it on the CPU and encode it from memory.
+		let memory = std::env::var_os("LEECH_BENCH_MEMORY").is_some();
+		let mut encoder = if memory {
+			crate::video_encode::hardware::Encoder::new(config).unwrap()
+		} else {
+			crate::video_encode::hardware::Encoder::with_device(config, &device).unwrap()
+		};
+		let staging = converter
+			.texture(INPUT, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_USAGE_STAGING)
+			.unwrap();
+		let interval = std::time::Duration::from_secs_f64(1.0 / 60.0);
+		let (mut latencies, mut previews, mut failures, mut bytes) = (Vec::new(), Vec::new(), 0, 0);
+		let started = std::time::Instant::now();
+		let mut next = started;
+		for frame in 0..FRAMES {
+			let now = std::time::Instant::now();
+			if next > now {
+				std::thread::sleep(next - now);
+			}
+			next = (next + interval).max(std::time::Instant::now());
+			let begun = std::time::Instant::now();
+			let texture = &textures[frame % textures.len()];
+			if frame % 6 == 0 {
+				let preview = std::time::Instant::now();
+				let _ = converter.preview(texture);
+				previews.push(preview.elapsed());
+			}
+			let encoded = if memory {
+				let mut data = Vec::with_capacity(width * height * 4);
+				// SAFETY: The staging copy is mapped for reading and unmapped right after.
+				unsafe {
+					converter.immediate.CopyResource(&staging, texture);
+					let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+					converter
+						.immediate
+						.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
+						.unwrap();
+					let pitch = mapped.RowPitch as usize;
+					let rows =
+						std::slice::from_raw_parts(mapped.pData.cast::<u8>(), pitch * height);
+					for row in rows.chunks_exact(pitch) {
+						data.extend_from_slice(&row[..width * 4]);
+					}
+					converter.immediate.Unmap(&staging, 0);
+				}
+				let raw = RawFrame {
+					width: INPUT.0,
+					height: INPUT.1,
+					stride: width * 4,
+					data,
+					surface: None,
+				};
+				let (out_width, out_height) = (OUTPUT.0 as usize, OUTPUT.1 as usize);
+				encoder.encode_with(out_width * out_height * 3 / 2, frame == 0, |picture| {
+					convert::bgra_to_yuv420(
+						&raw,
+						out_width,
+						out_height,
+						convert::Chroma::Interleaved,
+						picture,
+					)
+				})
+			} else {
+				let surface = converter.convert(texture).unwrap().unwrap();
+				encoder.encode_surface(&surface, frame == 0)
+			};
+			match encoded {
+				Ok((data, _)) => bytes += data.len(),
+				Err(_) => failures += 1,
+			}
+			latencies.push(begun.elapsed());
+		}
+		let elapsed = started.elapsed();
+		let game = load.map(GpuLoad::finish);
+		let summary = |samples: &mut Vec<std::time::Duration>| {
+			samples.sort();
+			let ms = |index: usize| samples[index.min(samples.len() - 1)].as_secs_f64() * 1e3;
+			format!(
+				"p50 {:.1} ms, p95 {:.1} ms, max {:.1} ms",
+				ms(samples.len() / 2),
+				ms(samples.len() * 95 / 100),
+				ms(samples.len() - 1)
+			)
+		};
+		let late = latencies
+			.iter()
+			.filter(|latency| **latency > interval)
+			.count();
+		eprintln!(
+			"GPU stream path, {FRAMES} frames 1440p -> 1080p60: {:.1} fps, capture to encoded {}, \
+			 {late} over one frame, {failures} failed, {:.1} Mbps; preview {}; game load: {}",
+			FRAMES as f64 / elapsed.as_secs_f64(),
+			summary(&mut latencies),
+			bytes as f64 * 8.0 / elapsed.as_secs_f64() / 1e6,
+			summary(&mut previews),
+			game.map_or("off".into(), |frames| format!(
+				"{:.0} fps",
+				f64::from(frames) / elapsed.as_secs_f64()
+			)),
+		);
 	}
 }

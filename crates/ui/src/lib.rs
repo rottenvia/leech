@@ -389,6 +389,8 @@ pub struct MessagingUi {
 	pub toasts: toasts::Toasts,
 	pending_upload: Option<pending::Upload>,
 	pub clear_cache_requested: bool,
+	/// Settings asked to show the stream log in the file manager.
+	pub show_stream_log_requested: bool,
 	pub voice_available: bool,
 	voice_switch: Option<voice::CallSwitch>,
 	pub screen: screen::ScreenUi,

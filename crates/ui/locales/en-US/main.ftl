@@ -4386,6 +4386,10 @@ voice-voice-processing-controls-suppression-strength = Suppression strength
 # Context: voice_settings_content
 # Context: voice_settings_content
 voice-voice-settings-content-camera = Camera
+voice-stream-log = Stream log
+voice-stream-log-file = Log file
+voice-stream-log-show = Show log file
+voice-stream-log-detail = While you share or watch a screen, Leech notes every second how smooth it is: frame rate, lost packets, GPU and CPU load. Send this file when a stream lags. It holds no pictures, names or messages.
 # Context: voice_settings_content
 voice-voice-settings-content-compare-with-the-other-participants-this-code-changes-with-the = Compare with the other participants. This code changes with the encrypted call group.
 # Context: voice_settings_content

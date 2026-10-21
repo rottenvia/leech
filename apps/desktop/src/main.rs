@@ -349,6 +349,9 @@ fn main() -> eframe::Result {
 		eprintln!("Demo support is not included; rebuild with --features demo and run with --demo");
 		std::process::exit(2);
 	}
+	if let Ok(root) = local_store::data_dir() {
+		discord_voice::stream_log::set_directory(root.join("logs"));
+	}
 	// Fixture runs may overlap; real launches show the running client instead of duplicating it.
 	let mut instance = if demo {
 		platform::single_instance::Instance::default()
@@ -765,6 +768,44 @@ fn demo_check_extensions() {
 	println!(
 		"Extension debug check passed: starter packages, consent, retained deleted row, stale-history rejection and local remove."
 	);
+}
+
+/// Shows the stream log in the file manager, selected once a share or watched stream wrote it.
+fn reveal_stream_log() {
+	let Some(path) = discord_voice::stream_log::path() else {
+		return;
+	};
+	let Some(folder) = path.parent() else {
+		return;
+	};
+	let _ = std::fs::create_dir_all(folder);
+	let mut command;
+	#[cfg(target_os = "windows")]
+	{
+		use std::os::windows::process::CommandExt;
+		command = std::process::Command::new("explorer");
+		// Explorer reads `/select,` and a quoted path as one argument, unescaped.
+		if path.exists() {
+			command.raw_arg(format!("/select,\"{}\"", path.display()));
+		} else {
+			command.arg(folder);
+		}
+	}
+	#[cfg(target_os = "macos")]
+	{
+		command = std::process::Command::new("open");
+		if path.exists() {
+			command.arg("-R").arg(&path);
+		} else {
+			command.arg(folder);
+		}
+	}
+	#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+	{
+		command = std::process::Command::new("xdg-open");
+		command.arg(folder);
+	}
+	let _ = command.spawn();
 }
 
 fn parse_frame_sample(demo: bool, value: &str) -> Result<(Duration, Duration), &'static str> {
@@ -7503,6 +7544,9 @@ impl eframe::App for Desktop {
 			for channel in draft_changes {
 				let content = recovery_draft(&self.state, channel);
 				self.queue_cache(cache::Operation::SaveDraft { channel, content });
+			}
+			if std::mem::take(&mut self.messaging.show_stream_log_requested) {
+				reveal_stream_log();
 			}
 			if self.messaging.clear_cache_requested {
 				self.messaging.clear_cache_requested = false;

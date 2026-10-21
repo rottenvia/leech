@@ -57,6 +57,8 @@ impl Drop for Runtime {
 }
 
 pub(crate) struct Encoder {
+	/// The transform's friendly name, such as "NVIDIA H.264 Encoder MFT".
+	name: String,
 	transform: IMFTransform,
 	events: IMFMediaEventGenerator,
 	codec: ICodecAPI,
@@ -244,6 +246,7 @@ impl Encoder {
 				output_buffer_size(&info, max_buffer_bytes)?;
 			}
 			let events = transform.cast().map_err(|_| UNAVAILABLE)?;
+			let name = friendly_name(&activate.0);
 			transform
 				.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)
 				.map_err(|_| UNAVAILABLE)?;
@@ -251,6 +254,7 @@ impl Encoder {
 				.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)
 				.map_err(|_| UNAVAILABLE)?;
 			Ok(Self {
+				name,
 				transform,
 				events,
 				codec,
@@ -266,6 +270,10 @@ impl Encoder {
 				provides_samples,
 			})
 		}
+	}
+
+	pub(crate) fn name(&self) -> &str {
+		&self.name
 	}
 
 	pub(crate) fn set_bitrate(&mut self, bitrate: u32) -> Result<(), &'static str> {
@@ -396,7 +404,9 @@ impl Encoder {
 	}
 
 	fn wait_until(&mut self, ready: impl Fn(&Self) -> bool) -> Result<(), &'static str> {
-		let deadline = Instant::now() + Duration::from_millis(250);
+		// A game can hold the GPU for a few hundred milliseconds (loading a level); only an
+		// encoder silent for a whole second is treated as failed and reopened.
+		let deadline = Instant::now() + Duration::from_secs(1);
 		while !ready(self) {
 			// SAFETY: Event polling stays on the worker that owns this MFT.
 			let event = unsafe { self.events.GetEvent(MF_EVENT_FLAG_NO_WAIT) };
@@ -457,6 +467,24 @@ impl Encoder {
 			let keyframe = crate::video_receive::is_keyframe(&data);
 			Ok((data, keyframe))
 		}
+	}
+}
+
+/// The activation's friendly name, or a generic one when it has none.
+fn friendly_name(activate: &IMFActivate) -> String {
+	let mut text = windows::core::PWSTR::null();
+	let mut length = 0;
+	// SAFETY: Media Foundation allocates the string; it is copied, then freed once.
+	unsafe {
+		if activate
+			.GetAllocatedString(&MFT_FRIENDLY_NAME_Attribute, &mut text, &mut length)
+			.is_err()
+		{
+			return "Hardware H.264 encoder".into();
+		}
+		let name = text.to_string().unwrap_or_default();
+		CoTaskMemFree(Some(text.0.cast()));
+		name.chars().take(80).collect()
 	}
 }
 

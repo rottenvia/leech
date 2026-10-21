@@ -46,8 +46,9 @@ impl Settings {
 			(1920, 1080) => 8_000_000,
 			_ => 4_000_000,
 		};
-		// Discord's own 1080p60 Go Live reportedly peaks near 8 Mbps (unverified). More only
-		// overruns viewers' downlinks; H.264 screen content stays sharp below it.
-		(base * if self.fps == 60 { 2 } else { 1 }).min(8_000_000)
+		// Hardware encoders run without B-frames or lookahead for low latency, so a moving game
+		// at 1080p60 needs about 12 Mbps to stay sharp. Congestion control lowers it on slower
+		// links, and viewers repair the odd lost packet.
+		(base * if self.fps == 60 { 2 } else { 1 }).min(12_000_000)
 	}
 }

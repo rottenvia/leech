@@ -518,7 +518,7 @@ mod tests {
 			(settings.width, settings.height, settings.fps),
 			(1920, 1080, 60)
 		);
-		assert_eq!(settings.bit_rate(), 8_000_000);
+		assert_eq!(settings.bit_rate(), 12_000_000);
 		picker.audio = true;
 		assert!(picker.settings().unwrap().audio);
 		picker.audio = false;
