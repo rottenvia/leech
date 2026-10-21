@@ -1075,6 +1075,16 @@ seeking replays decoding from the start instead of retaining the file.
 
 ## Screen sharing
 
+### Stream log (October 21, 2026)
+
+While a screen is shared or watched, Leech appends one line a second to
+`<data folder>/logs/stream.log`: capture, encode and send rates, lost and repaired packets,
+rate control, and whole-system GPU and CPU use from Windows performance counters. Session
+headers name the Leech version, OS build, graphics adapters, stream size and encoder. A file
+reaching 1 MiB is renamed to `stream.previous.log`, replacing the older one, so the log never
+exceeds 2 MiB. It holds no pictures, audio, names, IDs, addresses or keys, is never uploaded,
+and is shown only by Settings → Voice & Video → Show log file.
+
 Screen/window labels, selected source identifiers, settings, raw pixels and encoded video exist only in session memory. They are not written to SQLite, diagnostics, previews or video files. Sources and video queues use the limits in [screen-sharing compatibility](discord-compatibility.md#outgoing-screen-sharing--september-11-2026). Stream credentials and DAVE identities are ephemeral and redacted; the signing key is shared with the active voice call and zeroized when its final owner drops. Native OS/driver capture surfaces are distinct from application-owned frame buffers. Synthetic PR screenshots are development evidence, excluded from runtime assets.
 
 An opened live-stream preview retains one URL of at most 2,048 bytes and one bounded still in

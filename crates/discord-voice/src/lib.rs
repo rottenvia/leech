@@ -8,6 +8,7 @@ mod diagnostics;
 mod jitter;
 mod mixer;
 pub mod screen;
+pub mod stream_log;
 mod stream_playout;
 mod timer;
 mod transport;

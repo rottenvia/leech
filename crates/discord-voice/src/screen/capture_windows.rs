@@ -119,10 +119,13 @@ impl GraphicsCaptureApiHandler for Handler {
 			control.stop();
 			return Ok(());
 		}
+		crate::stream_log::add(crate::stream_log::Count::Captured, 1);
 		let now = Instant::now();
-		if now + Duration::from_millis(2) < self.0.next_frame
-			|| self.0.pending.swap(true, Ordering::AcqRel)
-		{
+		if now + Duration::from_millis(2) < self.0.next_frame {
+			return Ok(());
+		}
+		if self.0.pending.swap(true, Ordering::AcqRel) {
+			crate::stream_log::add(crate::stream_log::Count::CaptureBusy, 1);
 			return Ok(());
 		}
 		self.0.next_frame = (self.0.next_frame + self.0.interval).max(now + self.0.interval / 2);
@@ -151,7 +154,12 @@ impl GraphicsCaptureApiHandler for Handler {
 					return Ok(());
 				}
 				// The memory path below carries the stream from here on.
-				Err(_) => self.0.gpu.store(false, Ordering::Release),
+				Err(error) => {
+					crate::stream_log::event(format_args!(
+						"capture: {error}; copying pictures through memory"
+					));
+					self.0.gpu.store(false, Ordering::Release);
+				}
 			}
 		}
 		self.1 = None;
@@ -236,6 +244,7 @@ impl Handler {
 			}
 		}
 		let Some(surface) = converter.convert(&texture)? else {
+			crate::stream_log::add(crate::stream_log::Count::CapturePool, 1);
 			return Ok(false);
 		};
 		Ok(self

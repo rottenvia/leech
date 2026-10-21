@@ -758,8 +758,8 @@ remote video counter is non-zero. Each counter names one place a picture can be 
 between the UDP socket and the display, so a frozen viewer is diagnosed from one line:
 
 - `packets` / `rtx`: accepted video RTP packets (including restored retransmissions),
-  and received retransmission packets (payload 102). Announced RTX sources can repair
-  gaps in the current picture; Leech does not yet send NACK requests.
+  and received retransmission packets (payload 102). Leech NACKs missing packets and holds
+  later ones up to 250 ms, so announced RTX sources repair gaps without a keyframe.
 - `open_failed`: packets of any payload rejected by the transport AEAD.
 - `not_ready`: video packets received before the DAVE session was ready or from a
   user outside the group; expected briefly after joining or an epoch change.

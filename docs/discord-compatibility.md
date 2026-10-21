@@ -681,6 +681,15 @@ bounded token burst. Missing or exhausted history requests an IDR instead. A 500
 of sending progress discards the pending frame and requests recovery; slowly draining
 large keyframes are not repeatedly truncated. Rekeys clear history and pending repairs.
 
+Viewers (October 21, 2026) send RFC 4585 generic NACKs for missing video packets: at once
+when a gap shows, then every 80 ms, three times at most, with up to 64 sequence numbers per
+packet and the stream connection's audio SSRC as the sender, as for PLI. Later packets wait
+per source until the gap is repaired by RTX or 250 ms pass (at most 1,024 packets / 2 MiB);
+only then is the picture dropped and a keyframe requested. Before this every lost packet froze
+the picture until the next keyframe: a simulated minute of 1080p60 at 1% loss and a 60 ms round
+trip showed 461 of 3,600 pictures, and 3,596 with repair. Whether Discord's media server
+forwards viewer NACKs or answers them itself is unverified; both reach the sender's RTX path.
+
 The offline `video_interop` example exercises authenticated feedback, rate changes,
 loss/RTX recovery, paced packetization, transport/DAVE round trips, source replacement
 and the existing playback debug checks. Native Linux/Windows rate changes, real network
@@ -793,7 +802,7 @@ permission, virtual device, output rerouting or recording file is added.
 
 Gateway opcodes 18/19 and STREAM_CREATE/STREAM_SERVER_UPDATE/STREAM_DELETE are unofficial normal-user behavior, checked against [discord.py-self](https://github.com/dolfies/discord.py-self/blob/master/discord/gateway.py). A separate RTC connection uses the stream RTC server/channel IDs and the parent call session, sharing one ephemeral DAVE signing identity. The `rtc_server_id - 1` MLS group mapping comes from [discord-native-voice](https://github.com/dolfies/discord-native-voice/blob/master/discord/ext/native_voice/stream_client.py); it is not an official protocol guarantee. H264 negotiation and UDP transport are required; mismatches fail visibly. Video is DAVE-encrypted before RFC 6184 packetization and per-packet transport AEAD. There is no plaintext fallback. [DAVE protocol](https://github.com/discord/dave-protocol/blob/main/protocol.md) supplies the encryption requirement.
 
-Screen source discovery and capture occur off the UI/audio threads. Application-owned source lists are capped at 64 labels of 256 bytes. Raw BGRA frames are capped at 3840×2160/33,177,600 bytes; macOS requests the selected output dimensions. Windows prechecks source size and stops on oversized callback frames, but its upstream driver adapter can resize its native GPU pool before that callback. One raw frame and three encoded frames can be queued; on Windows the raw frame is normally an NV12 GPU texture at the stream size. H264 frames are capped at 2 MiB, encrypted packetization at 2,048 fragments of at most 1,200 transport bytes. Quality presets target 2–8 Mbps, with frame dropping under load. They are limits/targets, not measured delivery guarantees.
+Screen source discovery and capture occur off the UI/audio threads. Application-owned source lists are capped at 64 labels of 256 bytes. Raw BGRA frames are capped at 3840×2160/33,177,600 bytes; macOS requests the selected output dimensions. Windows prechecks source size and stops on oversized callback frames, but its upstream driver adapter can resize its native GPU pool before that callback. One raw frame and three encoded frames can be queued; on Windows the raw frame is normally an NV12 GPU texture at the stream size. H264 frames are capped at 2 MiB, encrypted packetization at 2,048 fragments of at most 1,200 transport bytes. Quality presets target 2–12 Mbps (12 Mbps only at 1080p60), with frame dropping under load. They are limits/targets, not measured delivery guarantees.
 
 Call and stream transports send an eight-byte native UDP ping after discovery and every
 five seconds, including receive-only streams and muted calls. The packet uses the

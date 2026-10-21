@@ -2,7 +2,7 @@
 //! dedicated thread. Frames stay bounded (1080p RGBA) and no video is ever written to disk.
 //! Discord's video signaling is unofficial; live interoperability is unverified.
 use std::{
-	collections::HashMap,
+	collections::{BTreeMap, HashMap},
 	sync::{
 		Arc, Mutex,
 		atomic::{AtomicBool, AtomicU64, Ordering},
@@ -25,6 +25,17 @@ const MAX_WIDTH: u32 = 1920;
 const MAX_PIXELS: u64 = 1920 * 1080;
 const START_CODE: [u8; 4] = [0, 0, 0, 1];
 const MAX_DECODE_AGE: Duration = Duration::from_millis(150);
+/// How long packets behind a sequence gap wait for a retransmission before the picture is
+/// given up and a keyframe requested instead.
+const REPAIR_WAIT: Duration = Duration::from_millis(250);
+/// NACK resend interval and attempts per missing packet.
+const NACK_RETRY: Duration = Duration::from_millis(80);
+const NACK_TRIES: u8 = 3;
+/// Packets and bytes held behind gaps per source: about a second of 1080p60 video.
+const MAX_HELD_PACKETS: usize = 1024;
+const MAX_HELD_BYTES: usize = 2 * 1024 * 1024;
+/// Sequence numbers named per NACK packet.
+pub(crate) const MAX_NACKS: usize = 64;
 
 /// One decoded remote picture in the decoder's native layout (NV12 or I420 on every
 /// current backend); the renderer converts colour.
@@ -163,6 +174,16 @@ impl Assembler {
 		marker: bool,
 		payload: &[u8],
 	) -> Option<Vec<u8>> {
+		if payload.is_empty() {
+			// Padding-only packets (bandwidth probes) take a sequence number but carry no media.
+			if self
+				.next_sequence
+				.is_none_or(|expected| expected == sequence)
+			{
+				self.next_sequence = Some(sequence.wrapping_add(1));
+			}
+			return None;
+		}
 		if let Some(expected) = self.next_sequence {
 			let distance = sequence.wrapping_sub(expected);
 			if distance >= 32768 {
@@ -319,10 +340,183 @@ impl Assembler {
 	}
 }
 
+struct Held {
+	timestamp: u32,
+	marker: bool,
+	payload: Vec<u8>,
+}
+
+struct Missing {
+	since: Instant,
+	nacked: Option<Instant>,
+	tries: u8,
+}
+
+/// Restores RTP order for one source and holds packets behind a gap while NACKs ask for the
+/// missing ones, so a lost packet costs one round trip instead of a frozen picture until the
+/// next keyframe. In-order packets pass straight through.
+#[derive(Default)]
+pub(crate) struct Repair {
+	/// Extended sequence number of the next packet the assembler needs.
+	next: Option<u64>,
+	newest: u64,
+	held: BTreeMap<u64, Held>,
+	held_bytes: usize,
+	missing: BTreeMap<u64, Missing>,
+}
+
+#[derive(Default)]
+struct RepairOutcome {
+	lost: u64,
+	repaired: u64,
+	unrepaired: u64,
+}
+
+type Deliver<'a> = dyn FnMut(u16, u32, bool, &[u8]) + 'a;
+
+impl Repair {
+	/// Feed one packet; `deliver` receives packets in sequence order. A gap that outlived
+	/// `REPAIR_WAIT` is skipped, which the assembler then sees as loss.
+	fn push(
+		&mut self,
+		sequence: u16,
+		timestamp: u32,
+		marker: bool,
+		payload: &[u8],
+		now: Instant,
+		deliver: &mut Deliver<'_>,
+	) -> RepairOutcome {
+		let mut outcome = RepairOutcome::default();
+		let Some(next) = self.next else {
+			// Far from zero, so packets reordered before the first one never underflow.
+			self.newest = (1 << 32) + u64::from(sequence);
+			self.next = Some(self.newest + 1);
+			deliver(sequence, timestamp, marker, payload);
+			return outcome;
+		};
+		let ext = next.wrapping_add_signed(i64::from(sequence.wrapping_sub(next as u16) as i16));
+		if ext < next || self.held.contains_key(&ext) {
+			return outcome;
+		}
+		outcome.repaired = u64::from(self.missing.remove(&ext).is_some());
+		if ext == next && self.held.is_empty() {
+			self.next = Some(next + 1);
+			self.newest = self.newest.max(ext);
+			deliver(sequence, timestamp, marker, payload);
+			return outcome;
+		}
+		if ext - next >= MAX_HELD_PACKETS as u64 {
+			// The sender restarted or a long outage passed: no repair bridges this.
+			outcome.unrepaired = self.skip(u64::MAX, deliver);
+			outcome.unrepaired += self.missing.len() as u64;
+			self.missing.clear();
+			self.next = Some(ext + 1);
+			self.newest = ext;
+			deliver(sequence, timestamp, marker, payload);
+			return outcome;
+		}
+		for gap in (self.newest + 1).max(next)..ext {
+			self.missing.insert(
+				gap,
+				Missing {
+					since: now,
+					nacked: None,
+					tries: 0,
+				},
+			);
+			outcome.lost += 1;
+		}
+		self.newest = self.newest.max(ext);
+		self.held_bytes += payload.len();
+		self.held.insert(
+			ext,
+			Held {
+				timestamp,
+				marker,
+				payload: payload.to_vec(),
+			},
+		);
+		self.drain(deliver);
+		outcome.unrepaired += self.expire(now, deliver);
+		outcome
+	}
+
+	/// Give up gaps older than `REPAIR_WAIT`, or the oldest ones while over the hold limits.
+	fn expire(&mut self, now: Instant, deliver: &mut Deliver<'_>) -> u64 {
+		let mut given_up = 0;
+		while let Some(missing) = self.missing.first_key_value().map(|(_, missing)| missing)
+			&& (now.saturating_duration_since(missing.since) >= REPAIR_WAIT
+				|| self.held.len() > MAX_HELD_PACKETS
+				|| self.held_bytes > MAX_HELD_BYTES)
+		{
+			let Some(&resume) = self.held.keys().next() else {
+				break;
+			};
+			given_up += self.skip(resume, deliver);
+		}
+		given_up
+	}
+
+	/// Skip the gaps before `resume`, or every gap for `u64::MAX`, delivering what is held.
+	fn skip(&mut self, resume: u64, deliver: &mut Deliver<'_>) -> u64 {
+		let mut given_up = 0;
+		while let Some(&key) = self.held.keys().next()
+			&& key <= resume
+		{
+			let kept = self.missing.split_off(&key);
+			given_up += std::mem::replace(&mut self.missing, kept).len() as u64;
+			self.next = Some(key);
+			self.drain(deliver);
+			if resume != u64::MAX {
+				break;
+			}
+		}
+		given_up
+	}
+
+	fn drain(&mut self, deliver: &mut Deliver<'_>) {
+		let Some(mut next) = self.next else { return };
+		while let Some(entry) = self.held.first_entry()
+			&& *entry.key() == next
+		{
+			let held = entry.remove();
+			self.held_bytes -= held.payload.len();
+			deliver(next as u16, held.timestamp, held.marker, &held.payload);
+			next += 1;
+		}
+		self.next = Some(next);
+	}
+
+	/// Missing sequence numbers due a NACK now: at once, then every `NACK_RETRY` up to
+	/// `NACK_TRIES` times. A reordered packet costs at most one needless resend.
+	fn nacks(&mut self, now: Instant, out: &mut Vec<u16>) {
+		for (&ext, missing) in &mut self.missing {
+			if out.len() >= MAX_NACKS {
+				break;
+			}
+			let due = missing.nacked.is_none_or(|at| {
+				missing.tries < NACK_TRIES && now.saturating_duration_since(at) >= NACK_RETRY
+			});
+			if due {
+				missing.nacked = Some(now);
+				missing.tries += 1;
+				out.push(ext as u16);
+			}
+		}
+	}
+}
+
+/// Packet order repair and picture reassembly for one remote video source.
+#[derive(Default)]
+pub(crate) struct Track {
+	repair: Repair,
+	assembler: Assembler,
+}
+
 /// Remote video SSRC ownership and per-source reassembly for one media transport.
 #[derive(Default)]
 pub(crate) struct Receivers {
-	sources: Vec<(u32, u64, Assembler)>,
+	sources: Vec<(u32, u64, Track)>,
 	rtx: Vec<(u32, u32)>,
 	/// Users whose decoder lost a reference picture; only a keyframe restarts their video.
 	awaiting_keyframe: Vec<u64>,
@@ -335,6 +529,10 @@ pub(crate) struct ReceiveStats {
 	pub unknown_ssrc: u64,
 	pub incomplete: u64,
 	pub complete: u64,
+	/// Packets found missing, recovered by retransmission, and given up.
+	pub lost: u64,
+	pub repaired: u64,
+	pub unrepaired: u64,
 }
 impl Receivers {
 	/// Bind an announced video SSRC to a user; zero clears that user's sources.
@@ -346,7 +544,7 @@ impl Receivers {
 		if let Some(entry) = self.sources.iter_mut().find(|(s, _, _)| *s == ssrc) {
 			if entry.1 != user {
 				entry.1 = user;
-				entry.2 = Assembler::default();
+				entry.2 = Track::default();
 				self.rtx.retain(|(_, media)| *media != ssrc);
 			}
 			return Ok(());
@@ -354,7 +552,7 @@ impl Receivers {
 		if self.sources.len() >= MAX_SOURCES {
 			return Err("Voice channel announces more video sources than supported");
 		}
-		self.sources.push((ssrc, user, Assembler::default()));
+		self.sources.push((ssrc, user, Track::default()));
 		self.require_keyframe(user);
 		Ok(())
 	}
@@ -453,7 +651,8 @@ impl Receivers {
 		}
 		!self.awaiting_keyframe.contains(&user)
 	}
-	/// Returns the owning user and a complete encrypted access unit when one closes.
+	/// Returns the owning user and each complete encrypted access unit this packet closes:
+	/// several when a retransmission fills a gap that held later pictures back.
 	pub fn push(
 		&mut self,
 		ssrc: u32,
@@ -461,21 +660,50 @@ impl Receivers {
 		timestamp: u32,
 		marker: bool,
 		payload: &[u8],
-	) -> Option<(u64, Vec<u8>)> {
-		let Some((_, user, assembler)) = self.sources.iter_mut().find(|(s, _, _)| *s == ssrc)
-		else {
+		now: Instant,
+	) -> Vec<(u64, Vec<u8>)> {
+		let Some((_, user, track)) = self.sources.iter_mut().find(|(s, _, _)| *s == ssrc) else {
 			self.stats.unknown_ssrc += 1;
-			return None;
+			return Vec::new();
 		};
 		let user = *user;
-		let frame = assembler.push(sequence, timestamp, marker, payload);
-		let lost = std::mem::take(&mut assembler.lost);
+		let (mut frames, mut lost) = (Vec::new(), false);
+		let Track { repair, assembler } = track;
+		let outcome = repair.push(
+			sequence,
+			timestamp,
+			marker,
+			payload,
+			now,
+			&mut |sequence, timestamp, marker, payload| {
+				if let Some(frame) = assembler.push(sequence, timestamp, marker, payload) {
+					frames.push((user, frame));
+				}
+				lost |= std::mem::take(&mut assembler.lost);
+			},
+		);
+		self.stats.lost += outcome.lost;
+		self.stats.repaired += outcome.repaired;
+		self.stats.unrepaired += outcome.unrepaired;
 		self.stats.incomplete += u64::from(lost);
-		self.stats.complete += u64::from(frame.is_some());
+		self.stats.complete += frames.len() as u64;
 		if lost {
 			self.require_keyframe(user);
 		}
-		frame.map(|frame| (user, frame))
+		frames
+	}
+
+	/// Sequence numbers to NACK now, per media SSRC.
+	pub fn nacks(&mut self, now: Instant) -> Vec<(u32, Vec<u16>)> {
+		let mut requests = Vec::new();
+		for (ssrc, _, track) in &mut self.sources {
+			let mut missing = Vec::new();
+			track.repair.nacks(now, &mut missing);
+			if !missing.is_empty() {
+				requests.push((*ssrc, missing));
+			}
+		}
+		requests
 	}
 }
 
@@ -519,6 +747,32 @@ pub(crate) fn pli(sender: u32, media: u32) -> ([u8; 8], [u8; 4]) {
 	let mut header = [0x81, 206, 0, 2, 0, 0, 0, 0];
 	header[4..].copy_from_slice(&sender.to_be_bytes());
 	(header, media.to_be_bytes())
+}
+
+/// RFC 4585 generic NACK for `missing` packets of `media`, given in ascending order. Each
+/// entry names one packet and, in its mask, any of the sixteen after it.
+pub(crate) fn nack(sender: u32, media: u32, missing: &[u16]) -> ([u8; 8], Vec<u8>) {
+	let mut entries: Vec<(u16, u16)> = Vec::new();
+	for &sequence in missing.iter().take(MAX_NACKS) {
+		if let Some((first, mask)) = entries.last_mut() {
+			let distance = sequence.wrapping_sub(*first);
+			if (1..=16).contains(&distance) {
+				*mask |= 1 << (distance - 1);
+				continue;
+			}
+		}
+		entries.push((sequence, 0));
+	}
+	let mut header = [0x81, 205, 0, 0, 0, 0, 0, 0];
+	header[2..4].copy_from_slice(&(2 + entries.len() as u16).to_be_bytes());
+	header[4..].copy_from_slice(&sender.to_be_bytes());
+	let mut body = Vec::with_capacity(4 + entries.len() * 4);
+	body.extend_from_slice(&media.to_be_bytes());
+	for (first, mask) in entries {
+		body.extend_from_slice(&first.to_be_bytes());
+		body.extend_from_slice(&mask.to_be_bytes());
+	}
+	(header, body)
 }
 
 /// Queue a frame without blocking the transport. `Ok(false)` means the queue was full and
@@ -1260,24 +1514,59 @@ mod tests {
 	}
 	#[test]
 	fn packet_loss_requests_a_keyframe_before_accepting_predictions() {
+		let start = Instant::now();
 		for missing_marker in [false, true] {
 			let mut receivers = Receivers::default();
 			receivers.announce(7, 700).unwrap();
-			assert!(receivers.push(700, 1, 900, true, &[0x65, 1]).is_some());
+			assert_eq!(
+				receivers.push(700, 1, 900, true, &[0x65, 1], start).len(),
+				1
+			);
 			assert!(receivers.accept(7, true));
 			assert!(receivers.keyframe_requests().next().is_none());
+			let later = start + REPAIR_WAIT;
+			let next = if missing_marker { 4 } else { 6 };
 			if missing_marker {
-				assert!(receivers.push(700, 2, 1800, false, &[0x41, 1]).is_none());
+				assert!(
+					receivers
+						.push(700, 2, 1800, false, &[0x41, 1], start)
+						.is_empty()
+				);
 				// A new timestamp exposes an unfinished prior picture even without a sequence gap.
-				assert!(receivers.push(700, 3, 2700, true, &[0x41, 2]).is_some());
+				assert_eq!(
+					receivers.push(700, 3, 2700, true, &[0x41, 2], start).len(),
+					1
+				);
 			} else {
-				assert!(receivers.push(700, 3, 1800, true, &[0x41, 1]).is_none());
+				// A gap holds the next picture back while the missing packet can still be resent,
+				assert!(receivers.push(700, 2, 1800, true, &[0x41, 1], start).len() == 1);
+				assert!(
+					receivers
+						.push(700, 4, 2700, true, &[0x41, 2], start)
+						.is_empty()
+				);
+				assert!(receivers.keyframe_requests().next().is_none());
+				// then drops the broken picture and asks for a keyframe once that wait is over.
+				assert_eq!(
+					receivers.push(700, 5, 3600, true, &[0x41, 2], later).len(),
+					1
+				);
 			}
 			assert_eq!(receivers.keyframe_requests().collect::<Vec<_>>(), vec![700]);
 			assert!(!receivers.accept(7, false));
-			assert!(receivers.push(700, 4, 3600, true, &[0x41, 3]).is_some());
+			assert_eq!(
+				receivers
+					.push(700, next, 4500, true, &[0x41, 3], later)
+					.len(),
+				1
+			);
 			assert!(!receivers.accept(7, false));
-			assert!(receivers.push(700, 5, 4500, true, &[0x65, 4]).is_some());
+			assert_eq!(
+				receivers
+					.push(700, next + 1, 5400, true, &[0x65, 4], later)
+					.len(),
+				1
+			);
 			assert!(receivers.accept(7, true));
 			assert!(receivers.keyframe_requests().next().is_none());
 			assert!(receivers.accept(7, false));
@@ -1286,14 +1575,31 @@ mod tests {
 		{
 			let mut receivers = Receivers::default();
 			receivers.announce(7, 700).unwrap();
-			assert!(receivers.push(999, 1, 900, true, &[0x65, 1]).is_none());
-			assert!(receivers.push(700, 1, 900, true, &[0x65, 1]).is_some());
-			assert!(receivers.push(700, 3, 1800, true, &[0x41, 1]).is_none());
+			assert!(
+				receivers
+					.push(999, 1, 900, true, &[0x65, 1], start)
+					.is_empty()
+			);
+			assert_eq!(
+				receivers.push(700, 1, 900, true, &[0x65, 1], start).len(),
+				1
+			);
+			assert!(
+				receivers
+					.push(700, 3, 1800, true, &[0x41, 1], start)
+					.is_empty()
+			);
+			assert!(
+				receivers
+					.push(700, 4, 2700, true, &[0x41, 1], start + REPAIR_WAIT)
+					.len() == 1
+			);
 			let stats = receivers.take_stats();
 			assert_eq!(
 				(stats.unknown_ssrc, stats.incomplete, stats.complete),
-				(1, 1, 1)
+				(1, 1, 2)
 			);
+			assert_eq!((stats.lost, stats.repaired, stats.unrepaired), (1, 0, 1));
 			assert!(receivers.awaiting());
 			let stats = receivers.take_stats();
 			assert_eq!(
@@ -1303,17 +1609,274 @@ mod tests {
 		}
 	}
 	#[test]
+	fn a_lost_packet_is_asked_for_again_and_its_retransmission_completes_the_pictures() {
+		let start = Instant::now();
+		let mut receivers = Receivers::default();
+		receivers.announce(7, 700).unwrap();
+		assert_eq!(
+			receivers
+				.push(700, 65534, 900, true, &[0x65, 1], start)
+				.len(),
+			1
+		);
+		assert!(receivers.accept(7, true));
+		// The first half of the next picture (65535, across the wrap) is lost; its second half
+		// and the picture after it arrive and wait.
+		let (first_half, second_half) = ([0x7c, 0x81, 1], [0x7c, 0x41, 2]);
+		assert!(
+			receivers
+				.push(700, 0, 1800, true, &second_half, start)
+				.is_empty()
+		);
+		assert!(
+			receivers
+				.push(700, 1, 2700, true, &[0x41, 3], start)
+				.is_empty()
+		);
+		// Asked for at once, and again only after a while.
+		let asked = start;
+		assert_eq!(receivers.nacks(asked), vec![(700, vec![65535])]);
+		assert!(receivers.nacks(asked).is_empty());
+		assert_eq!(
+			receivers.nacks(asked + NACK_RETRY),
+			vec![(700, vec![65535])]
+		);
+		// The retransmission releases both pictures in order, and no keyframe is needed.
+		let frames = receivers.push(700, 65535, 1800, false, &first_half, asked + NACK_RETRY);
+		assert_eq!(
+			frames,
+			vec![
+				(7, vec![0, 0, 0, 1, 0x61, 1, 2]),
+				(7, vec![0, 0, 0, 1, 0x41, 3])
+			]
+		);
+		assert!(receivers.accept(7, false));
+		assert!(receivers.keyframe_requests().next().is_none());
+		// A late duplicate of a delivered packet changes nothing.
+		assert!(
+			receivers
+				.push(700, 65535, 1800, false, &first_half, asked + NACK_RETRY)
+				.is_empty()
+		);
+		let stats = receivers.take_stats();
+		assert_eq!((stats.lost, stats.repaired, stats.unrepaired), (1, 1, 0));
+		// Padding-only packets fill the sequence without breaking the next picture.
+		assert!(receivers.push(700, 2, 2700, false, &[], asked).is_empty());
+		assert_eq!(
+			receivers.push(700, 3, 3600, true, &[0x41, 4], asked).len(),
+			1
+		);
+		assert!(receivers.keyframe_requests().next().is_none());
+		// A jump no repair could bridge gives up at once instead of holding a second of video.
+		assert!(
+			receivers
+				.push(700, 3 + 2000, 4500, true, &[0x65, 5], asked)
+				.is_empty()
+		);
+		assert_eq!(receivers.keyframe_requests().collect::<Vec<_>>(), vec![700]);
+		assert!(receivers.nacks(asked + NACK_RETRY * 2).is_empty());
+		assert_eq!(
+			receivers
+				.push(700, 3 + 2001, 5400, true, &[0x65, 6], asked)
+				.len(),
+			1
+		);
+	}
+	#[test]
+	fn nacks_pack_sixteen_packets_per_entry_and_parse_back() {
+		let (header, body) = nack(9, 42, &[65535, 0, 1, 20, 40]);
+		assert_eq!(header, [0x81, 205, 0, 5, 0, 0, 0, 9]);
+		assert_eq!(
+			body,
+			[0, 0, 0, 42, 0xff, 0xff, 0, 3, 0, 20, 0, 0, 0, 40, 0, 0]
+		);
+		let mut crypto = crate::crypto::Encryption::new(&[7; 32]);
+		let packet = crypto.seal_rtcp(&header, &body).unwrap();
+		assert_eq!(
+			crypto.feedback(&packet, 42).unwrap().nacks,
+			[65535, 0, 1, 20, 40]
+		);
+	}
+	/// A viewer of one minute of 1080p60 video through random loss and a 60 ms round trip.
+	/// Returns pictures shown, the longest freeze and the time spent frozen (gaps over
+	/// 150 ms, longer than a retransmission round trip), in milliseconds. Without `repair` it runs the depacketizer alone, as
+	/// Leech did before NACKs: every loss waits for a keyframe.
+	fn watch_through_loss(loss: f64, repair: bool) -> (usize, u64, u64) {
+		use std::{cmp::Reverse, collections::BinaryHeap};
+		const FRAMES: u32 = 3600;
+		let (frame, rtt) = (Duration::from_micros(16_667), Duration::from_millis(60));
+		let start = Instant::now();
+		let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+		let mut lost = move || {
+			seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+			((seed >> 11) as f64) < loss * (1u64 << 53) as f64
+		};
+		// Arrivals by time: (at, sequence, timestamp, marker, payload).
+		let mut arrivals = BinaryHeap::new();
+		let mut sent: HashMap<u16, (u32, bool, Vec<u8>)> = HashMap::new();
+		let (mut receivers, mut assembler) = (Receivers::default(), Assembler::default());
+		receivers.announce(7, 700).unwrap();
+		let (mut awaiting, mut keyframe_due, mut next_pli) = (true, Duration::ZERO, Duration::ZERO);
+		let (mut sequence, mut shown, mut last_shown) = (0u16, 0, Duration::ZERO);
+		let (mut longest, mut frozen) = (Duration::ZERO, Duration::ZERO);
+		let mut tick = Duration::ZERO;
+		for index in 0..FRAMES {
+			let at = frame * index;
+			// The sender answers a keyframe request half a round trip after it was sent.
+			let key = index == 0 || (keyframe_due != Duration::ZERO && at >= keyframe_due);
+			if key {
+				keyframe_due = Duration::ZERO;
+			}
+			let (packets, kind) = if key { (60, 5) } else { (15, 1) };
+			for part in 0..packets {
+				let header = match part {
+					0 => 0x80 | kind,
+					part if part == packets - 1 => 0x40 | kind,
+					_ => kind,
+				};
+				let payload = vec![0x7c, header, index as u8];
+				let marker = part == packets - 1;
+				sent.insert(sequence, (index * 1500, marker, payload.clone()));
+				if !lost() {
+					arrivals.push(Reverse((
+						at + rtt / 2,
+						sequence,
+						index * 1500,
+						marker,
+						payload,
+					)));
+				}
+				sequence = sequence.wrapping_add(1);
+			}
+			// Deliver everything that arrived before the next picture, with 20 ms ticks.
+			let until = at + frame;
+			loop {
+				let next_arrival = arrivals.peek().map(|Reverse(arrival)| arrival.0);
+				let next_tick = tick + Duration::from_millis(20);
+				if next_arrival.is_some_and(|arrival| arrival <= next_tick.min(until)) {
+					let Reverse((now, sequence, timestamp, marker, payload)) =
+						arrivals.pop().unwrap();
+					let frames = if repair {
+						receivers.push(700, sequence, timestamp, marker, &payload, start + now)
+					} else {
+						let frame = assembler.push(sequence, timestamp, marker, &payload);
+						if std::mem::take(&mut assembler.lost) {
+							awaiting = true;
+						}
+						frame.map(|frame| (7, frame)).into_iter().collect()
+					};
+					if repair {
+						for (_, missing) in receivers.nacks(start + now) {
+							for sequence in missing {
+								let (timestamp, marker, payload) = sent[&sequence].clone();
+								if !lost() {
+									arrivals.push(Reverse((
+										now + rtt,
+										sequence,
+										timestamp,
+										marker,
+										payload,
+									)));
+								}
+							}
+						}
+					}
+					for (_, data) in frames {
+						let keyframe = is_keyframe(&data);
+						let accepted = if repair {
+							receivers.accept(7, keyframe)
+						} else {
+							awaiting &= !keyframe;
+							!awaiting
+						};
+						if accepted {
+							let gap = now - last_shown;
+							longest = longest.max(gap);
+							if gap > Duration::from_millis(150) {
+								frozen += gap;
+							}
+							(shown, last_shown) = (shown + 1, now);
+						}
+					}
+				} else if next_tick <= until {
+					tick = next_tick;
+					if repair {
+						for (_, missing) in receivers.nacks(start + tick) {
+							for sequence in missing {
+								let (timestamp, marker, payload) = sent[&sequence].clone();
+								if !lost() {
+									arrivals.push(Reverse((
+										tick + rtt,
+										sequence,
+										timestamp,
+										marker,
+										payload,
+									)));
+								}
+							}
+						}
+						awaiting = receivers.awaiting();
+					}
+					if awaiting && tick >= next_pli {
+						next_pli = tick + Duration::from_millis(500);
+						if keyframe_due == Duration::ZERO {
+							keyframe_due = tick + rtt / 2;
+						}
+					}
+				} else {
+					break;
+				}
+			}
+		}
+		let ms = |duration: Duration| duration.as_millis() as u64;
+		(shown, ms(longest), ms(frozen))
+	}
+
+	/// `cargo test -p discord-voice compare_loss_recovery -- --ignored --nocapture`
+	#[test]
+	#[ignore]
+	fn compare_loss_recovery() {
+		for loss in [0.001, 0.005, 0.01, 0.03] {
+			for repair in [false, true] {
+				let (shown, longest, frozen) = watch_through_loss(loss, repair);
+				eprintln!(
+					"{:.1}% loss, {}: {shown} of 3600 pictures shown, longest freeze {longest} ms, \
+					 {:.1} s frozen per minute",
+					loss * 100.0,
+					if repair {
+						"NACK repair"
+					} else {
+						"keyframes only"
+					},
+					frozen as f64 / 1000.0,
+				);
+			}
+		}
+	}
+
+	#[test]
+	fn repair_keeps_a_lossy_stream_moving() {
+		let (shown, longest, frozen) = watch_through_loss(0.01, true);
+		assert!(shown > 3500, "{shown} pictures shown");
+		assert!(
+			longest < 300 && frozen < 1000,
+			"longest {longest} ms, frozen {frozen} ms"
+		);
+	}
+
+	#[test]
 	fn receivers_bind_ssrcs_to_users_within_the_source_limit() {
 		let mut receivers = Receivers::default();
 		receivers.announce(5, 100).unwrap();
 		receivers.announce(5, 101).unwrap();
+		let now = Instant::now();
 		assert_eq!(
-			receivers.push(100, 1, 1, true, &[0x41, 1]).unwrap(),
-			(5, vec![0, 0, 0, 1, 0x41, 1])
+			receivers.push(100, 1, 1, true, &[0x41, 1], now),
+			vec![(5, vec![0, 0, 0, 1, 0x41, 1])]
 		);
-		assert!(receivers.push(999, 1, 1, true, &[0x41, 1]).is_none());
+		assert!(receivers.push(999, 1, 1, true, &[0x41, 1], now).is_empty());
 		receivers.announce(5, 0).unwrap();
-		assert!(receivers.push(100, 2, 2, true, &[0x41, 1]).is_none());
+		assert!(receivers.push(100, 2, 2, true, &[0x41, 1], now).is_empty());
 		for ssrc in 1..=MAX_SOURCES as u32 {
 			receivers.announce(u64::from(ssrc), ssrc).unwrap();
 		}
