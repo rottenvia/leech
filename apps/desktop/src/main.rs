@@ -1000,6 +1000,8 @@ struct Desktop {
 	video: video::Video,
 	/// Synthetic stream/camera textures the demo view borrows by id.
 	_demo_textures: Vec<egui::TextureHandle>,
+	/// The synthetic screen share, decoded-video shaped (`--demo-call-stream`).
+	_demo_stream: gpu_video::VideoTexture,
 	/// Offline fixture flags start (and optionally pause) the demo attachment without input.
 	demo_video_autoplay: Option<bool>,
 	notifications: platform::notifications::Notifications,
@@ -1761,6 +1763,8 @@ impl Desktop {
 		// Fixture video textures the view borrows by id; the desktop keeps them alive.
 		#[cfg_attr(not(feature = "demo"), allow(unused_mut))]
 		let mut demo_textures: Vec<egui::TextureHandle> = Vec::new();
+		#[cfg_attr(not(feature = "demo"), allow(unused_mut))]
+		let mut demo_stream = gpu_video::VideoTexture::default();
 		if !demo {
 			messaging.custom_font.busy = cache.as_ref().is_some_and(|cache| {
 				cache.queue(
@@ -1857,28 +1861,39 @@ impl Desktop {
 				}
 				sim.settle(&mut state, now);
 			}
-			let (width, height) = (640usize, 360usize);
-			let pixels = (0..width * height)
-				.map(|i| {
-					let (x, y) = (i % width, i / width);
-					let grid = usize::from(x % 80 < 2 || y % 80 < 2) as u8;
-					egui::Color32::from_rgb(
-						24 + grid * 40 + (x * 90 / width) as u8,
-						28 + grid * 40 + (y * 70 / height) as u8,
-						48 + grid * 50,
-					)
-				})
-				.collect();
-			let image = egui::ColorImage {
-				size: [width, height],
-				source_size: egui::vec2(width as f32, height as f32),
-				pixels,
-			};
-			let texture =
-				cc.egui_ctx
-					.load_texture("synthetic-stream", image, egui::TextureOptions::LINEAR);
-			messaging.voice_stream_view = Some(egui::load::SizedTexture::from_handle(&texture));
-			demo_textures.push(texture);
+			// A decoded 1080p I420 frame, so the stage and picture-in-picture draw it through the
+			// same GPU conversion and mipmaps as a live share. The zone plate in the middle
+			// reaches the finest detail a picture can hold at its rim and shows any aliasing
+			// when the picture is drawn smaller.
+			let (width, height) = (1920usize, 1080usize);
+			let mut data = vec![0u8; width * height * 3 / 2];
+			let (luma, chroma) = data.split_at_mut(width * height);
+			for (i, sample) in luma.iter_mut().enumerate() {
+				let (x, y) = (i % width, i / width);
+				let (dx, dy) = (x as f32 - 960.0, y as f32 - 540.0);
+				let radius = dx * dx + dy * dy;
+				*sample = if radius < 360.0 * 360.0 {
+					(128.0 + 96.0 * (radius * std::f32::consts::PI / 720.0).cos()) as u8
+				} else {
+					let grid = u8::from(x % 120 < 3 || y % 120 < 3);
+					36 + grid * 48 + (x * 40 / width) as u8 + (y * 24 / height) as u8
+				};
+			}
+			let (blue, red) = chroma.split_at_mut(chroma.len() / 2);
+			blue.fill(142);
+			red.fill(122);
+			messaging.voice_stream_view = demo_stream.upload(
+				&cc.egui_ctx,
+				"synthetic-stream",
+				platform::video::Picture {
+					width: width as u32,
+					height: height as u32,
+					layout: platform::video::Layout::I420,
+					color: platform::video::Color::WEBRTC,
+					rotation: 0,
+					data: &data,
+				},
+			);
 			messaging.voice_stream_status = "Watching the stream";
 			// `--demo-focus` additionally opens the enlarged stage layout.
 			if std::env::args().any(|arg| arg == "--demo-focus") {
@@ -2331,6 +2346,7 @@ impl Desktop {
 			audio: audio::Audio::default(),
 			video: video::Video::default(),
 			_demo_textures: demo_textures,
+			_demo_stream: demo_stream,
 			demo_video_autoplay: if std::env::args().any(|arg| arg == "--demo-video-paused") {
 				Some(true)
 			} else if std::env::args().any(|arg| arg == "--demo-video-playing") {

@@ -122,10 +122,7 @@ impl MessagingUi {
 	/// window's bottom-right corner sized to the stream.
 	fn open_voice_pip(&mut self, ctx: &egui::Context, user: Id) {
 		let placement = self.voice_pip_rect.unwrap_or_else(|| {
-			let aspect = self.voice_stream_view.map_or(16.0 / 9.0, |texture| {
-				(texture.size.x / texture.size.y.max(1.0)).clamp(1.0, 2.4)
-			});
-			let size = egui::vec2(480.0, (480.0 / aspect).round());
+			let size = self.voice_pip_size();
 			let parent = ctx
 				.input(|input| input.viewport().inner_rect)
 				.unwrap_or(egui::Rect::from_min_size(egui::Pos2::ZERO, size));
@@ -133,6 +130,15 @@ impl MessagingUi {
 			egui::Rect::from_min_size(min, size)
 		});
 		self.voice_pip = Some((user, placement));
+	}
+
+	/// The picture-in-picture window's normal size: 480 pt wide at the stream's aspect,
+	/// clamped to 1:1–2.4:1.
+	fn voice_pip_size(&self) -> egui::Vec2 {
+		let aspect = self.voice_stream_view.map_or(16.0 / 9.0, |texture| {
+			(texture.size.x / texture.size.y.max(1.0)).clamp(1.0, 2.4)
+		});
+		egui::vec2(480.0, (480.0 / aspect).round())
 	}
 
 	/// Picture-in-picture: the watched share alone in a small borderless window of its own.
@@ -160,7 +166,7 @@ impl MessagingUi {
 			.with_title(format!("{name}'s screen"))
 			.with_position(placement.min)
 			.with_inner_size(placement.size())
-			.with_min_inner_size([192.0, 108.0])
+			.with_min_inner_size([240.0, 135.0])
 			.with_decorations(false)
 			.with_taskbar(false)
 			.with_active(false)
@@ -190,12 +196,13 @@ impl MessagingUi {
 		}
 	}
 
-	/// The picture-in-picture window's surface: the picture letterboxed on black, dragged from
-	/// anywhere, with its actions fading in while the pointer is over the window.
+	/// The picture-in-picture window's surface: the picture letterboxed on black (or stretched
+	/// over the whole window), dragged from anywhere, with its actions fading in while the
+	/// pointer is over the window.
 	fn voice_pip_ui(&mut self, ui: &mut egui::Ui) -> Option<PipAction> {
 		let rect = ui.max_rect();
 		ui.painter().rect_filled(rect, 0, egui::Color32::BLACK);
-		let (maximized, closed, placement) = ui.input(|input| {
+		let (maximized, closed, placement, monitor) = ui.input(|input| {
 			let viewport = input.viewport();
 			(
 				viewport.maximized == Some(true),
@@ -205,6 +212,7 @@ impl MessagingUi {
 					.outer_rect
 					.zip(viewport.inner_rect)
 					.map(|(outer, inner)| egui::Rect::from_min_size(outer.min, inner.size())),
+				viewport.monitor_size,
 			)
 		});
 		if !maximized && placement.is_some() {
@@ -213,9 +221,15 @@ impl MessagingUi {
 		design::window_drag(ui, rect);
 		match self.voice_stream_view {
 			Some(texture) => {
+				// The video texture carries mipmaps and is sampled trilinearly with anisotropy,
+				// so squeezing one axis harder than the other keeps the picture sharp.
 				ui.painter().image(
 					texture.id,
-					fit_rect(rect, texture.size),
+					if self.voice_pip_stretch {
+						rect
+					} else {
+						fit_rect(rect, texture.size)
+					},
 					egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
 					egui::Color32::WHITE,
 				);
@@ -252,13 +266,26 @@ impl MessagingUi {
 		if shown > 0.0 {
 			let accent = design::palette(ui).accent;
 			let size = 32.0;
-			let mut right = rect.right() - PIP_INSET;
-			for button in [PipButton::Close, PipButton::Back, PipButton::Pin] {
-				let area = egui::Rect::from_min_size(
-					egui::pos2(right - size, rect.top() + PIP_INSET),
+			// Window actions sit in the top-right corner, picture actions in the top-left.
+			let slot = |index: f32, right: bool| {
+				let offset = PIP_INSET + index * (size + 6.0);
+				let x = if right {
+					rect.right() - offset - size
+				} else {
+					rect.left() + offset
+				};
+				egui::Rect::from_min_size(
+					egui::pos2(x, rect.top() + PIP_INSET),
 					egui::Vec2::splat(size),
-				);
-				right -= size + 6.0;
+				)
+			};
+			for (button, area) in [
+				(PipButton::Close, slot(0.0, true)),
+				(PipButton::Back, slot(1.0, true)),
+				(PipButton::Pin, slot(2.0, true)),
+				(PipButton::Stretch, slot(0.0, false)),
+				(PipButton::Reset, slot(1.0, false)),
+			] {
 				let response = ui.interact(
 					area,
 					ui.scope_id().with(("voice-pip-button", button as u8)),
@@ -269,11 +296,20 @@ impl MessagingUi {
 					},
 				);
 				let pinned = button == PipButton::Pin && !self.voice_pip_unpinned;
+				let on = pinned || (button == PipButton::Stretch && self.voice_pip_stretch);
 				let hover = design::hover_motion(ui, &response);
-				let fill = if pinned {
+				// A lifted dark gray rather than black, so the plate and its hover still show
+				// over the black letterbox bars.
+				let fill = if on {
 					accent
 				} else {
-					egui::Color32::from_black_alpha((160.0 + 60.0 * hover) as u8)
+					let lift = 34.0 + 26.0 * hover;
+					egui::Color32::from_rgba_unmultiplied(
+						lift as u8,
+						lift as u8,
+						(lift + 4.0) as u8,
+						(190.0 + 30.0 * hover) as u8,
+					)
 				};
 				ui.painter()
 					.rect_filled(area, 8, fill.gamma_multiply(shown));
@@ -296,6 +332,24 @@ impl MessagingUi {
 							("Keep on top", "Keep this window above other windows")
 						}
 					}
+					PipButton::Stretch => {
+						paint_stretch_glyph(ui.painter(), glyph, color);
+						if self.voice_pip_stretch {
+							(
+								"Fit picture",
+								"Show the whole picture at its own aspect ratio",
+							)
+						} else {
+							(
+								"Stretch to fill",
+								"Stretch the picture over the whole window",
+							)
+						}
+					}
+					PipButton::Reset => {
+						paint_reset_glyph(ui.painter(), glyph, color);
+						("Reset size", "Return to the normal picture-in-picture size")
+					}
 				};
 				response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
 				if response.on_hover_text(hint).clicked() {
@@ -303,6 +357,21 @@ impl MessagingUi {
 						PipButton::Close => action = Some(PipAction::Close),
 						PipButton::Back => action = Some(PipAction::Back),
 						PipButton::Pin => self.voice_pip_unpinned = !self.voice_pip_unpinned,
+						PipButton::Stretch => self.voice_pip_stretch = !self.voice_pip_stretch,
+						PipButton::Reset => {
+							let current = self.voice_pip_rect.or(placement).unwrap_or(rect);
+							let target = pip_reset_rect(current, self.voice_pip_size(), monitor);
+							if maximized {
+								ui.ctx()
+									.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+							}
+							for command in [
+								egui::ViewportCommand::OuterPosition(target.min),
+								egui::ViewportCommand::InnerSize(target.size()),
+							] {
+								ui.ctx().send_viewport_cmd(command);
+							}
+						}
 					}
 				}
 			}
@@ -6081,6 +6150,82 @@ fn paint_pip_glyph(painter: &egui::Painter, rect: egui::Rect, color: egui::Color
 	);
 }
 
+/// Polylines on Phosphor's 256-unit grid in its bold weight, placed like the atlas glyphs.
+fn paint_grid_lines(
+	painter: &egui::Painter,
+	rect: egui::Rect,
+	color: egui::Color32,
+	lines: &[&[[f32; 2]]],
+) {
+	let unit = rect.width() * 56.0 / 64.0 / 256.0;
+	let origin = rect.min + egui::Vec2::splat(rect.width() * 4.0 / 64.0);
+	for line in lines {
+		let points = line
+			.iter()
+			.map(|[x, y]| origin + egui::vec2(*x, *y) * unit)
+			.collect();
+		painter.add(egui::Shape::line(
+			points,
+			egui::Stroke::new(24.0 * unit, color),
+		));
+	}
+}
+
+/// Stretch to fill: a double arrow pulling the picture out sideways.
+fn paint_stretch_glyph(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+	paint_grid_lines(
+		painter,
+		rect,
+		color,
+		&[
+			&[[32.0, 128.0], [224.0, 128.0]],
+			&[[88.0, 72.0], [32.0, 128.0], [88.0, 184.0]],
+			&[[168.0, 72.0], [224.0, 128.0], [168.0, 184.0]],
+		],
+	);
+}
+
+/// Reset size: Phosphor's corners-in, the four corners drawn back towards the middle.
+fn paint_reset_glyph(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+	paint_grid_lines(
+		painter,
+		rect,
+		color,
+		&[
+			&[[160.0, 48.0], [160.0, 96.0], [208.0, 96.0]],
+			&[[96.0, 48.0], [96.0, 96.0], [48.0, 96.0]],
+			&[[160.0, 208.0], [160.0, 160.0], [208.0, 160.0]],
+			&[[96.0, 208.0], [96.0, 160.0], [48.0, 160.0]],
+		],
+	);
+}
+
+/// Where the picture-in-picture window goes when its size is reset to `size`. A window on the
+/// screen at the desktop origin keeps the screen corner it sits nearest, so one docked in the
+/// bottom-right stays docked there; elsewhere the top-left corner stays put.
+fn pip_reset_rect(
+	current: egui::Rect,
+	size: egui::Vec2,
+	monitor: Option<egui::Vec2>,
+) -> egui::Rect {
+	let screen = monitor.map(|size| egui::Rect::from_min_size(egui::Pos2::ZERO, size));
+	let Some(screen) = screen.filter(|screen| screen.contains_rect(current)) else {
+		return egui::Rect::from_min_size(current.min, size);
+	};
+	let x = if current.center().x > screen.center().x {
+		current.right() - size.x
+	} else {
+		current.left()
+	};
+	let y = if current.center().y > screen.center().y {
+		current.bottom() - size.y
+	} else {
+		current.top()
+	};
+	let min = egui::pos2(x, y).min(screen.max - size).max(screen.min);
+	egui::Rect::from_min_size(min, size)
+}
+
 #[derive(Clone, Copy)]
 enum PipAction {
 	Back,
@@ -6092,6 +6237,8 @@ enum PipButton {
 	Close,
 	Back,
 	Pin,
+	Stretch,
+	Reset,
 }
 
 /// Gap between the picture-in-picture window's edge and its buttons; the resize corners
@@ -8192,6 +8339,37 @@ mod tests {
 		state.voice.active.as_mut().unwrap().watching = Some(Id(3));
 		frame(&mut messaging, &state, true);
 		assert_eq!(messaging.voice_pip.map(|(_, rect)| rect), Some(moved));
+	}
+
+	#[test]
+	fn resetting_picture_in_picture_size_keeps_the_screen_corner_it_sits_in() {
+		let size = egui::vec2(480.0, 270.0);
+		let monitor = Some(egui::vec2(1920.0, 1080.0));
+		let rect = |x, y, w, h| egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, h));
+		// Docked bottom-right and enlarged: shrinks back into that corner.
+		assert_eq!(
+			pip_reset_rect(rect(1000.0, 500.0, 900.0, 560.0), size, monitor),
+			rect(1420.0, 790.0, 480.0, 270.0)
+		);
+		// Small in the top-left: grows away from the corner.
+		assert_eq!(
+			pip_reset_rect(rect(10.0, 10.0, 240.0, 135.0), size, monitor),
+			rect(10.0, 10.0, 480.0, 270.0)
+		);
+		// Small in the bottom-right: grows inwards and stays on the screen.
+		assert_eq!(
+			pip_reset_rect(rect(1670.0, 935.0, 240.0, 135.0), size, monitor),
+			rect(1430.0, 800.0, 480.0, 270.0)
+		);
+		// On another monitor (or an unknown one) the top-left stays put.
+		assert_eq!(
+			pip_reset_rect(rect(2400.0, 100.0, 900.0, 500.0), size, monitor),
+			rect(2400.0, 100.0, 480.0, 270.0)
+		);
+		assert_eq!(
+			pip_reset_rect(rect(100.0, 100.0, 900.0, 500.0), size, None),
+			rect(100.0, 100.0, 480.0, 270.0)
+		);
 	}
 
 	#[test]

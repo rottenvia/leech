@@ -209,8 +209,15 @@ no roster or call bar.
   (drag to a screen edge, or Win+Arrow).
 - It opens without taking focus and, while pinned (the default), stays above other windows. It
   keeps playing while the main window is covered, minimized or showing another channel.
-- Hovering shows three buttons: pin or unpin, back to the call window, and close.
-- The window's position and size and the pin choice last for the session only.
+- Hovering shows the window's buttons on the right (pin or unpin, back to the call window,
+  close) and the picture's on the left:
+  - **Stretch to fill** draws the picture over the whole window instead of letterboxing it.
+  - **Reset size** returns the window to 480 pt wide at the stream's aspect. A window on the
+    primary screen keeps the screen corner it sits nearest.
+- The window's position and size and the pin and stretch choices last for the session only.
+- Video textures carry mipmaps, each level a Lanczos-2 reduction in linear light, sampled
+  trilinearly with 16x anisotropy. A picture drawn smaller than the stream (picture-in-picture,
+  a stage tile, a stretched axis) stays sharp without moire. Enlarging still filters bilinearly.
 - Stopping the watch, the streamer leaving or leaving the call closes it. Media is unchanged: it
   draws the same decoded texture as the stage.
 

@@ -426,6 +426,8 @@ pub struct MessagingUi {
 	voice_pip_rect: Option<egui::Rect>,
 	/// The picture-in-picture window stays above other windows unless the user unpins it.
 	voice_pip_unpinned: bool,
+	/// The picture-in-picture window fills its whole area, stretched, instead of letterboxing.
+	voice_pip_stretch: bool,
 	/// Whether the other participants stay visible as a strip under the enlarged tile.
 	pub voice_focus_participants: bool,
 	/// How far the call stage's hover chrome (and tile name badges) has faded out: 0 shown.
