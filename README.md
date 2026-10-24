@@ -40,6 +40,7 @@ the operating-system credential store.
 ```sh
 cargo xtask check     # formatting, Clippy, tests and policy checks
 cargo xtask package   # release package for the current platform
+cargo build --locked --profile release-fast -p leech  # optimized local build, minutes faster
 ```
 
 ## Documentation
