@@ -6694,6 +6694,18 @@ impl eframe::App for Desktop {
 	}
 	fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
 		let ctx = ui.ctx().clone();
+		// An open picture-in-picture window keeps passes running while this one is minimized,
+		// including restore frames that still have the minimized window's tiny size. Only that
+		// window shows anything then, and the main layout has no room to run.
+		let size = ctx.content_rect().size() * ctx.zoom_factor();
+		let [width, height] = app_settings::MIN_WINDOW_SIZE.map(|size| size as f32 * 0.5);
+		if ctx.input(|input| input.viewport().minimized == Some(true))
+			|| size.x < width
+			|| size.y < height
+		{
+			self.messaging.show_voice_pip(&ctx, &self.state);
+			return;
+		}
 		let title_bar_height = if self.login.is_some() || self.login_preview {
 			platform::LOGIN_HEADER_HEIGHT
 		} else if self.state.user.is_some() {

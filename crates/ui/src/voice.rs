@@ -118,6 +118,201 @@ impl MessagingUi {
 		true
 	}
 
+	/// Pop the watched share out into its own window: where it last sat, or in the main
+	/// window's bottom-right corner sized to the stream.
+	fn open_voice_pip(&mut self, ctx: &egui::Context, user: Id) {
+		let placement = self.voice_pip_rect.unwrap_or_else(|| {
+			let aspect = self.voice_stream_view.map_or(16.0 / 9.0, |texture| {
+				(texture.size.x / texture.size.y.max(1.0)).clamp(1.0, 2.4)
+			});
+			let size = egui::vec2(480.0, (480.0 / aspect).round());
+			let parent = ctx
+				.input(|input| input.viewport().inner_rect)
+				.unwrap_or(egui::Rect::from_min_size(egui::Pos2::ZERO, size));
+			let min = (parent.max - size - egui::Vec2::splat(24.0)).max(parent.min);
+			egui::Rect::from_min_size(min, size)
+		});
+		self.voice_pip = Some((user, placement));
+	}
+
+	/// Picture-in-picture: the watched share alone in a small borderless window of its own.
+	/// The OS moves, resizes and snaps it (Win+Arrow) like any window, and while pinned it
+	/// stays above other windows, so a game or browser keeps focus while the share plays.
+	pub fn show_voice_pip(&mut self, ctx: &egui::Context, state: &State) {
+		let Some((user, placement)) = self.voice_pip else {
+			return;
+		};
+		let Some(channel) = state
+			.voice
+			.active
+			.as_ref()
+			.filter(|call| call.watching == Some(user))
+			.map(|call| call.channel)
+		else {
+			self.voice_pip = None;
+			return;
+		};
+		let name = participant_user(state, channel, user)
+			.map_or_else(|| "Participant".to_owned(), |user| user.name.clone());
+		// Only creation reads position, size, taskbar and focus; later frames repeat the same
+		// values, so the user's moves and resizes stand.
+		let builder = egui::ViewportBuilder::default()
+			.with_title(format!("{name}'s screen"))
+			.with_position(placement.min)
+			.with_inner_size(placement.size())
+			.with_min_inner_size([192.0, 108.0])
+			.with_decorations(false)
+			.with_taskbar(false)
+			.with_active(false)
+			.with_window_level(if self.voice_pip_unpinned {
+				egui::WindowLevel::Normal
+			} else {
+				egui::WindowLevel::AlwaysOnTop
+			});
+		let action = ctx.show_viewport_immediate(
+			egui::ViewportId::from_hash_of("voice-pip"),
+			builder,
+			|ui, _| self.voice_pip_ui(ui),
+		);
+		match action {
+			Some(PipAction::Back) => {
+				self.voice_pip = None;
+				self.voice_focus = Some(StageFocus::Stream(user));
+				for command in [
+					egui::ViewportCommand::Minimized(false),
+					egui::ViewportCommand::Focus,
+				] {
+					ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, command);
+				}
+			}
+			Some(PipAction::Close) => self.voice_pip = None,
+			None => {}
+		}
+	}
+
+	/// The picture-in-picture window's surface: the picture letterboxed on black, dragged from
+	/// anywhere, with its actions fading in while the pointer is over the window.
+	fn voice_pip_ui(&mut self, ui: &mut egui::Ui) -> Option<PipAction> {
+		let rect = ui.max_rect();
+		ui.painter().rect_filled(rect, 0, egui::Color32::BLACK);
+		let (maximized, closed, placement) = ui.input(|input| {
+			let viewport = input.viewport();
+			(
+				viewport.maximized == Some(true),
+				viewport.close_requested(),
+				// Reopening sets the outer position and the inner size.
+				viewport
+					.outer_rect
+					.zip(viewport.inner_rect)
+					.map(|(outer, inner)| egui::Rect::from_min_size(outer.min, inner.size())),
+			)
+		});
+		if !maximized && placement.is_some() {
+			self.voice_pip_rect = placement;
+		}
+		design::window_drag(ui, rect);
+		match self.voice_stream_view {
+			Some(texture) => {
+				ui.painter().image(
+					texture.id,
+					fit_rect(rect, texture.size),
+					egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+					egui::Color32::WHITE,
+				);
+			}
+			None => {
+				let status = if self.voice_stream_status.is_empty() {
+					"Connecting to the stream…"
+				} else {
+					self.voice_stream_status
+				};
+				ui.put(
+					egui::Rect::from_center_size(
+						rect.center() - egui::vec2(0.0, 14.0),
+						egui::Vec2::splat(20.0),
+					),
+					egui::Spinner::new().color(stage_tones().muted),
+				);
+				ui.painter().text(
+					rect.center() + egui::vec2(0.0, 16.0),
+					egui::Align2::CENTER_CENTER,
+					status,
+					egui::FontId::proportional(12.0),
+					stage_tones().muted,
+				);
+			}
+		}
+		let hovered = ui
+			.input(|input| input.pointer.hover_pos())
+			.is_some_and(|pointer| rect.contains(pointer));
+		let shown =
+			ui.ctx()
+				.animate_bool_with_time(ui.scope_id().with("voice-pip-chrome"), hovered, 0.15);
+		let mut action = closed.then_some(PipAction::Close);
+		if shown > 0.0 {
+			let accent = design::palette(ui).accent;
+			let size = 32.0;
+			let mut right = rect.right() - PIP_INSET;
+			for button in [PipButton::Close, PipButton::Back, PipButton::Pin] {
+				let area = egui::Rect::from_min_size(
+					egui::pos2(right - size, rect.top() + PIP_INSET),
+					egui::Vec2::splat(size),
+				);
+				right -= size + 6.0;
+				let response = ui.interact(
+					area,
+					ui.scope_id().with(("voice-pip-button", button as u8)),
+					if hovered {
+						egui::Sense::click()
+					} else {
+						egui::Sense::hover()
+					},
+				);
+				let pinned = button == PipButton::Pin && !self.voice_pip_unpinned;
+				let hover = design::hover_motion(ui, &response);
+				let fill = if pinned {
+					accent
+				} else {
+					egui::Color32::from_black_alpha((160.0 + 60.0 * hover) as u8)
+				};
+				ui.painter()
+					.rect_filled(area, 8, fill.gamma_multiply(shown));
+				let glyph = area.shrink(7.0);
+				let color = egui::Color32::WHITE.gamma_multiply(shown);
+				let (label, hint) = match button {
+					PipButton::Close => {
+						crate::icons::paint(ui.painter(), crate::icons::Icon::Close, glyph, color);
+						("Close", "Close picture-in-picture")
+					}
+					PipButton::Back => {
+						paint_pip_glyph(ui.painter(), glyph, color);
+						("Back to Leech", "Play the share in the call window again")
+					}
+					PipButton::Pin => {
+						crate::icons::paint(ui.painter(), crate::icons::Icon::Pin, glyph, color);
+						if pinned {
+							("Unpin", "Stop keeping this window above other windows")
+						} else {
+							("Keep on top", "Keep this window above other windows")
+						}
+					}
+				};
+				response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+				if response.on_hover_text(hint).clicked() {
+					match button {
+						PipButton::Close => action = Some(PipAction::Close),
+						PipButton::Back => action = Some(PipAction::Back),
+						PipButton::Pin => self.voice_pip_unpinned = !self.voice_pip_unpinned,
+					}
+				}
+			}
+		}
+		if !maximized {
+			pip_resize(ui, rect);
+		}
+		action
+	}
+
 	/// Effective screen-share audio level, independent of participant voice levels.
 	pub fn voice_stream_volume(&self) -> u16 {
 		if self.voice_stream_muted {
@@ -1341,7 +1536,35 @@ impl MessagingUi {
 	) {
 		let name = participant_user(state, channel, streamer)
 			.map_or_else(|| "Participant".to_owned(), |user| user.name.clone());
+		let popped_out = !overlay && self.voice_pip.is_some_and(|(user, _)| user == streamer);
 		let content = match &self.voice_stream_view {
+			_ if popped_out => {
+				ui.painter().rect(
+					rect,
+					10,
+					stage_tones().tile,
+					STAGE_EDGE,
+					egui::StrokeKind::Inside,
+				);
+				if rect.height() >= 132.0 {
+					paint_pip_glyph(
+						ui.painter(),
+						egui::Rect::from_center_size(
+							rect.center() - egui::vec2(0.0, 16.0),
+							egui::Vec2::splat(32.0),
+						),
+						stage_tones().muted,
+					);
+					ui.painter().text(
+						rect.center() + egui::vec2(0.0, 18.0),
+						egui::Align2::CENTER_CENTER,
+						"Playing in picture-in-picture",
+						egui::FontId::proportional(13.0),
+						stage_tones().muted,
+					);
+				}
+				rect
+			}
 			Some(texture) => {
 				let content = fit_rect(rect, texture.size);
 				ui.put(
@@ -3299,10 +3522,16 @@ impl MessagingUi {
 		// share/more) before anything overlaps; mute, camera and hang-up always stay.
 		let actions = 2.0 * 48.0;
 		let essential = 2.0 * 48.0 + BAR_GAP + HANG_UP;
-		let side = [watched.is_some(), focused, screen_focused]
-			.iter()
-			.filter(|shown| **shown)
-			.count() as f32
+		// Stream volume and picture-in-picture, participants, then fullscreen.
+		let side = [
+			watched.is_some(),
+			watched.is_some(),
+			focused,
+			screen_focused,
+		]
+		.iter()
+		.filter(|shown| **shown)
+		.count() as f32
 			* 44.0;
 		let side_shown = bar.width() - 2.0 * STAGE_MARGIN >= essential + BAR_GAP + side;
 		let side = if side_shown { side } else { 0.0 };
@@ -3519,13 +3748,49 @@ impl MessagingUi {
 		);
 		view.spacing_mut().item_spacing.x = 4.0;
 		if screen_focused && side_shown {
-			let fullscreen = fullscreen_control(&mut view, stage_tones().text);
+			let text = stage_tones().text;
+			let fullscreen = view_control(
+				&mut view,
+				"Fullscreen",
+				"View this screen share in fullscreen",
+				|painter, rect| {
+					crate::icons::paint(painter, crate::icons::Icon::Fullscreen, rect, text);
+				},
+			);
 			if fullscreen.clicked() {
 				let previous = view.input(|input| input.viewport().fullscreen.unwrap_or(false));
 				self.voice_fullscreen = self
 					.voice_focus
 					.map(|focus| (focus, view.ctx().clone(), previous, fullscreen.id));
 				self.voice_fullscreen_request = Some(true);
+				self.voice_pip = None;
+			}
+		}
+		if let Some(user) = watched
+			&& side_shown
+		{
+			let open = self.voice_pip.is_some_and(|(pip, _)| pip == user);
+			let color = if open {
+				colors.accent
+			} else {
+				stage_tones().text
+			};
+			let pip = view_control(
+				&mut view,
+				"Picture-in-picture",
+				if open {
+					"Play the share here again"
+				} else {
+					"Pop the share out into a small window that can stay on top"
+				},
+				|painter, rect| paint_pip_glyph(painter, rect, color),
+			);
+			if pip.clicked() {
+				if open {
+					self.voice_pip = None;
+				} else {
+					self.open_voice_pip(view.ctx(), user);
+				}
 			}
 		}
 		if focused && side_shown {
@@ -5772,7 +6037,13 @@ fn control(
 	response.on_hover_text(hint)
 }
 
-fn fullscreen_control(ui: &mut egui::Ui, color: egui::Color32) -> egui::Response {
+/// A view action at the call bar's right edge (fullscreen, picture-in-picture).
+fn view_control(
+	ui: &mut egui::Ui,
+	label: &str,
+	hint: &str,
+	glyph: impl FnOnce(&egui::Painter, egui::Rect),
+) -> egui::Response {
 	let (rect, response) =
 		ui.allocate_exact_size(egui::vec2(48.0, CONTROL_HEIGHT), egui::Sense::click());
 	let hover = design::hover_motion(ui, &response);
@@ -5783,14 +6054,115 @@ fn fullscreen_control(ui: &mut egui::Ui, color: egui::Color32) -> egui::Response
 			egui::Color32::from_white_alpha((28.0 * hover) as u8),
 		);
 	}
-	crate::icons::paint(
+	glyph(
 		ui.painter(),
-		crate::icons::Icon::Fullscreen,
 		egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(22.0)),
+	);
+	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+	response.on_hover_text(hint)
+}
+
+/// Picture-in-picture glyph on Phosphor's 256-unit grid in its bold weight, placed like the
+/// atlas glyphs (56 of each 64-pixel cell): a frame with a filled window in its lower right.
+fn paint_pip_glyph(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+	let unit = rect.width() * 56.0 / 64.0 / 256.0;
+	let origin = rect.min + egui::Vec2::splat(rect.width() * 4.0 / 64.0);
+	let at = |x: f32, y: f32| origin + egui::vec2(x, y) * unit;
+	painter.rect_stroke(
+		egui::Rect::from_min_max(at(24.0, 40.0), at(232.0, 216.0)),
+		16.0 * unit,
+		egui::Stroke::new(24.0 * unit, color),
+		egui::StrokeKind::Middle,
+	);
+	painter.rect_filled(
+		egui::Rect::from_min_max(at(116.0, 112.0), at(196.0, 176.0)),
+		10.0 * unit,
 		color,
 	);
-	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Fullscreen"));
-	response.on_hover_text("View this screen share in fullscreen")
+}
+
+#[derive(Clone, Copy)]
+enum PipAction {
+	Back,
+	Close,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PipButton {
+	Close,
+	Back,
+	Pin,
+}
+
+/// Gap between the picture-in-picture window's edge and its buttons; the resize corners
+/// stay inside it so they never cover a button.
+const PIP_INSET: f32 = 10.0;
+
+/// Edge and corner resize handles for the borderless picture-in-picture window.
+fn pip_resize(ui: &mut egui::Ui, rect: egui::Rect) {
+	use egui::{CursorIcon as C, ResizeDirection as D};
+	let (l, r, t, b) = (rect.left(), rect.right(), rect.top(), rect.bottom());
+	let (edge, corner) = (6.0, PIP_INSET);
+	let at = |min: [f32; 2], max: [f32; 2]| egui::Rect::from_min_max(min.into(), max.into());
+	for (index, (handle, direction, cursor)) in [
+		(
+			at([l, t], [l + corner, t + corner]),
+			D::NorthWest,
+			C::ResizeNwSe,
+		),
+		(
+			at([r - corner, t], [r, t + corner]),
+			D::NorthEast,
+			C::ResizeNeSw,
+		),
+		(
+			at([l, b - corner], [l + corner, b]),
+			D::SouthWest,
+			C::ResizeNeSw,
+		),
+		(
+			at([r - corner, b - corner], [r, b]),
+			D::SouthEast,
+			C::ResizeNwSe,
+		),
+		(
+			at([l + corner, t], [r - corner, t + edge]),
+			D::North,
+			C::ResizeVertical,
+		),
+		(
+			at([l + corner, b - edge], [r - corner, b]),
+			D::South,
+			C::ResizeVertical,
+		),
+		(
+			at([l, t + corner], [l + edge, b - corner]),
+			D::West,
+			C::ResizeHorizontal,
+		),
+		(
+			at([r - edge, t + corner], [r, b - corner]),
+			D::East,
+			C::ResizeHorizontal,
+		),
+	]
+	.into_iter()
+	.enumerate()
+	{
+		let response = ui
+			.interact(
+				handle,
+				ui.scope_id().with(("voice-pip-resize", index)),
+				egui::Sense::click(),
+			)
+			.on_hover_cursor(cursor);
+		if response.is_pointer_button_down_on()
+			&& ui.input(|input| input.pointer.button_pressed(egui::PointerButton::Primary))
+		{
+			ui.ctx()
+				.send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
+		}
+	}
 }
 
 /// Filled call action (join, answer, decline): Discord's rounded green and red buttons.
@@ -7771,6 +8143,55 @@ mod tests {
 				}
 			}
 		}
+	}
+
+	#[test]
+	fn picture_in_picture_opens_in_the_window_corner_and_closes_with_the_share() {
+		let mut state = test_support::voice_demo_state();
+		state.voice.active.as_mut().unwrap().watching = Some(Id(3));
+		let ctx = egui::Context::default();
+		let mut messaging = MessagingUi {
+			voice_stream_view: Some(egui::load::SizedTexture::new(
+				egui::TextureId::default(),
+				egui::vec2(3440.0, 1080.0),
+			)),
+			..Default::default()
+		};
+		let frame = |messaging: &mut MessagingUi, state: &State, open: bool| {
+			let mut raw = egui::RawInput::default();
+			raw.viewports
+				.entry(egui::ViewportId::ROOT)
+				.or_default()
+				.inner_rect = Some(egui::Rect::from_min_size(
+				egui::pos2(100.0, 50.0),
+				egui::vec2(1200.0, 800.0),
+			));
+			ctx.run_ui(raw, |ui| {
+				if open {
+					messaging.open_voice_pip(ui.ctx(), Id(3));
+				}
+				messaging.show_voice_pip(ui.ctx(), state);
+			})
+			.drop_without_applying_deltas();
+		};
+		// Sized to the stream (ultrawide clamps to 2.4:1), inset from the window's corner.
+		frame(&mut messaging, &state, true);
+		let (user, placement) = messaging.voice_pip.unwrap();
+		assert_eq!(user, Id(3));
+		assert_eq!(placement.size(), egui::vec2(480.0, 200.0));
+		assert_eq!(placement.max, egui::pos2(1276.0, 826.0));
+		frame(&mut messaging, &state, false);
+		assert!(messaging.voice_pip.is_some());
+		// Stopping (or losing) the watched share closes the window with it.
+		state.voice.active.as_mut().unwrap().watching = None;
+		frame(&mut messaging, &state, false);
+		assert!(messaging.voice_pip.is_none());
+		// A remembered placement wins over the default corner.
+		let moved = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(640.0, 360.0));
+		messaging.voice_pip_rect = Some(moved);
+		state.voice.active.as_mut().unwrap().watching = Some(Id(3));
+		frame(&mut messaging, &state, true);
+		assert_eq!(messaging.voice_pip.map(|(_, rect)| rect), Some(moved));
 	}
 
 	#[test]

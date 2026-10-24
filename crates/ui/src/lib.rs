@@ -420,6 +420,12 @@ pub struct MessagingUi {
 	voice_fullscreen: Option<(voice::StageFocus, egui::Context, bool, egui::Id)>,
 	/// Native window transition for the desktop to apply after this UI frame.
 	voice_fullscreen_request: Option<bool>,
+	/// The watched share popped out into its own window, with the placement it opened at.
+	voice_pip: Option<(Id, egui::Rect)>,
+	/// Where the picture-in-picture window last sat (session only), to reopen it there.
+	voice_pip_rect: Option<egui::Rect>,
+	/// The picture-in-picture window stays above other windows unless the user unpins it.
+	voice_pip_unpinned: bool,
 	/// Whether the other participants stay visible as a strip under the enlarged tile.
 	pub voice_focus_participants: bool,
 	/// How far the call stage's hover chrome (and tile name badges) has faded out: 0 shown.
@@ -4246,6 +4252,8 @@ impl MessagingUi {
 		if back || forward {
 			self.navigate_history(state, &mut commands, back);
 		}
+		// Its own native window, so it keeps playing whatever the main window shows.
+		self.show_voice_pip(ui.ctx(), state);
 		// Fullscreen media owns the whole client surface, including during native resizing.
 		if self.show_fullscreen_voice(ui.ctx(), state) {
 			ui.painter()
