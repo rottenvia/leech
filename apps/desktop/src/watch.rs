@@ -62,10 +62,15 @@ impl Watch {
 		self.texture = Default::default();
 	}
 
-	/// The offline demo watches inside the simulated Discord; no video is received.
+	/// The offline demo watches inside the simulated Discord; no video is received. Only the
+	/// `--demo-call-stream` fixture supplies a picture, which lasts while the share is watched.
 	pub fn poll_simulated(&mut self, state: &State, ui: &mut ui::MessagingUi) {
-		ui.voice_stream_view = None;
-		ui.voice_stream_status = if state.voice.watch_live() {
+		if !state.voice.watch_live() {
+			ui.voice_stream_view = None;
+		}
+		ui.voice_stream_status = if ui.voice_stream_view.is_some() {
+			"Watching the stream"
+		} else if state.voice.watch_live() {
 			"Offline preview · no stream is received"
 		} else {
 			state.voice.watch_status()

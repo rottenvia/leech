@@ -1,8 +1,15 @@
 //! GPU colour conversion for decoded video. Decoders hand over their native NV12/I420 planes;
 //! one small render pass converts them (and applies track rotation) into an RGBA texture
 //! that egui draws like any other image. Uploads move 1.5 bytes per pixel instead of 4 and
-//! no per-pixel colour work runs on the CPU. Without a wgpu renderer (tests), the CPU
-//! fallback in [`platform::video::Picture::to_rgba`] feeds an ordinary egui texture.
+//! no per-pixel colour work runs on the CPU.
+//!
+//! Each frame also refills a mipmap chain, so a picture drawn smaller than its source (a stage
+//! tile, picture-in-picture, a stretched axis) is filtered trilinearly and anisotropically
+//! instead of skipping texels. Each level is a Lanczos-2 reduction of the one above it, in
+//! linear light where the device allows.
+//!
+//! Without a wgpu renderer (tests), the CPU fallback in [`platform::video::Picture::to_rgba`]
+//! feeds an ordinary egui texture.
 use eframe::{egui, egui_wgpu, wgpu};
 use platform::video::{Layout, Picture};
 use std::sync::{Arc, OnceLock};
@@ -88,6 +95,70 @@ fn fs_i420(in: Varyings) -> @location(0) vec4<f32> {
 }
 ";
 
+const DOWNSAMPLE: &str = r"
+@group(0) @binding(0) var source: texture_2d<f32>;
+@group(0) @binding(1) var linear: sampler;
+
+struct Varyings {
+	@builtin(position) position: vec4<f32>,
+	@location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> Varyings {
+	let corner = vec2<f32>(f32((index << 1u) & 2u), f32(index & 2u));
+	var out: Varyings;
+	out.position = vec4<f32>(corner.x * 2.0 - 1.0, 1.0 - corner.y * 2.0, 0.0, 1.0);
+	out.uv = corner;
+	return out;
+}
+
+// Lanczos-2 for a 2:1 reduction. Its eight taps per axis (texels 0.5 to 3.5 from the centre)
+// fold into four bilinear ones: the two positive lobes at 0.7115 and the two negative ones at
+// 2.6745. Next to a 2x2 box it keeps more of the detail the smaller level can hold and lets
+// through about a tenth as much of the detail it cannot, which would show as moire.
+const NEAR: f32 = 0.7115094;
+const FAR: f32 = 2.6744635;
+const NEAR_WEIGHT: f32 = 0.5508034;
+const FAR_WEIGHT: f32 = -0.0508034;
+
+fn row(uv: vec2<f32>, texel: f32) -> vec4<f32> {
+	let near = vec2<f32>(NEAR * texel, 0.0);
+	let far = vec2<f32>(FAR * texel, 0.0);
+	return NEAR_WEIGHT * (textureSampleLevel(source, linear, uv - near, 0.0)
+			+ textureSampleLevel(source, linear, uv + near, 0.0))
+		+ FAR_WEIGHT * (textureSampleLevel(source, linear, uv - far, 0.0)
+			+ textureSampleLevel(source, linear, uv + far, 0.0));
+}
+
+@fragment
+fn fs_main(in: Varyings) -> @location(0) vec4<f32> {
+	let texel = 1.0 / vec2<f32>(textureDimensions(source));
+	let near = vec2<f32>(0.0, NEAR * texel.y);
+	let far = vec2<f32>(0.0, FAR * texel.y);
+	return NEAR_WEIGHT * (row(in.uv - near, texel.x) + row(in.uv + near, texel.x))
+		+ FAR_WEIGHT * (row(in.uv - far, texel.x) + row(in.uv + far, texel.x));
+}
+";
+
+/// How egui samples video: trilinear across the mipmap chain plus 16x anisotropy, so a picture
+/// shrunk on one axis more than the other (a stretched picture-in-picture) stays sharp.
+fn display_sampler() -> wgpu::SamplerDescriptor<'static> {
+	wgpu::SamplerDescriptor {
+		label: Some("video"),
+		mag_filter: wgpu::FilterMode::Linear,
+		min_filter: wgpu::FilterMode::Linear,
+		mipmap_filter: wgpu::MipmapFilterMode::Linear,
+		anisotropy_clamp: 16,
+		..Default::default()
+	}
+}
+
+/// Mip levels down to 1x1 for a picture of `size`.
+fn mip_levels(size: (u32, u32)) -> u32 {
+	u32::BITS - size.0.max(size.1).max(1).leading_zeros()
+}
+
 /// Shared pipelines plus the renderer handles every [`VideoTexture`] uploads through.
 pub struct Converter {
 	device: wgpu::Device,
@@ -97,6 +168,11 @@ pub struct Converter {
 	nv12: wgpu::RenderPipeline,
 	i420: wgpu::RenderPipeline,
 	sampler: wgpu::Sampler,
+	downsample: wgpu::RenderPipeline,
+	downsample_layout: wgpu::BindGroupLayout,
+	/// How mip levels are viewed while they are filtered: sRGB (so in linear light) where the
+	/// device can view one texture in two formats.
+	mip_format: wgpu::TextureFormat,
 	/// Dropped textures awaiting [`collect`]; at most one frame's worth.
 	retired: egui::mutex::Mutex<Vec<egui::TextureId>>,
 }
@@ -180,6 +256,64 @@ impl Converter {
 			min_filter: wgpu::FilterMode::Linear,
 			..Default::default()
 		});
+		// Linear light keeps fine bright detail such as text from dimming as it shrinks.
+		let mip_format = if state
+			.adapter
+			.get_downlevel_capabilities()
+			.flags
+			.contains(wgpu::DownlevelFlags::VIEW_FORMATS)
+		{
+			wgpu::TextureFormat::Rgba8UnormSrgb
+		} else {
+			wgpu::TextureFormat::Rgba8Unorm
+		};
+		let downsample_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+			label: Some("video-mip"),
+			source: wgpu::ShaderSource::Wgsl(DOWNSAMPLE.into()),
+		});
+		let downsample_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+			label: Some("video-mip"),
+			entries: &[
+				texture(0),
+				wgpu::BindGroupLayoutEntry {
+					binding: 1,
+					visibility: wgpu::ShaderStages::FRAGMENT,
+					ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+					count: None,
+				},
+			],
+		});
+		let downsample_pipeline_layout =
+			device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+				label: Some("video-mip"),
+				bind_group_layouts: &[Some(&downsample_layout)],
+				immediate_size: 0,
+			});
+		let downsample = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+			label: Some("video-mip"),
+			layout: Some(&downsample_pipeline_layout),
+			vertex: wgpu::VertexState {
+				module: &downsample_module,
+				entry_point: Some("vs_main"),
+				compilation_options: Default::default(),
+				buffers: &[],
+			},
+			primitive: wgpu::PrimitiveState::default(),
+			depth_stencil: None,
+			multisample: wgpu::MultisampleState::default(),
+			fragment: Some(wgpu::FragmentState {
+				module: &downsample_module,
+				entry_point: Some("fs_main"),
+				compilation_options: Default::default(),
+				targets: &[Some(wgpu::ColorTargetState {
+					format: mip_format,
+					blend: None,
+					write_mask: wgpu::ColorWrites::ALL,
+				})],
+			}),
+			multiview_mask: None,
+			cache: None,
+		});
 		Arc::new(Self {
 			device: device.clone(),
 			queue: state.queue.clone(),
@@ -188,6 +322,9 @@ impl Converter {
 			i420: pipeline("fs_i420"),
 			layout,
 			sampler,
+			downsample,
+			downsample_layout,
+			mip_format,
 			retired: Default::default(),
 		})
 	}
@@ -215,12 +352,16 @@ impl Converter {
 				height: size.1,
 				depth_or_array_layers: 1,
 			},
-			mip_level_count: 1,
+			mip_level_count: if output { mip_levels(size) } else { 1 },
 			sample_count: 1,
 			dimension: wgpu::TextureDimension::D2,
 			format,
 			usage,
-			view_formats: &[],
+			view_formats: if output && self.mip_format != format {
+				std::slice::from_ref(&self.mip_format)
+			} else {
+				&[]
+			},
 		})
 	}
 
@@ -242,6 +383,77 @@ impl Converter {
 			size,
 		);
 	}
+
+	/// Render-target views of `output`'s mip levels, each further level with a bind group that
+	/// reads the level above it.
+	fn mip_chain(&self, output: &wgpu::Texture) -> Mips {
+		let view = |level, format| {
+			output.create_view(&wgpu::TextureViewDescriptor {
+				format: Some(format),
+				base_mip_level: level,
+				mip_level_count: Some(1),
+				..Default::default()
+			})
+		};
+		let levels = (1..output.mip_level_count())
+			.map(|level| {
+				let source = view(level - 1, self.mip_format);
+				let reads = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+					label: Some("video-mip"),
+					layout: &self.downsample_layout,
+					entries: &[
+						wgpu::BindGroupEntry {
+							binding: 0,
+							resource: wgpu::BindingResource::TextureView(&source),
+						},
+						wgpu::BindGroupEntry {
+							binding: 1,
+							resource: wgpu::BindingResource::Sampler(&self.sampler),
+						},
+					],
+				});
+				(view(level, self.mip_format), reads)
+			})
+			.collect();
+		Mips {
+			base: view(0, output.format()),
+			levels,
+		}
+	}
+
+	/// Refills every level below the first from the one above it.
+	fn downsample(&self, encoder: &mut wgpu::CommandEncoder, mips: &Mips) {
+		for (target, source) in &mips.levels {
+			let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+				label: Some("video-mip"),
+				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+					view: target,
+					depth_slice: None,
+					resolve_target: None,
+					ops: wgpu::Operations {
+						load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+						store: wgpu::StoreOp::Store,
+					},
+				})],
+				depth_stencil_attachment: None,
+				timestamp_writes: None,
+				occlusion_query_set: None,
+				multiview_mask: None,
+			});
+			pass.set_pipeline(&self.downsample);
+			pass.set_bind_group(0, source, &[]);
+			pass.draw(0..3, 0..1);
+		}
+	}
+}
+
+/// An output texture's mip levels as render targets.
+struct Mips {
+	/// The first level in the output's own format, which the conversion pass renders into.
+	base: wgpu::TextureView,
+	/// Each further level in the filtering format, with the bind group that reads the level
+	/// above it.
+	levels: Vec<(wgpu::TextureView, wgpu::BindGroup)>,
 }
 
 /// GPU planes for one picture size and layout, reused while the stream keeps them.
@@ -258,6 +470,7 @@ struct Gpu {
 	converter: Arc<Converter>,
 	id: egui::TextureId,
 	output: wgpu::Texture,
+	mips: Mips,
 	planes: Option<Planes>,
 }
 
@@ -326,27 +539,30 @@ impl VideoTexture {
 		if resized {
 			let output = converter.texture(name, display, wgpu::TextureFormat::Rgba8Unorm, true);
 			let view = output.create_view(&wgpu::TextureViewDescriptor::default());
+			let mips = converter.mip_chain(&output);
 			let mut renderer = converter.renderer.write();
 			match &mut self.gpu {
 				Some(gpu) => {
-					renderer.update_egui_texture_from_wgpu_texture(
+					renderer.update_egui_texture_from_wgpu_texture_with_sampler_options(
 						&converter.device,
 						&view,
-						wgpu::FilterMode::Linear,
+						display_sampler(),
 						gpu.id,
 					);
 					gpu.output = output;
+					gpu.mips = mips;
 				}
 				None => {
-					let id = renderer.register_native_texture(
+					let id = renderer.register_native_texture_with_sampler_options(
 						&converter.device,
 						&view,
-						wgpu::FilterMode::Linear,
+						display_sampler(),
 					);
 					self.gpu = Some(Gpu {
 						converter: converter.clone(),
 						id,
 						output,
+						mips,
 						planes: None,
 					});
 				}
@@ -361,6 +577,11 @@ impl VideoTexture {
 			} else if let Some((width, _, rgba)) = picture.to_rgba() {
 				converter.write(&gpu.output, &rgba, width * 4);
 			}
+			let mut encoder = converter
+				.device
+				.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(name) });
+			converter.downsample(&mut encoder, &gpu.mips);
+			converter.queue.submit([encoder.finish()]);
 			return;
 		}
 		let size = (picture.width, picture.height);
@@ -394,9 +615,6 @@ impl VideoTexture {
 		}
 		params[48..52].copy_from_slice(&u32::from(picture.rotation).to_le_bytes());
 		converter.queue.write_buffer(&planes.params, 0, &params);
-		let view = gpu
-			.output
-			.create_view(&wgpu::TextureViewDescriptor::default());
 		let mut encoder = converter
 			.device
 			.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(name) });
@@ -404,7 +622,7 @@ impl VideoTexture {
 			let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 				label: Some(name),
 				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-					view: &view,
+					view: &gpu.mips.base,
 					depth_slice: None,
 					resolve_target: None,
 					ops: wgpu::Operations {
@@ -424,6 +642,7 @@ impl VideoTexture {
 			pass.set_bind_group(0, &planes.bind_group, &[]);
 			pass.draw(0..3, 0..1);
 		}
+		converter.downsample(&mut encoder, &gpu.mips);
 		converter.queue.submit([encoder.finish()]);
 	}
 }

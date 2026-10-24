@@ -202,6 +202,25 @@ receive-only stream path after the call connects. It never silently switches an 
 hidden or unavailable previews remain explicit. The preview request requires current roster
 state plus VIEW_CHANNEL and CONNECT. This normal-user route remains unofficial and live-unverified.
 
+Picture-in-picture (October 24, 2026) pops the watched share out of the enlarged stage. It opens
+in a borderless native window of its own that shows only the picture, letterboxed on black, with
+no roster or call bar.
+- The OS moves the window from anywhere on the picture, resizes it from its edges and snaps it
+  (drag to a screen edge, or Win+Arrow).
+- It opens without taking focus and, while pinned (the default), stays above other windows. It
+  keeps playing while the main window is covered, minimized or showing another channel.
+- Hovering shows the window's buttons on the right (pin or unpin, back to the call window,
+  close) and the picture's on the left:
+  - **Stretch to fill** draws the picture over the whole window instead of letterboxing it.
+  - **Reset size** returns the window to 480 pt wide at the stream's aspect. A window on the
+    primary screen keeps the screen corner it sits nearest.
+- The window's position and size and the pin and stretch choices last for the session only.
+- Video textures carry mipmaps, each level a Lanczos-2 reduction in linear light, sampled
+  trilinearly with 16x anisotropy. A picture drawn smaller than the stream (picture-in-picture,
+  a stage tile, a stretched axis) stays sharp without moire. Enlarging still filters bilinearly.
+- Stopping the watch, the streamer leaving or leaving the call closes it. Media is unchanged: it
+  draws the same decoded texture as the stage.
+
 `cargo run --locked -- --demo --demo-voice` shows a separately labeled synthetic roster/call scene, including long names and mute/deafen states. It cannot connect, ring, or access devices. The ordinary `--demo` fixture remains the before/after comparison scenario.
 
 For live verification, the owner must explicitly enable `voice` and control a private guild voice channel and the participating official clients. In addition to the DM gate above: join empty then add two official-client participants; verify actual intelligible audio in every direction and simultaneous speech; exercise encrypted joins/leaves and the last peer leaving/rejoining; check self mute/deafen, server mute/deafen, denied Connect/Speak, full room, deliberate switching, a server move/disconnect and voice region migration; verify devices/keys/tasks are released on Leave/logout/exit. Never record participants or publish private account/channel data. None of these live outcomes is established by the synthetic roster screenshot.
