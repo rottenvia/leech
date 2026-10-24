@@ -57,6 +57,16 @@ codegen-units = 1
 strip = "symbols"
 debug = "line-tables-only"
 
+# Optimized local builds for trying a change at full speed in a fraction of the release
+# build's time: no LTO, parallel codegen and incremental rebuilds. Never shipped; packaging
+# builds `release`. Use `cargo build --locked --profile release-fast -p leech`.
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+debug = false
+
 # Real-time echo processing must also keep up in otherwise unoptimized dev builds.
 [profile.dev.package.sonora]
 opt-level = 3
