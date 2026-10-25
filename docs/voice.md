@@ -15,8 +15,14 @@ Voice is included in every build without a feature flag. Source builds require C
 Resizing the DM or group call stage keeps a conversation following the newest message
 anchored above its composer on every frame. Reading older messages retains the existing
 scroll position instead of forcing the conversation back to the newest message.
+The stage never grows into the composer: its height is capped so the composer, its
+pending files and reply bar, plus a strip of the timeline, stay on screen at any window size.
+The file drop hint floats above the composer instead of pushing it.
 
 Guild voice channels have a chat icon with a **Show chat / Hide chat** tooltip in the channel header.
+Hovering a voice channel row in the sidebar shows a chat button that opens that channel with
+its chat showing, and an invite button where the account may create invites, in place of the
+call timer. Unread voice chat lifts the row name and adds the unread pill; mentions add a badge.
 Chat uses the existing message timeline, composer, drafts and permission checks without
 requiring a voice connection. Wide windows place chat beside the stage; narrow windows
 show chat in the main area until Hide chat restores the stage. The existing bounded

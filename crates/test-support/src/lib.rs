@@ -757,7 +757,7 @@ pub fn voice_demo_state() -> State {
 		.unwrap()
 		.name = "Room 3,5".into();
 	state.channels.push(Channel {
-		id: Id(26),
+		id: Id(30),
 		guild: Some(Id(10)),
 		parent_id: Some(Id(24)),
 		position: 2,

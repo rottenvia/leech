@@ -458,6 +458,11 @@ pub struct MessagingUi {
 	conversation_fade: Option<(Option<Id>, f64)>,
 	/// Session-only visibility of the selected guild voice channel's chat.
 	pub voice_chat_open: bool,
+	/// A voice channel row's chat button: open that channel with its chat showing.
+	voice_chat_request: Option<Id>,
+	/// The composer's own height last frame (pending files and reply bar included), so the call
+	/// stage above it never grows into it.
+	composer_height: f32,
 	/// Tile click to start (`Some(user)`) or stop (`None`) watching, applied by the stage.
 	watch_request: Option<Option<Id>>,
 	ring_request: Option<(Id, u64, Id, bool)>,
@@ -3013,13 +3018,24 @@ impl MessagingUi {
 		let mut cancel_edit = false;
 		if ctx.input(|input| !input.raw.hovered_files.is_empty()) {
 			let available = state.can_attach(channel) && !self.attach_busy && !editing_here;
-			egui::Frame::new()
-				.fill(colors.accent.gamma_multiply(0.12))
-				.stroke(egui::Stroke::new(1.5, colors.accent))
-				.corner_radius(12)
-				.inner_margin(20)
-				.show(ui, |ui| {
-					ui.set_min_width((ui.available_width() - 2.0).max(0.0));
+			// A card floating over the conversation just above the composer: dragging files in
+			// must not resize the composer (and the call stage above it) under the pointer.
+			let anchor = ui.max_rect();
+			let width = anchor.width();
+			egui::Area::new(ui.scope_id().with("composer-drop-hint"))
+				.order(egui::Order::Foreground)
+				.pivot(egui::Align2::LEFT_BOTTOM)
+				.fixed_pos(anchor.left_top() - egui::vec2(0.0, 8.0))
+				.interactable(false)
+				.show(ctx, |ui| {
+					egui::Frame::new()
+						.fill(colors.raised)
+						.stroke(egui::Stroke::new(1.5, colors.accent))
+						.corner_radius(12)
+						.inner_margin(20)
+						.shadow(ui.style().visuals.popup_shadow)
+						.show(ui, |ui| {
+					ui.set_width((width - 43.0).max(0.0));
 					ui.label(design::semibold(
 						ui,
 						crate::i18n::translate_if_key(if available {
@@ -3039,7 +3055,7 @@ impl MessagingUi {
 						.color(colors.muted),
 					);
 				});
-			ui.add_space(8.0);
+				});
 		}
 		// Reply/edit context sits flush on top of the input as one rounded block, like Discord.
 		let mut cap_top: Option<f32> = None;
@@ -4929,6 +4945,10 @@ impl MessagingUi {
 							self.message_request_bar(ui, state, channel);
 						}
 						self.composer(ui, state, channel, &ctx, &mut commands);
+						// The content's height, not the panel's: a panel squeezed by the stage
+						// would otherwise report the squeezed size back.
+						self.composer_height =
+							ui.min_rect().height() + if floating { 18.0 } else { 10.0 };
 					});
 				if let Some((shape, top)) = message_fill {
 					let remaining = ui.available_rect_before_wrap();
