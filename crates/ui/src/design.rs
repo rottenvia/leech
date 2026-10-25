@@ -916,14 +916,16 @@ pub fn finish_panel(ui: &egui::Ui, rect: egui::Rect, backdrop: Color32) {
 /// Light sweeping through a loading placeholder in `rect`: a soft band about 90 points tall,
 /// faintly tinted with the accent, crossing it at an even pace every 1.8 seconds, upward from
 /// the composer (`upward`) or down a list. Returns the fill for a placeholder part at height
-/// `y` and `strength`. It repaints every frame while drawn, like egui's own animations.
+/// `y` and `strength`. It repaints every frame while visible, like egui's own animations.
 pub fn shimmer(ui: &egui::Ui, rect: egui::Rect, upward: bool) -> impl Fn(f32, f32) -> Color32 {
 	const CYCLE: f64 = 1.8;
 	const SWEEP: f64 = 1.5;
 	const BAND: f32 = 90.0;
 	let p = palette(ui);
 	let time = ui.input(|input| input.time);
-	ui.ctx().request_repaint();
+	if ui.is_rect_visible(rect) {
+		ui.ctx().request_repaint();
+	}
 	let t = ((time % CYCLE) / SWEEP).min(1.0) as f32;
 	let travel = rect.height() + 3.0 * BAND;
 	let band = if upward {

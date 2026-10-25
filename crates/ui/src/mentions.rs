@@ -286,7 +286,7 @@ pub fn mention_label(id: Id, mentions: &[User], source: Option<&MentionSource<'_
 }
 
 pub fn presentation_fingerprint(state: &State, message: &model::Message) -> u64 {
-	let mut hasher = std::collections::hash_map::DefaultHasher::new();
+	let mut hasher = crate::timeline::fingerprint_hasher();
 	let source = MentionSource {
 		state,
 		channel: message.channel,

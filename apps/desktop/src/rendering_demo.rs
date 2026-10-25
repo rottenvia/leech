@@ -3,8 +3,11 @@ use std::sync::{Arc, Mutex};
 
 use eframe::{egui, egui_wgpu, wgpu};
 
+/// Surface size and scale from the last frame.
+type Sample = Option<([u32; 2], f32)>;
+
 #[derive(Clone, Default)]
-pub struct RenderingDemo(Arc<Mutex<Option<([u32; 2], f32)>>>);
+pub struct RenderingDemo(Arc<Mutex<Sample>>);
 
 impl RenderingDemo {
 	pub fn show(&self, ctx: &egui::Context, window: &winit::window::Window) {

@@ -106,9 +106,13 @@ pub fn show(ui: &egui::Ui, id: egui::Id, kind: Kind, rect: Rect, loading: bool) 
 }
 
 fn paint(ui: &egui::Ui, rect: Rect, kind: Kind, elapsed: f32, opacity: f32) {
+	// A placeholder scrolled out of view needs no frames; scrolling back brings its own.
+	if !ui.is_rect_visible(rect) {
+		return;
+	}
 	ui.ctx().request_repaint();
 	let elapsed = elapsed - GRACE;
-	if elapsed <= 0.0 || opacity <= 0.0 || !ui.is_rect_visible(rect) {
+	if elapsed <= 0.0 || opacity <= 0.0 {
 		return;
 	}
 	let mut painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
