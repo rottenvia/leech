@@ -1245,154 +1245,190 @@ impl MessagingUi {
 				let rect = ui.max_rect();
 				design::paint_surface(ui, rect, 0, extensions::ThemeSurface::TitleBar);
 				design::window_drag(ui, rect);
-				let title_rect = egui::Rect::from_center_size(
-					rect.center(),
-					egui::vec2(rect.width() * 0.3, rect.height()),
-				);
-				ui.scope_builder(
-					egui::UiBuilder::new()
-						.max_rect(egui::Rect::from_min_max(
-							egui::pos2(rect.left() + design::TRAFFIC_LIGHT_INSET + 8.0, rect.top()),
-							egui::pos2(title_rect.left() - 10.0, rect.bottom()),
-						))
-						.layout(egui::Layout::left_to_right(egui::Align::Center)),
-					|ui| {
-						ui.spacing_mut().item_spacing.x = 4.0;
-						if ui
-							.add_enabled_ui(
-								self.settings.open
-									|| self.server_settings.is_open()
-									|| state.trail.can_go_back(),
-								|ui| icons::button(ui, icons::Icon::ArrowLeft, 28.0, "Back"),
-							)
-							.inner
-							.clicked()
-						{
-							self.navigate_history(state, commands, true);
-						}
-						if ui
-							.add_enabled_ui(
-								!self.settings.open
-									&& !self.server_settings.is_open()
-									&& state.trail.can_go_forward(),
-								|ui| icons::button(ui, icons::Icon::ArrowRight, 28.0, "Forward"),
-							)
-							.inner
-							.clicked()
-						{
-							self.navigate_history(state, commands, false);
-						}
-					},
-				);
-				ui.scope_builder(
-					egui::UiBuilder::new().max_rect(title_rect).layout(
-						egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-					),
-					|ui| {
-						ui.add(
-							egui::Label::new(design::semibold(ui, title, 13.0).color(colors.text))
-								.truncate(),
-						);
-					},
-				);
+				// Both sides first: the title takes the room their buttons and badges leave.
+				let left_end = ui
+					.scope_builder(
+						egui::UiBuilder::new()
+							.max_rect(egui::Rect::from_min_max(
+								egui::pos2(
+									rect.left() + design::TRAFFIC_LIGHT_INSET + 8.0,
+									rect.top(),
+								),
+								egui::pos2(rect.center().x - 10.0, rect.bottom()),
+							))
+							.layout(egui::Layout::left_to_right(egui::Align::Center)),
+						|ui| {
+							ui.spacing_mut().item_spacing.x = 4.0;
+							if ui
+								.add_enabled_ui(
+									self.settings.open
+										|| self.server_settings.is_open()
+										|| state.trail.can_go_back(),
+									|ui| icons::button(ui, icons::Icon::ArrowLeft, 28.0, "Back"),
+								)
+								.inner
+								.clicked()
+							{
+								self.navigate_history(state, commands, true);
+							}
+							if ui
+								.add_enabled_ui(
+									!self.settings.open
+										&& !self.server_settings.is_open()
+										&& state.trail.can_go_forward(),
+									|ui| {
+										icons::button(ui, icons::Icon::ArrowRight, 28.0, "Forward")
+									},
+								)
+								.inner
+								.clicked()
+							{
+								self.navigate_history(state, commands, false);
+							}
+						},
+					)
+					.response
+					.rect
+					.right();
 
 				let right_inset = if design::WINDOW_CONTROLS_WIDTH > 0.0 {
 					0.0
 				} else {
 					12.0
 				};
-				ui.scope_builder(
-					egui::UiBuilder::new()
-						.max_rect(egui::Rect::from_min_max(
-							egui::pos2(title_rect.right() + 10.0, rect.top()),
-							rect.right_bottom() - egui::vec2(right_inset, 0.0),
-						))
-						.layout(egui::Layout::right_to_left(egui::Align::Center)),
-					|ui| {
-						design::window_controls(ui);
-						ui.spacing_mut().item_spacing.x = 10.0;
-						if self.updates.available || self.updates.ready {
-							let (label, icon) = if self.updates.ready {
-								(
-									"updates-shows-update-banner-restart-to-update",
-									icons::Icon::Reload,
-								)
-							} else if self.updates.busy {
-								(
-									"updates-shows-update-banner-updating",
-									icons::Icon::Download,
-								)
-							} else {
-								(
-									"updates-shows-update-banner-update-available",
-									icons::Icon::Download,
-								)
-							};
-							let label = crate::i18n::translate(label);
-							let font = egui::FontId::new(12.0, design::medium_family(ui.ctx()));
-							let galley =
-								ui.painter()
-									.layout_no_wrap(label.clone(), font, colors.accent);
-							let icon_size = 13.0;
-							let gap = 5.0;
-							let pad = egui::vec2(6.0, 2.0);
-							let size = egui::vec2(
-								galley.size().x + icon_size + gap + pad.x * 2.0,
-								galley.size().y.max(icon_size) + pad.y * 2.0,
-							);
-							let (rect, response) =
-								ui.allocate_exact_size(size, egui::Sense::click());
-							ui.painter().rect_filled(
-								rect,
-								255,
-								colors.accent.gamma_multiply(if response.hovered() {
-									0.24
+				let right_start = ui
+					.scope_builder(
+						egui::UiBuilder::new()
+							.max_rect(egui::Rect::from_min_max(
+								egui::pos2(rect.center().x + 10.0, rect.top()),
+								rect.right_bottom() - egui::vec2(right_inset, 0.0),
+							))
+							.layout(egui::Layout::right_to_left(egui::Align::Center)),
+						|ui| {
+							design::window_controls(ui);
+							ui.spacing_mut().item_spacing.x = 10.0;
+							if self.updates.available || self.updates.ready {
+								let (label, icon) = if self.updates.ready {
+									(
+										"updates-shows-update-banner-restart-to-update",
+										icons::Icon::Reload,
+									)
+								} else if self.updates.busy {
+									(
+										"updates-shows-update-banner-updating",
+										icons::Icon::Download,
+									)
 								} else {
-									0.16
-								}),
-							);
-							let icon_rect = egui::Rect::from_center_size(
-								egui::pos2(rect.left() + pad.x + icon_size / 2.0, rect.center().y),
-								egui::Vec2::splat(icon_size),
-							);
-							icons::paint(ui.painter(), icon, icon_rect, colors.accent);
-							ui.painter().galley(
-								egui::pos2(
-									icon_rect.right() + gap,
-									rect.center().y - galley.size().y / 2.0,
-								),
-								galley,
-								colors.accent,
-							);
-							if response
-								.on_hover_text(crate::i18n::translate_if_key(&self.updates.status))
-								.clicked()
-							{
-								self.open_update_settings();
+									(
+										"updates-shows-update-banner-update-available",
+										icons::Icon::Download,
+									)
+								};
+								let label = crate::i18n::translate(label);
+								let font = egui::FontId::new(12.0, design::medium_family(ui.ctx()));
+								let galley =
+									ui.painter()
+										.layout_no_wrap(label.clone(), font, colors.accent);
+								let icon_size = 13.0;
+								let gap = 5.0;
+								let pad = egui::vec2(6.0, 2.0);
+								let size = egui::vec2(
+									galley.size().x + icon_size + gap + pad.x * 2.0,
+									galley.size().y.max(icon_size) + pad.y * 2.0,
+								);
+								let (rect, response) =
+									ui.allocate_exact_size(size, egui::Sense::click());
+								ui.painter().rect_filled(
+									rect,
+									255,
+									colors.accent.gamma_multiply(if response.hovered() {
+										0.24
+									} else {
+										0.16
+									}),
+								);
+								let icon_rect = egui::Rect::from_center_size(
+									egui::pos2(
+										rect.left() + pad.x + icon_size / 2.0,
+										rect.center().y,
+									),
+									egui::Vec2::splat(icon_size),
+								);
+								icons::paint(ui.painter(), icon, icon_rect, colors.accent);
+								ui.painter().galley(
+									egui::pos2(
+										icon_rect.right() + gap,
+										rect.center().y - galley.size().y / 2.0,
+									),
+									galley,
+									colors.accent,
+								);
+								if response
+									.on_hover_text(crate::i18n::translate_if_key(
+										&self.updates.status,
+									))
+									.clicked()
+								{
+									self.open_update_settings();
+								}
+							} else {
+								design::build_badge(ui, self.build);
 							}
-						} else {
-							design::build_badge(ui, self.build);
-						}
-						if state.demo && !self.updates.available && !self.updates.ready {
-							design::chip(
-								ui,
-								&crate::i18n::translate("lib-title-bar-offline-preview"),
-								colors.muted,
-							)
-							.on_hover_text(crate::i18n::translate(
-								"lib-title-bar-synthetic-data-no-network-or-local-storage",
-							));
-						}
-						if !state.demo
-							&& state.auth != client_core::auth::AuthState::Authenticated
-							&& ui
-								.small_button(crate::i18n::translate("lib-title-bar-sign-in-again"))
-								.clicked()
-						{
-							self.reconnect_requested = true;
-						}
-					},
-				);
+							if state.demo && !self.updates.available && !self.updates.ready {
+								design::chip(
+									ui,
+									&crate::i18n::translate("lib-title-bar-offline-preview"),
+									colors.muted,
+								)
+								.on_hover_text(crate::i18n::translate(
+									"lib-title-bar-synthetic-data-no-network-or-local-storage",
+								));
+							}
+							if !state.demo
+								&& state.auth != client_core::auth::AuthState::Authenticated
+								&& ui
+									.small_button(crate::i18n::translate(
+										"lib-title-bar-sign-in-again",
+									))
+									.clicked()
+							{
+								self.reconnect_requested = true;
+							}
+						},
+					)
+					.response
+					.rect
+					.left();
+				// Centred on the window while both sides leave room, as Discord does; otherwise
+				// the gap between them, truncated.
+				let center = rect.center().x;
+				let half = (center - left_end).min(right_start - center) - 10.0;
+				let title_rect = if half >= 60.0 {
+					egui::Rect::from_center_size(
+						rect.center(),
+						egui::vec2((2.0 * half).min(rect.width() * 0.3), rect.height()),
+					)
+				} else {
+					egui::Rect::from_min_max(
+						egui::pos2(left_end + 10.0, rect.top()),
+						egui::pos2(right_start - 10.0, rect.bottom()),
+					)
+				};
+				if title_rect.width() >= 24.0 {
+					ui.scope_builder(
+						egui::UiBuilder::new().max_rect(title_rect).layout(
+							egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+						),
+						|ui| {
+							ui.add(
+								egui::Label::new(
+									design::semibold(ui, title, 13.0).color(colors.text),
+								)
+								.truncate(),
+							);
+						},
+					);
+				}
 			});
 	}
 	fn navigate_history(&mut self, state: &mut State, commands: &mut Vec<Command>, back: bool) {
@@ -1556,7 +1592,7 @@ impl MessagingUi {
 								.find(|(group_id, _)| group_id == id)
 								.map(|(_, count)| *count)
 								.or_else(|| thread_rows.as_ref().and_then(|rows| rows[index].1))
-								.map(|count| format!("{name} - {count}"))
+								.map(|count| format!("{name} — {count}"))
 								.unwrap_or(name);
 							let (rect, _) = ui.allocate_exact_size(
 								egui::vec2(ui.available_width(), 42.0),
@@ -3646,7 +3682,8 @@ impl MessagingUi {
                         let (send, pick) = actions.expect("composer actions ran");
                         let edit = ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                             ui.vertical(|ui| {
-                                ui.set_width(ui.available_width());
+                                // Keep text and placeholder clear of the GIF, sticker and emoji buttons.
+                                ui.set_width((ui.available_width() - 8.0).max(0.0));
                         if application_command {
                             return ui.scope(|ui| {
                                 ui.add_enabled_ui(keyboard_enabled, |ui| {
@@ -8209,9 +8246,9 @@ mod composer_tests {
 			"BOT",
 			"APP",
 			"WEBHOOK",
-			"Founders - 2",
-			"Online - 1",
-			"Offline - 97",
+			"Founders — 2",
+			"Online — 1",
+			"Offline — 97",
 		] {
 			assert!(
 				text.iter().any(|label| label == heading),
@@ -9316,11 +9353,34 @@ pub fn debug_member_voice_status_check(mut state: State, mut private: State) {
 						}
 						_ => None,
 					})
-					.unwrap()
+					.unwrap_or_else(|| panic!("{label:?} is not painted"))
 			};
 			let name = text_rect(&user.name);
 			let status = text_rect("Synthetic status");
-			let avatar = text_rect("RS"); // The synthetic peer's avatar initials.
+			// The synthetic peer's default avatar: the nearest image left of the name.
+			fn images(shape: &egui::Shape, out: &mut Vec<egui::Rect>) {
+				match shape {
+					egui::Shape::Rect(rect) if rect.brush.is_some() => out.push(rect.rect),
+					egui::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() => {
+						out.push(mesh.calc_bounds());
+					}
+					egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| images(shape, out)),
+					_ => {}
+				}
+			}
+			let mut found = Vec::new();
+			for shape in &output.shapes {
+				images(&shape.shape, &mut found);
+			}
+			let avatar = found
+				.into_iter()
+				.filter(|rect| {
+					rect.right() <= name.left()
+						&& rect.max.y >= name.min.y
+						&& rect.min.y <= status.max.y
+				})
+				.min_by(|a, b| (name.left() - a.right()).total_cmp(&(name.left() - b.right())))
+				.expect("an avatar beside the DM name");
 			assert!(status.top() >= name.bottom(), "DM status overlaps its name");
 			assert!(
 				(name.union(status).center().y - avatar.center().y).abs() < 1.0,

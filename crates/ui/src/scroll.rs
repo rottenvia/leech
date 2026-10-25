@@ -158,7 +158,13 @@ impl Session {
 			self.bound = false;
 			self.ignore_press = self.step(ui);
 			ui.input(|input| {
-				if input.smooth_scroll_delta() != egui::Vec2::ZERO {
+				// The physical tick, not the frames that smooth scrolling animates afterwards.
+				if input
+					.raw
+					.events
+					.iter()
+					.any(|event| matches!(event, egui::Event::MouseWheel { .. }))
+				{
 					self.wheel_at = Some(input.time);
 				}
 				self.ignore_press |= self.wheel_at.is_some_and(|at| input.time - at < WHEEL_SLIP);

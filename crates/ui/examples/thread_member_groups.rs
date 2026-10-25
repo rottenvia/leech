@@ -125,14 +125,14 @@ fn main() {
 		.filter(|text| {
 			matches!(
 				text.as_str(),
-				"Thread moderators - 1" | "Online - 1" | "Offline - 1"
+				"Thread moderators — 1" | "Online — 1" | "Offline — 1"
 			)
 		})
 		.map(String::as_str)
 		.collect();
 	assert_eq!(
 		headers,
-		["Thread moderators - 1", "Online - 1", "Offline - 1"]
+		["Thread moderators — 1", "Online — 1", "Offline — 1"]
 	);
 	for id in 1..=3 {
 		assert!(painted.contains(&format!("Participant {id}")));
@@ -145,7 +145,8 @@ fn main() {
 		"member text must fit beside the avatar: {name_rect:?} {subtitle_rect:?}"
 	);
 	assert!(!painted.contains(&"Listening to Spotify".into()));
-	assert!(gradient_names.contains("Thread moderators - 1"));
+	// Group headers stay neutral; only member names carry role gradients.
+	assert!(!gradient_names.contains("Thread moderators — 1"));
 	assert!(gradient_names.contains("Participant 1"));
 	assert!(
 		!gradient_names.contains("Participant 3"),
