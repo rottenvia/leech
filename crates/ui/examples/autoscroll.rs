@@ -125,6 +125,8 @@ fn main() {
 		120.0
 	);
 	let mut view = ui::MessagingUi::default();
+	// No member list in this fixture; its loading shimmer would keep requesting frames.
+	view.reading_preferences.show_members = false;
 	let mut number = 0;
 	let middle = std::cell::Cell::new(ui::scroll::Middle::default());
 	let repaint_delay = std::cell::Cell::new(std::time::Duration::ZERO);
@@ -282,7 +284,15 @@ fn main() {
 		phase: egui::TouchPhase::Move,
 		source: egui::MouseWheelSource::Unknown,
 	}]);
-	let after_wheel = frame(vec![]);
+	// Smooth scrolling animates the tick itself for a few frames; let it settle first.
+	let mut after_wheel = frame(vec![]);
+	for _ in 0..60 {
+		let next = frame(vec![]);
+		if next == after_wheel {
+			break;
+		}
+		after_wheel = next;
+	}
 	for _ in 0..30 {
 		assert_eq!(
 			frame(vec![]),
@@ -291,7 +301,10 @@ fn main() {
 		);
 	}
 	middle.set(ui::scroll::Middle::default());
-	frame(vec![]);
+	// A middle press within 0.6 s of a wheel tick counts as a slipped wheel click.
+	for _ in 0..40 {
+		frame(vec![]);
+	}
 	frame(vec![egui::Event::PointerMoved(origin)]);
 	middle.set(ui::scroll::Middle {
 		pressed: Some(origin),

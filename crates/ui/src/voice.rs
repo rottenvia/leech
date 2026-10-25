@@ -1880,9 +1880,7 @@ impl MessagingUi {
 			egui::Color32::WHITE,
 		);
 		let enabled = self.can_watch(state, channel, streamer);
-		if !compact {
-			self.watch_stream_button(ui, rect, name, enabled);
-		}
+		self.watch_stream_button(ui, rect, name, enabled, compact);
 		// One click target over the whole box, button included.
 		let response = ui.interact(
 			rect,
@@ -1896,16 +1894,34 @@ impl MessagingUi {
 		enabled && response.clicked()
 	}
 
-	fn watch_stream_button(&self, ui: &mut egui::Ui, rect: egui::Rect, name: &str, enabled: bool) {
-		let opacity = self.badge_opacity();
-		name_badge(ui, rect, &format!("{name}'s screen"), None, opacity);
-		let font = egui::FontId::new(14.0, design::medium_family(ui.ctx()));
-		let label = "Watch Stream";
+	/// Small tiles get a shorter button and no name badge, like the other compact tiles.
+	fn watch_stream_button(
+		&self,
+		ui: &mut egui::Ui,
+		rect: egui::Rect,
+		name: &str,
+		enabled: bool,
+		compact: bool,
+	) {
+		if !compact {
+			name_badge(
+				ui,
+				rect,
+				&format!("{name}'s screen"),
+				None,
+				self.badge_opacity(),
+			);
+		}
+		let (font, label, icon, height) = if compact {
+			(12.0, "Watch", 14.0, 28.0)
+		} else {
+			(14.0, "Watch Stream", 18.0, 36.0)
+		};
+		let font = egui::FontId::new(font, design::medium_family(ui.ctx()));
 		let galley = ui
 			.painter()
 			.layout_no_wrap(label.to_owned(), font, egui::Color32::WHITE);
-		let icon = 18.0;
-		let size = egui::vec2(galley.size().x + icon + 8.0 + 32.0, 36.0);
+		let size = egui::vec2(galley.size().x + icon + 8.0 + 2.0 * height - 40.0, height);
 		let button = egui::Rect::from_center_size(rect.center(), size);
 		if !rect.contains_rect(button) {
 			return;
@@ -1917,7 +1933,8 @@ impl MessagingUi {
 		} else {
 			egui::Color32::from_white_alpha(36)
 		};
-		ui.painter().rect_filled(button, 8, fill);
+		ui.painter()
+			.rect_filled(button, if compact { 6 } else { 8 }, fill);
 		let text = if enabled {
 			egui::Color32::WHITE
 		} else {

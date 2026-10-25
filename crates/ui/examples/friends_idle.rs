@@ -69,7 +69,8 @@ fn main() {
 
 fn online_count(shape: &egui::Shape) -> bool {
 	match shape {
-		egui::Shape::Text(text) => text.galley.job.text == "Online — 7",
+		// The section heading is an uppercase eyebrow.
+		egui::Shape::Text(text) => text.galley.job.text.eq_ignore_ascii_case("Online — 7"),
 		egui::Shape::Vec(shapes) => shapes.iter().any(online_count),
 		_ => false,
 	}
