@@ -804,6 +804,11 @@ impl MessagingUi {
 								if response.clicked() {
 									selected = Some(channel.id);
 								}
+								if let Some(id) = self.voice_chat_request.take() {
+									selected = Some(id);
+									self.voice_chat_open = true;
+									self.focus_switched_composer = true;
+								}
 								paint_shelf_rule(
 									ui,
 									response.rect,

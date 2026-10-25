@@ -694,12 +694,34 @@ impl MessagingUi {
 			})
 			.inner;
 		let row = rect.shrink2(egui::vec2(0.0, 1.0));
-		let hovered = viewable && (response.hovered() || response.has_focus());
-		let hover = if viewable {
-			design::hover_motion(ui, &response)
+		// The chat and invite buttons sit on the row, so the pointer over them still counts as
+		// over the row: `hovered()` would drop and flicker the row's highlight and buttons.
+		let hovered = viewable && (response.contains_pointer() || response.has_focus());
+		let hover = ui.ctx().animate_bool_with_time_and_easing(
+			response.id.with("hover-motion"),
+			hovered,
+			ui.style().animation_time,
+			egui::emath::easing::cubic_out,
+		);
+		// The channel's own chat reads like a text channel's: unread lifts the name, mentions
+		// get a badge.
+		let unread = viewable
+			&& (state.channel_unread(channel) == Some(true) || state.unread_count(channel.id) > 0);
+		let mentions = if viewable {
+			state.mention_count(channel.id)
 		} else {
-			0.0
+			0
 		};
+		if unread && !selected && !access.muted() {
+			ui.painter().rect_filled(
+				egui::Rect::from_center_size(
+					egui::pos2(row.left() - 6.0, row.center().y),
+					egui::vec2(4.0, 8.0),
+				),
+				2,
+				colors.text_strong,
+			);
+		}
 		if selected {
 			ui.painter().rect_filled(row, 8, colors.selected);
 		} else if hover > 0.0 {
@@ -718,6 +740,8 @@ impl MessagingUi {
 				Emphasis::Connected
 			} else if selected || hovered {
 				Emphasis::Focused
+			} else if unread {
+				Emphasis::Unread
 			} else {
 				Emphasis::Idle
 			},
@@ -742,23 +766,40 @@ impl MessagingUi {
 		);
 		channel_marks::paint(ui.painter(), access, row, glyph, text_color);
 		let marks = channel_marks::trailing(access);
-		let elapsed_width = if elapsed.is_some() { 64.0 } else { 0.0 };
-		let name = ui.painter().layout(
+		// Under the pointer, Discord's chat and invite buttons take the timer's place.
+		let invite = channel
+			.guild
+			.filter(|guild| state.can_create_server_invite(*guild, channel.id));
+		let buttons = if hovered {
+			1.0 + f32::from(u8::from(invite.is_some()))
+		} else {
+			0.0
+		};
+		let elapsed = elapsed.filter(|_| !hovered);
+		let trailing = if elapsed.is_some() { 64.0 } else { 0.0 }
+			+ buttons * VOICE_ROW_BUTTON
+			+ if mentions > 0 { 30.0 } else { 0.0 };
+		// One line, truncated with an ellipsis; the hover text carries the full name.
+		let mut job = egui::text::LayoutJob::simple_singleline(
 			channel.name.clone(),
 			egui::FontId::new(15.0, design::medium_family(ui.ctx())),
 			text_color,
-			(row.width() - 40.0 - elapsed_width - marks).max(10.0),
 		);
+		job.wrap.max_width = (row.width() - 40.0 - trailing - marks).max(10.0);
+		job.wrap.max_rows = 1;
+		job.wrap.break_anywhere = true;
+		let name = ui.painter().layout_job(job);
 		let name_rect = egui::Rect::from_min_size(
 			egui::pos2(row.left() + 34.0, row.center().y - name.size().y * 0.5),
-			egui::vec2(row.width() - 40.0 - elapsed_width - marks, name.size().y),
+			egui::vec2(row.width() - 40.0 - trailing - marks, name.size().y),
 		);
 		ui.painter()
 			.with_clip_rect(name_rect)
 			.galley(name_rect.min, name, text_color);
 		if let Some(elapsed) = &elapsed {
 			ui.painter().text(
-				row.right_center() - egui::vec2(8.0 + marks, 0.0),
+				row.right_center()
+					- egui::vec2(8.0 + marks + if mentions > 0 { 30.0 } else { 0.0 }, 0.0),
 				egui::Align2::RIGHT_CENTER,
 				elapsed,
 				egui::FontId::monospace(11.0),
@@ -768,6 +809,50 @@ impl MessagingUi {
 		if elapsed.is_some() && ui.is_rect_visible(response.rect) {
 			ui.ctx()
 				.request_repaint_after(std::time::Duration::from_secs(1));
+		}
+		let lane = row.right() - 4.0 - marks;
+		if mentions > 0 {
+			crate::notifications::badge(
+				ui,
+				egui::pos2(lane - buttons * VOICE_ROW_BUTTON - 16.0, row.center().y),
+				mentions,
+				if selected {
+					colors.selected
+				} else if hovered {
+					colors.hover
+				} else {
+					colors.sidebar
+				},
+			);
+		}
+		if hovered {
+			let chat_label = crate::i18n::translate("show-chat");
+			let invite_label = crate::i18n::translate("channel-menu-context-invite-to-channel");
+			let mut actions: Vec<(crate::icons::Icon, &str)> =
+				vec![(crate::icons::Icon::Forum, chat_label.as_str())];
+			if invite.is_some() {
+				actions.push((crate::icons::Icon::AddPeople, invite_label.as_str()));
+			}
+			for (index, (icon, label)) in actions.into_iter().enumerate() {
+				let right = lane - (buttons - index as f32 - 1.0) * VOICE_ROW_BUTTON;
+				let mut slot = ui.new_child(
+					egui::UiBuilder::new()
+						.max_rect(egui::Rect::from_center_size(
+							egui::pos2(right - VOICE_ROW_BUTTON * 0.5, row.center().y),
+							egui::Vec2::splat(VOICE_ROW_BUTTON),
+						))
+						.layout(egui::Layout::left_to_right(egui::Align::Center)),
+				);
+				if crate::icons::button(&mut slot, icon, VOICE_ROW_BUTTON, label).clicked() {
+					match icon {
+						crate::icons::Icon::Forum => self.voice_chat_request = Some(channel.id),
+						_ => {
+							self.channel_menu.invite_requested =
+								invite.map(|guild| (guild, channel.id));
+						}
+					}
+				}
+			}
 		}
 		response.widget_info(|| {
 			egui::WidgetInfo::selected(
@@ -4519,6 +4604,7 @@ impl MessagingUi {
 			+ TILE_GAP
 			+ CONTROL_HEIGHT
 			+ STAGE_MARGIN;
+		let full = full.min(self.stage_room(ui));
 		egui::Panel::top("dm-call-join")
 			.exact_size(
 				header_height + (full - header_height) * egui::emath::easing::cubic_out(open),
@@ -4641,6 +4727,13 @@ impl MessagingUi {
 		}
 	}
 
+	/// The tallest a DM call stage may be: the composer as tall as it was last frame (pending
+	/// files, reply bar and all) and a strip of the conversation always stay below it.
+	fn stage_room(&self, ui: &egui::Ui) -> f32 {
+		let composer = self.composer_height.max(STAGE_ROOM_COMPOSER);
+		(ui.available_height() - composer - STAGE_ROOM_TIMELINE).max(STAGE_ROOM_MINIMUM)
+	}
+
 	/// DM call stage above the conversation, plus the incoming-call banner. `header` carries
 	/// the conversation header's flags when the stage draws that header itself.
 	pub(super) fn call_bar(
@@ -4676,17 +4769,17 @@ impl MessagingUi {
 					+ STAGE_MARGIN + if header.is_some() { 48.0 } else { 0.0 }
 			};
 			// Dragging the bottom edge resizes the call; video and voice-only keep separate sizes.
-			// The conversation and composer below always keep at least 160 points.
-			let maximum = (ui.available_height() - 160.0).max(180.0);
+			let maximum = self.stage_room(ui);
 			let id = if stage {
 				"dm-call-video"
 			} else {
 				"dm-call-voice"
 			};
-			// The voice-only strip is never shorter than its avatars and bar. egui remembers a
-			// panel's size, so a frame with little room (opening the call while the join stage
-			// still took space) used to leave the avatars squeezed for the rest of the session.
-			let minimum = if stage { 180.0 } else { height.min(maximum) };
+			// The voice-only strip is never shorter than its avatars and bar while there is room.
+			// egui remembers a panel's size, so a frame with little room (opening the call while
+			// the join stage still took space) used to leave the avatars squeezed for the rest of
+			// the session.
+			let minimum = if stage { 180.0 } else { height }.min(maximum);
 			// A new call unfolds the stage from the header. The sweep draws a fixed-size panel
 			// under its own id, so the real one keeps the size the owner dragged it to.
 			let full = egui::containers::panel::PanelState::load(
@@ -5392,6 +5485,13 @@ const STAGE_EDGE: egui::Stroke = egui::Stroke {
 	color: egui::Color32::from_rgba_premultiplied(18, 18, 18, 18),
 };
 const STAGE_MARGIN: f32 = 16.0;
+/// The chat and invite buttons on a hovered voice channel row.
+const VOICE_ROW_BUTTON: f32 = 26.0;
+/// What a DM call stage leaves below itself: the composer (never counted below an empty
+/// draft's height) and this much conversation; the stage itself never goes below the minimum.
+const STAGE_ROOM_COMPOSER: f32 = 72.0;
+const STAGE_ROOM_TIMELINE: f32 = 96.0;
+const STAGE_ROOM_MINIMUM: f32 = 120.0;
 /// The takeover notice's pill height, and how long it rests on the stage and folds.
 const NOTICE_HEIGHT: f32 = 30.0;
 const MOVED_REST: f64 = 5.0;
@@ -6911,7 +7011,7 @@ mod tests {
 			.find(|role| role.id == guild)
 			.unwrap()
 			.bits = p::VIEW_CHANNEL | p::CONNECT | p::MUTE_MEMBERS | p::MOVE_MEMBERS;
-		for id in [Id(25), Id(26)] {
+		for id in [Id(25), Id(30)] {
 			state.permissions.channels.insert(
 				id,
 				p::Channel {
@@ -6922,14 +7022,14 @@ mod tests {
 			);
 		}
 		state.permissions.clear_cache();
-		assert!(state.can_moderate_voice(guild, Id(25), Id(2), VoiceChange::Move(Some(Id(26)))));
+		assert!(state.can_moderate_voice(guild, Id(25), Id(2), VoiceChange::Move(Some(Id(30)))));
 		assert!(!state.can_moderate_voice(guild, Id(25), Id(1), VoiceChange::Mute(true)));
 		assert!(!state.can_moderate_voice(guild, Id(25), Id(2), VoiceChange::Move(Some(Id(25)))));
 		assert!(!state.can_moderate_voice(guild, Id(25), Id(2), VoiceChange::Move(Some(Id(20)))));
 		state
 			.permissions
 			.channels
-			.get_mut(&Id(26))
+			.get_mut(&Id(30))
 			.unwrap()
 			.overwrites = Some(vec![p::Overwrite {
 			id: guild,
@@ -6938,18 +7038,18 @@ mod tests {
 			deny: p::CONNECT,
 		}]);
 		state.permissions.clear_cache();
-		assert!(!state.can_moderate_voice(guild, Id(25), Id(2), VoiceChange::Move(Some(Id(26)))));
+		assert!(!state.can_moderate_voice(guild, Id(25), Id(2), VoiceChange::Move(Some(Id(30)))));
 		state
 			.permissions
 			.channels
-			.get_mut(&Id(26))
+			.get_mut(&Id(30))
 			.unwrap()
 			.overwrites = Some(vec![]);
 		state.permissions.clear_cache();
 		for change in [
 			VoiceChange::Mute(true),
 			VoiceChange::Mute(false),
-			VoiceChange::Move(Some(Id(26))),
+			VoiceChange::Move(Some(Id(30))),
 			VoiceChange::Move(None),
 		] {
 			let channel = state
@@ -7007,7 +7107,7 @@ mod tests {
 			}
 		}
 		assert!(
-			!state.can_moderate_voice(guild, Id(26), Id(2), VoiceChange::Mute(true)),
+			!state.can_moderate_voice(guild, Id(30), Id(2), VoiceChange::Mute(true)),
 			"departed source cannot be moderated"
 		);
 	}
@@ -7104,7 +7204,7 @@ mod tests {
 					.find(|role| role.id == guild)
 					.unwrap()
 					.bits = p::VIEW_CHANNEL | p::CONNECT | p::MOVE_MEMBERS;
-				for id in [Id(25), Id(26)] {
+				for id in [Id(25), Id(30)] {
 					state.permissions.channels.insert(
 						id,
 						p::Channel {
@@ -7118,7 +7218,7 @@ mod tests {
 					state
 						.permissions
 						.channels
-						.get_mut(&Id(26))
+						.get_mut(&Id(30))
 						.unwrap()
 						.overwrites = Some(vec![p::Overwrite {
 						id: guild,
@@ -7264,7 +7364,7 @@ mod tests {
 					}
 				}
 				let expected =
-					(!denied).then_some((guild, Id(25), Id(2), VoiceChange::Move(Some(Id(26)))));
+					(!denied).then_some((guild, Id(25), Id(2), VoiceChange::Move(Some(Id(30)))));
 				assert_eq!(
 					view.voice_moderation, expected,
 					"dragging={dragging}, denied={denied}"
@@ -7300,7 +7400,7 @@ mod tests {
 					if denied {
 						vec![]
 					} else {
-						vec![(Id(2), Id(25), VoiceChange::Move(Some(Id(26))))]
+						vec![(Id(2), Id(25), VoiceChange::Move(Some(Id(30))))]
 					}
 				);
 			}
@@ -8339,6 +8439,51 @@ mod tests {
 		state.voice.active.as_mut().unwrap().watching = Some(Id(3));
 		frame(&mut messaging, &state, true);
 		assert_eq!(messaging.voice_pip.map(|(_, rect)| rect), Some(moved));
+	}
+
+	#[test]
+	fn call_stage_leaves_the_composer_and_its_pending_files_on_screen() {
+		fn draft(shape: &egui::Shape) -> Option<egui::Rect> {
+			match shape {
+				egui::Shape::Text(text) if text.galley.job.text == "Composer stays visible" => {
+					Some(text.visual_bounding_rect())
+				}
+				egui::Shape::Vec(shapes) => shapes.iter().find_map(draft),
+				_ => None,
+			}
+		}
+		let ctx = egui::Context::default();
+		crate::design::apply(&ctx);
+		let mut state = test_support::call_demo_state();
+		// A share turns the voice strip into the tall video stage.
+		state.voice.active.as_mut().unwrap().participants[1].streaming = true;
+		let channel = state.selected.unwrap();
+		state
+			.drafts
+			.insert(channel, "Composer stays visible".into());
+		let mut messaging = MessagingUi::default();
+		messaging.preview_attachment("RobloxScreenShot.png", 437_000, None);
+		// The smallest window Leech allows.
+		let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(760.0, 520.0));
+		let mut rect = None;
+		for _ in 0..8 {
+			let output = ctx.run_ui(
+				egui::RawInput {
+					screen_rect: Some(screen),
+					..Default::default()
+				},
+				|ui| {
+					let _ = messaging.show(ui, &mut state);
+				},
+			);
+			rect = output.shapes.iter().find_map(|shape| draft(&shape.shape));
+			output.drop_without_applying_deltas();
+		}
+		let rect = rect.expect("the draft is drawn");
+		assert!(
+			rect.bottom() <= screen.bottom(),
+			"draft cut off at {rect:?}"
+		);
 	}
 
 	#[test]
