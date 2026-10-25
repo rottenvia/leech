@@ -4,6 +4,45 @@ Recent synthetic/offline measurements are workload-specific. They do not establi
 performance, universal device results or application-wide memory bounds. The raw PR screenshot,
 log and per-run evidence archive has been removed; the summaries below retain the useful results.
 
+## Frame cost on state changes — October 26, 2026
+
+`crates/ui/examples/frame_bench.rs` times one UI pass plus tessellation on synthetic screens
+(1280x800, 60 warmup and 400 measured passes). The same file builds unchanged against the Serein
+fork point (`2df8256c`), so both trees ran with identical settings: release, no LTO, 16 codegen
+units, three alternating runs on one Windows machine, medians of the per-run medians.
+
+| Screen | Serein median / p95 | Leech median / p95 | Median delta |
+| --- | --- | --- | --- |
+| Channel, 300 messages, idle | 0.419 / 0.533 ms | 0.433 / 0.533 ms | +3% |
+| Same channel, scrolling | 0.516 / 0.734 ms | 0.494 / 0.684 ms | −4% |
+| Same channel, a state change every pass, a message every eighth | 1.021 / 4.989 ms | 0.533 / 1.727 ms | −48% |
+| Voice channel | 0.173 / 0.211 ms | 0.197 / 0.291 ms | +14% |
+| DM call | 0.375 / 0.432 ms | 0.354 / 0.406 ms | −6% |
+
+Before these changes Leech matched Serein on the churn screen (1.116 / 5.684 ms). What moved it:
+
+- `local_offset_at` is an OS time-zone call, and the timeline made two per row on every state
+  change to find date dividers. Offsets are now cached per UTC quarter hour (zone offsets and
+  transitions fall on quarter hours) and the cache empties every minute. Row fingerprinting went
+  from 0.63 to 0.17 ms per change.
+- Invite detection ran a full Markdown parse and a URL parse per word of every message, on each
+  timeline rebuild and for every visible row on every pass. Messages without "discord" now skip
+  it, which halved the per-message row rebuild (0.86 to 0.43 ms for 300 rows).
+- Row fingerprints use ahash (already in the tree through egui) instead of SipHash.
+
+The voice screen is slower mostly because of the hover and unread state its rows gained in #19
+and short entry animations; it is about 0.02 ms in absolute terms.
+
+Gateway events used to request an immediate frame each. Presence, member-list and read-state
+events, and messages, edits, deletes and reactions outside the open conversation, now wake the UI
+at most every 50 ms, so a busy account no longer renders at the display rate while nothing
+visible changes. Events for the open conversation still repaint at once. This part was not
+measured against live traffic; `background_traffic_wakes_later_than_the_open_conversation`
+checks the classification. Loading shimmers also stop requesting frames while scrolled out of view.
+
+Not changed: the 30–40 ms Twemoji atlas decode before the first frame (deferring it could leave
+cached rows with fallback glyphs), and the bench does not measure GPU time.
+
 ## Profile cosmetics — October 11, 2026
 
 Release builds of baseline `178bde35` and the cosmetics branch on Linux 7.2.9 (CachyOS),

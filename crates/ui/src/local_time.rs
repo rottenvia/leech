@@ -1,4 +1,5 @@
 //! Converts UTC instants to the user's local zone for display.
+use std::{cell::RefCell, collections::HashMap};
 
 /// Shifts `instant` to the local offset in effect at that moment; falls back to UTC.
 pub fn local(instant: time::OffsetDateTime) -> time::OffsetDateTime {
@@ -6,9 +7,30 @@ pub fn local(instant: time::OffsetDateTime) -> time::OffsetDateTime {
 	let offset = if cfg!(test) {
 		time::UtcOffset::UTC
 	} else {
-		time::UtcOffset::local_offset_at(instant).unwrap_or(time::UtcOffset::UTC)
+		offset_at(instant)
 	};
 	instant.to_offset(offset)
+}
+
+/// The OS zone lookup is slow and the timeline asks for every row on every state change.
+/// Zone offsets and their transitions fall on UTC quarter hours, so one lookup serves a whole
+/// quarter hour. The cache empties every minute, so a changed system zone shows up.
+fn offset_at(instant: time::OffsetDateTime) -> time::UtcOffset {
+	type Cache = (Option<std::time::Instant>, HashMap<i64, time::UtcOffset>);
+	thread_local!(static CACHE: RefCell<Cache> = RefCell::default());
+	CACHE.with_borrow_mut(|(filled, offsets)| {
+		if filled.is_none_or(|at| at.elapsed() > std::time::Duration::from_secs(60))
+			|| offsets.len() >= 4096
+		{
+			offsets.clear();
+			*filled = Some(std::time::Instant::now());
+		}
+		*offsets
+			.entry(instant.unix_timestamp().div_euclid(900))
+			.or_insert_with(|| {
+				time::UtcOffset::local_offset_at(instant).unwrap_or(time::UtcOffset::UTC)
+			})
+	})
 }
 
 /// Current wall-clock time in the local zone.

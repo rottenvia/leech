@@ -123,7 +123,7 @@ impl Connection {
                     let active = active_typing.load(Ordering::Relaxed);
                     if !typing_gate.lock().is_ok_and(|mut gate| gate.accept(*signal, active, Instant::now())) { return Ok(()); }
                 }
-                emit_event(&send, &typing_send, Envelope {generation,event}, &ctx)
+                emit_event(&send, &typing_send, Envelope {generation,event}, &ctx, active_typing.load(Ordering::Relaxed))
             };
             let result=async {
                 let mut api=DiscordApi::with_proxy(secret.clone(), api_proxy)?;
@@ -721,6 +721,7 @@ fn emit_event(
 	typing: &mpsc::Sender<Envelope>,
 	envelope: Envelope,
 	ctx: &egui::Context,
+	active: u64,
 ) -> Result<(), Failure> {
 	if matches!(envelope.event, Event::Typing(_)) {
 		// Ephemeral signals have separate fixed slots and may be dropped under pressure.
@@ -729,6 +730,7 @@ fn emit_event(
 		}
 		return Ok(());
 	}
+	let background = background(&envelope.event, active);
 	let bytes = envelope.event.bytes();
 	let startup = matches!(&envelope.event, Event::Startup(_) | Event::Ready { .. });
 	let overhead = size_of::<(Envelope, OwnedSemaphorePermit)>() - size_of::<Event>();
@@ -768,8 +770,35 @@ fn emit_event(
 			),
 			mpsc::error::TrySendError::Closed(_) => Failure::Network,
 		})?;
-	ctx.request_repaint();
+	if background {
+		ctx.request_repaint_after(BACKGROUND_WAKE);
+	} else {
+		ctx.request_repaint();
+	}
 	Ok(())
+}
+
+/// Presence, member-list and read-state traffic, and messages outside the open conversation,
+/// wake the UI at most this often. A busy account would otherwise render a frame per event.
+const BACKGROUND_WAKE: Duration = Duration::from_millis(50);
+
+fn background(event: &Event, active: u64) -> bool {
+	let elsewhere = |channel: model::Id| channel.0 != active;
+	match event {
+		Event::DirectPresence(_)
+		| Event::MemberPresence { .. }
+		| Event::Members(_)
+		| Event::ReadState(_) => true,
+		Event::Message(message) => elsewhere(message.channel),
+		Event::Patch(patch) => elsewhere(patch.channel),
+		Event::Delete { channel, .. } | Event::DeleteBulk { channel, .. } => elsewhere(*channel),
+		Event::Reactions(
+			client_core::reactions::Event::Delta { channel, .. }
+			| client_core::reactions::Event::Cleared { channel, .. }
+			| client_core::reactions::Event::Changed { channel, .. },
+		) => elsewhere(*channel),
+		_ => false,
+	}
 }
 
 /// At most eight typing wakeups per two seconds in the selected conversation.
@@ -975,6 +1004,7 @@ mod tests {
 				event: Event::Startup(Box::new(startup.prepare().unwrap())),
 			},
 			&ctx,
+			0,
 		)
 		.unwrap();
 		assert_eq!(send.startup.available_permits(), 0);
@@ -988,7 +1018,8 @@ mod tests {
 					generation,
 					event: Event::Startup(Box::new(large_startup().prepare().unwrap()))
 				},
-				&ctx
+				&ctx,
+				0
 			),
 			Err(Failure::CapacityAt(
 				"Account startup snapshot is already queued; connection stopped"
@@ -996,7 +1027,7 @@ mod tests {
 		);
 		let mut later = queued_channel(25_000);
 		later.generation = generation;
-		emit_event(&send, &typing, later, &ctx).unwrap();
+		emit_event(&send, &typing, later, &ctx, 0).unwrap();
 		state.apply(events.try_recv().unwrap());
 		assert_eq!(state.auth, client_core::auth::AuthState::Authenticated);
 		assert_eq!((state.guilds.len(), state.channels.len()), (200, 20_000));
@@ -1018,6 +1049,7 @@ mod tests {
 				event: Event::Startup(Box::new(large_startup().prepare().unwrap())),
 			},
 			&ctx,
+			0,
 		)
 		.unwrap();
 		drop(events);
@@ -1031,11 +1063,11 @@ mod tests {
 		let (typing, _) = mpsc::channel(8);
 		// One entire navigation fanout plus ordinary event slots fits without a UI drain.
 		for id in 1..=RELIABLE_ITEMS as u64 {
-			emit_event(&send, &typing, queued_channel(id), &ctx).unwrap();
+			emit_event(&send, &typing, queued_channel(id), &ctx, 0).unwrap();
 		}
 		let retained = send.bytes.available_permits();
 		assert_eq!(
-			emit_event(&send, &typing, queued_channel(0), &ctx),
+			emit_event(&send, &typing, queued_channel(0), &ctx, 0),
 			Err(Failure::CapacityAt(
 				"Account synchronization event queue is full; connection stopped"
 			))
@@ -1066,10 +1098,10 @@ mod tests {
 			.clone()
 			.try_acquire_many_owned((RELIABLE_BYTES - charge) as u32)
 			.unwrap();
-		emit_event(&send, &typing, envelope, &ctx).unwrap();
+		emit_event(&send, &typing, envelope, &ctx, 0).unwrap();
 		assert_eq!(send.bytes.available_permits(), 0);
 		assert_eq!(
-			emit_event(&send, &typing, queued_channel(3), &ctx),
+			emit_event(&send, &typing, queued_channel(3), &ctx, 0),
 			Err(Failure::CapacityAt(
 				"Account synchronization queue exceeds 32 MiB; connection stopped"
 			))
@@ -1077,7 +1109,7 @@ mod tests {
 		assert_eq!(events.receive.len(), 1);
 		events.try_recv().unwrap();
 		assert_eq!(send.bytes.available_permits(), charge);
-		emit_event(&send, &typing, queued_channel(3), &ctx).unwrap();
+		emit_event(&send, &typing, queued_channel(3), &ctx, 0).unwrap();
 		drop(held);
 		let before = send.bytes.available_permits();
 		let mut oversized = queued_channel(4);
@@ -1085,7 +1117,7 @@ mod tests {
 			channel.name = "x".repeat(MAX_EVENT_BYTES);
 		}
 		assert_eq!(
-			emit_event(&send, &typing, oversized, &ctx),
+			emit_event(&send, &typing, oversized, &ctx, 0),
 			Err(Failure::CapacityAt(
 				"Account synchronization event exceeds 4 MiB; connection stopped"
 			))
@@ -1094,7 +1126,7 @@ mod tests {
 		drop(events);
 		assert_eq!(send.bytes.available_permits(), RELIABLE_BYTES);
 		assert_eq!(
-			emit_event(&send, &typing, queued_channel(5), &ctx),
+			emit_event(&send, &typing, queued_channel(5), &ctx, 0),
 			Err(Failure::Network)
 		);
 		assert_eq!(send.bytes.available_permits(), RELIABLE_BYTES);
@@ -1118,6 +1150,7 @@ mod tests {
 					}),
 				},
 				&ctx,
+				0,
 			)
 			.unwrap();
 		}
@@ -1134,6 +1167,7 @@ mod tests {
 				},
 			},
 			&ctx,
+			0,
 		)
 		.unwrap();
 		assert!(matches!(
@@ -1143,6 +1177,18 @@ mod tests {
 		for _ in 0..8 {
 			typing.try_recv().unwrap();
 		}
+	}
+	#[test]
+	fn background_traffic_wakes_later_than_the_open_conversation() {
+		use client_core::Event;
+		let delete = |channel| Event::Delete {
+			channel: model::Id(channel),
+			id: model::Id(1),
+		};
+		assert!(!super::background(&delete(10), 10));
+		assert!(super::background(&delete(11), 10));
+		assert!(super::background(&Event::DirectPresence(Vec::new()), 10));
+		assert!(!super::background(&Event::Disconnected, 10));
 	}
 	#[test]
 	fn typing_wakeups_are_selected_bounded_and_coalesced() {

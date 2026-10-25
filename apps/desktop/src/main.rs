@@ -5356,7 +5356,7 @@ impl Desktop {
 		ui.add_space(8.0);
 		ui.vertical_centered(|ui| {
 			ui.label(
-				egui::RichText::new(&ui::i18n::translate(
+				egui::RichText::new(ui::i18n::translate(
 					"main-sign-in-preview-sample-conversations-no-discord-connection",
 				))
 				.size(12.0)

@@ -45,7 +45,16 @@ pub(super) fn input_code(raw: &str) -> Option<String> {
 	}
 }
 fn codes(message: &Message) -> Vec<String> {
-	if message.embeds_suppressed || message.content.contains("||") {
+	// Every invite host contains "discord", so most messages skip the Markdown parse; rows
+	// call this on every pass and on every timeline rebuild.
+	if message.embeds_suppressed
+		|| message.content.contains("||")
+		|| !message
+			.content
+			.as_bytes()
+			.windows(7)
+			.any(|word| word.eq_ignore_ascii_case(b"discord"))
+	{
 		return Vec::new();
 	}
 	let mut found = Vec::new();
@@ -401,5 +410,14 @@ mod tests {
 		] {
 			assert!(super::code(bad).is_none());
 		}
+	}
+	#[test]
+	fn message_cards_survive_the_quick_host_check() {
+		let mut message = test_support::message(1, model::Id(2));
+		message.embeds_suppressed = false;
+		message.content = "Join us: HTTPS://DISCORD.GG/abc and discord.com/invite/xyz".into();
+		assert_eq!(super::codes(&message), ["abc", "xyz"]);
+		message.content = "No invite here, https://example.com/abc".into();
+		assert!(super::codes(&message).is_empty());
 	}
 }

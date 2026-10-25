@@ -989,6 +989,83 @@ impl Drop for Uploads {
 	}
 }
 
+#[cfg(all(debug_assertions, feature = "demo"))]
+pub(crate) fn debug_heic_check() {
+	#[cfg(target_os = "windows")]
+	{
+		let fixture = include_bytes!("../tests/fixtures/heic-large.heic");
+		let pixels = decode_preview(fixture)
+			.expect("synthetic HEIC must decode with installed HEIF/HEVC codecs");
+		assert_eq!(pixels.size, [320, 213]);
+		assert!(pixels.pixels.len() * 4 < PREVIEW_ALLOC as usize);
+		println!(
+			"WIC thumbnail first pixel: {:?}",
+			pixels.pixels[0].to_array()
+		);
+		for pixel in pixels.pixels.iter().step_by(1000) {
+			for (actual, expected) in pixel.to_array().into_iter().zip([64, 128, 192, 255]) {
+				assert!(actual.abs_diff(expected) <= 4, "{actual} != {expected}");
+			}
+		}
+		let (width, height, rgba) = platform::heic::decode(fixture, 8192, 128 * 1024 * 1024, 8192)
+			.expect("full-size WIC conversion");
+		assert_eq!((width, height), (6000, 4000));
+		assert_eq!(rgba.len(), 6000 * 4000 * 4);
+		assert_eq!(rgba[3], 255);
+		assert!(platform::heic::decode(fixture, 8192, PREVIEW_ALLOC, 8192).is_none());
+		assert!(platform::heic::decode(fixture, 1024, PREVIEW_ALLOC, 320).is_none());
+		assert!(platform::heic::decode(fixture, 8192, 100, 320).is_none());
+	}
+
+	assert!(previewable("photo.HEIC"));
+	assert!(previewable("photo.heif"));
+	assert!(decode_preview(b"\x00\x00\x00\x10ftypheic\x00\x00\x00\x00").is_none());
+}
+
+/// Device-free check that pasted content cannot steal pending drop reservations.
+#[cfg(all(debug_assertions, feature = "demo"))]
+pub(crate) fn debug_reservation_check(runtime: &tokio::runtime::Handle) {
+	let (_send, result) = mpsc::sync_channel(1);
+	let mut uploads = Uploads::default();
+	uploads.choosing.push(Choosing {
+		result,
+		cancelled: Arc::new(AtomicBool::new(false)),
+		files: Arc::new(AtomicUsize::new(discord_api::upload::MAX_FILES)),
+	});
+	let context = egui::Context::default();
+	assert!(uploads.accepting());
+	assert!(
+		uploads
+			.select_pasted(
+				1,
+				Id(2),
+				vec![Source::pasted_text("synthetic".into()).unwrap()],
+				runtime,
+				&context
+			)
+			.is_err()
+	);
+	assert!(uploads.selected.is_empty());
+	uploads.choosing[0]
+		.files
+		.store(discord_api::upload::MAX_FILES - 1, Ordering::Release);
+	assert!(
+		uploads
+			.select_pasted(
+				1,
+				Id(2),
+				vec![Source::pasted_text("synthetic".into()).unwrap()],
+				runtime,
+				&context
+			)
+			.is_ok()
+	);
+	assert_eq!(
+		uploads.selected.len() + uploads.loading(),
+		discord_api::upload::MAX_FILES
+	);
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -1570,81 +1647,4 @@ mod tests {
 		assert!(!uploads.busy());
 		assert_eq!(uploads.take_notice(), None);
 	}
-}
-
-#[cfg(all(debug_assertions, feature = "demo"))]
-pub(crate) fn debug_heic_check() {
-	#[cfg(target_os = "windows")]
-	{
-		let fixture = include_bytes!("../tests/fixtures/heic-large.heic");
-		let pixels = decode_preview(fixture)
-			.expect("synthetic HEIC must decode with installed HEIF/HEVC codecs");
-		assert_eq!(pixels.size, [320, 213]);
-		assert!(pixels.pixels.len() * 4 < PREVIEW_ALLOC as usize);
-		println!(
-			"WIC thumbnail first pixel: {:?}",
-			pixels.pixels[0].to_array()
-		);
-		for pixel in pixels.pixels.iter().step_by(1000) {
-			for (actual, expected) in pixel.to_array().into_iter().zip([64, 128, 192, 255]) {
-				assert!(actual.abs_diff(expected) <= 4, "{actual} != {expected}");
-			}
-		}
-		let (width, height, rgba) = platform::heic::decode(fixture, 8192, 128 * 1024 * 1024, 8192)
-			.expect("full-size WIC conversion");
-		assert_eq!((width, height), (6000, 4000));
-		assert_eq!(rgba.len(), 6000 * 4000 * 4);
-		assert_eq!(rgba[3], 255);
-		assert!(platform::heic::decode(fixture, 8192, PREVIEW_ALLOC, 8192).is_none());
-		assert!(platform::heic::decode(fixture, 1024, PREVIEW_ALLOC, 320).is_none());
-		assert!(platform::heic::decode(fixture, 8192, 100, 320).is_none());
-	}
-
-	assert!(previewable("photo.HEIC"));
-	assert!(previewable("photo.heif"));
-	assert!(decode_preview(b"\x00\x00\x00\x10ftypheic\x00\x00\x00\x00").is_none());
-}
-
-/// Device-free check that pasted content cannot steal pending drop reservations.
-#[cfg(all(debug_assertions, feature = "demo"))]
-pub(crate) fn debug_reservation_check(runtime: &tokio::runtime::Handle) {
-	let (_send, result) = mpsc::sync_channel(1);
-	let mut uploads = Uploads::default();
-	uploads.choosing.push(Choosing {
-		result,
-		cancelled: Arc::new(AtomicBool::new(false)),
-		files: Arc::new(AtomicUsize::new(discord_api::upload::MAX_FILES)),
-	});
-	let context = egui::Context::default();
-	assert!(uploads.accepting());
-	assert!(
-		uploads
-			.select_pasted(
-				1,
-				Id(2),
-				vec![Source::pasted_text("synthetic".into()).unwrap()],
-				runtime,
-				&context
-			)
-			.is_err()
-	);
-	assert!(uploads.selected.is_empty());
-	uploads.choosing[0]
-		.files
-		.store(discord_api::upload::MAX_FILES - 1, Ordering::Release);
-	assert!(
-		uploads
-			.select_pasted(
-				1,
-				Id(2),
-				vec![Source::pasted_text("synthetic".into()).unwrap()],
-				runtime,
-				&context
-			)
-			.is_ok()
-	);
-	assert_eq!(
-		uploads.selected.len() + uploads.loading(),
-		discord_api::upload::MAX_FILES
-	);
 }

@@ -5,7 +5,7 @@ use egui::RichText;
 use model::{Id, Message};
 use std::{
 	collections::{BTreeMap, BTreeSet},
-	hash::{DefaultHasher, Hash, Hasher},
+	hash::{BuildHasher, Hash, Hasher},
 };
 
 #[derive(Clone, Copy)]
@@ -159,7 +159,7 @@ struct Revealed {
 }
 impl Revealed {
 	fn fingerprint(message: &Message) -> u64 {
-		let mut hasher = DefaultHasher::new();
+		let mut hasher = fingerprint_hasher();
 		message.content.hash(&mut hasher);
 		message.embeds.hash(&mut hasher);
 		message.attachments.hash(&mut hasher);
@@ -298,9 +298,14 @@ fn anchor_offset(rows: &[(Id, f32)], id: Id, inset: f32) -> f32 {
 	};
 	(rows[..index].iter().map(|(_, height)| *height).sum::<f32>() + within).max(0.0)
 }
+/// Row fingerprints stay in memory and run over every row on each state change; ahash
+/// (already in the tree through egui) is several times faster than SipHash here.
+pub(crate) fn fingerprint_hasher() -> ahash::AHasher {
+	ahash::RandomState::with_seeds(1, 2, 3, 4).build_hasher()
+}
 fn layout_key(message: &Message) -> u64 {
 	// A layout fingerprint only; spoiler visibility uses exact text instead.
-	let mut key = DefaultHasher::new();
+	let mut key = fingerprint_hasher();
 	message.content.hash(&mut key);
 	for user in &message.mentions {
 		user.id.hash(&mut key);
@@ -697,7 +702,7 @@ fn intro(state: &State, empty: bool) -> Option<Intro> {
 
 /// Height key for the introduction: its layout depends on what it names.
 fn intro_key(intro: &Intro, state: &State) -> u64 {
-	let mut hasher = DefaultHasher::new();
+	let mut hasher = fingerprint_hasher();
 	match intro {
 		Intro::Direct(user) => {
 			user.id.hash(&mut hasher);
@@ -1041,7 +1046,7 @@ fn row_key(
 	boundary: Option<Id>,
 	state: &State,
 ) -> u64 {
-	let mut key = DefaultHasher::new();
+	let mut key = fingerprint_hasher();
 	layout_key(message).hash(&mut key);
 	grouped(previous, message, boundary).hash(&mut key);
 	previous
@@ -2201,7 +2206,7 @@ impl TimelineView {
 		if self.revision != state.revision {
 			// Member/presence and other unrelated updates must not restore the scroll
 			// anchor or reintroduce estimates for already settled message geometry.
-			let mut fingerprint = DefaultHasher::new();
+			let mut fingerprint = fingerprint_hasher();
 			let mut previous = None;
 			for message in starter.into_iter().chain(display_rows(state)) {
 				let deleted = state.timeline.is_deleted(message.id);
