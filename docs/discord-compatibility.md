@@ -1168,6 +1168,16 @@ These are wire references, not live account acceptance or a guarantee of event d
 Absent incremental fields preserve known state; explicit null makes roles/overwrites/owner
 unknown or clears a timeout. A full self-member snapshot without a timeout means no timeout.
 
+Stale own roles (October 26, 2026): Discord refuses a channel's history with HTTP 403 only
+when the member cannot view it. If the mirrored permissions say the channel is visible, our
+own roles are out of date, for example after a role change that no self GUILD_MEMBER_UPDATE
+delivered. Leech then requests its own member once through the opcode 8 lookup by user ID
+described above and takes the role IDs from the reply. If the refused channel is now hidden,
+it opens a channel of that server the member can see. Overwrites for roles the server no
+longer has (Discord shows them as @deleted-role) are ignored: the documented calculation only
+reads the overwrites of the member's own roles. They used to make the channel's permissions
+unknown and hide it. Normal-account live behavior is unverified.
+
 Shared command/UI checks cover sending, attachment selection/drop/upload, own-message editing
 and deletion, reactions, history/search/pins/archive reads, and voice admission/capture.
 VIEW without READ_MESSAGE_HISTORY permits fresh live messages and separately authorized sends,

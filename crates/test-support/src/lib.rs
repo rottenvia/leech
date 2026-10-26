@@ -1060,6 +1060,68 @@ pub fn seed_access_marks(state: &mut State) {
 		.unwrap();
 	state.revision += 1;
 }
+/// The demo server as a member who verified while this session missed the role change: the
+/// session still holds no roles, so `verify` looks open and the member channels look hidden.
+pub const STALE_ROLES_VERIFY: Id = Id(70);
+pub const STALE_ROLES_VERIFIED: Id = Id(71);
+pub fn seed_stale_roles(state: &mut State) {
+	use model::permissions::{Overwrite, Role, SEND_MESSAGES, VIEW_CHANNEL};
+	const GUILD: Id = Id(10);
+	state.channels.push(Channel {
+		last_message: None,
+		id: STALE_ROLES_VERIFY,
+		guild: Some(GUILD),
+		parent_id: Some(Id(23)),
+		position: 1,
+		name: "verify".into(),
+		kind: 0,
+		recipients: vec![],
+		icon: None,
+		member_list_id: None,
+		tags: None,
+		message_count: None,
+	});
+	let mut snapshot = permission_snapshot(state);
+	if let Some(roles) = snapshot
+		.guilds
+		.iter_mut()
+		.find(|guild| guild.id == GUILD)
+		.and_then(|guild| guild.roles.as_mut())
+	{
+		roles.push(Role {
+			id: STALE_ROLES_VERIFIED,
+			bits: 0,
+			name: "Verified".into(),
+			color: 0,
+			secondary_color: None,
+			tertiary_color: None,
+			position: 1,
+			hoist: false,
+		});
+	}
+	let role = |id, allow, deny| Overwrite {
+		id,
+		kind: 0,
+		allow,
+		deny,
+	};
+	for channel in snapshot.channels.iter_mut().filter(|c| c.guild == GUILD) {
+		channel.overwrites = Some(match channel.id {
+			// Open to everyone: the welcome category and its first channel.
+			Id(20) | Id(23) => vec![],
+			STALE_ROLES_VERIFY => vec![
+				role(GUILD, 0, SEND_MESSAGES),
+				role(STALE_ROLES_VERIFIED, 0, VIEW_CHANNEL),
+			],
+			_ => vec![
+				role(GUILD, 0, VIEW_CHANNEL),
+				role(STALE_ROLES_VERIFIED, VIEW_CHANNEL, 0),
+			],
+		});
+	}
+	state.permissions.replace(snapshot).unwrap();
+	state.revision += 1;
+}
 pub fn seed_demo_folder_mosaic(state: &mut State) {
 	const EXTRA: [(u64, &str, &str); 4] = [
 		(11, "North lab", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),

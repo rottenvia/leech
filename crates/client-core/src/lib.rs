@@ -740,6 +740,8 @@ pub struct State {
 	pub member_chunks: MemberChunks,
 	pub member_search: [member_search::View; 2],
 	pub member_search_nonce: u64,
+	/// Channel whose history Discord refused although our permissions allow it.
+	pub own_member_recheck: Option<Id>,
 	pub direct_presences: Vec<MemberPresence>,
 	pub local_game_activity: Option<model::RichActivity>,
 	#[doc(hidden)]
@@ -954,6 +956,7 @@ impl Default for State {
 			member_chunks: MemberChunks::default(),
 			member_search: Default::default(),
 			member_search_nonce: 0,
+			own_member_recheck: None,
 			direct_presences: vec![],
 			local_game_activity: Default::default(),
 			direct_presence_bytes: None,
@@ -3354,6 +3357,13 @@ impl State {
 				}
 				self.cancel_history();
 				if failure == auth::Failure::Forbidden {
+					// Discord refuses history only without view access, so a channel our permissions
+					// allow means our own roles there went stale; look the member up again.
+					if self.can_view(channel)
+						&& self.channel(channel).is_some_and(|c| c.guild.is_some())
+					{
+						self.own_member_recheck = Some(channel);
+					}
 					self.clear_search();
 					self.application_commands.clear();
 					self.invalidate_members();

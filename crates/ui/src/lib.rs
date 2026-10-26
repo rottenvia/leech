@@ -5059,6 +5059,9 @@ impl MessagingUi {
 						if let Some(command) = state.request_author_members(&author_lookup) {
 							commands.push(command);
 						}
+						if let Some(command) = state.recheck_own_member() {
+							commands.push(command);
+						}
 						self.timeline.show_with_scroll(
 							ui,
 							state,
