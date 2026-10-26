@@ -1587,6 +1587,10 @@ impl Desktop {
 					)
 				} else if std::env::args().any(|arg| arg == "--demo-chat") {
 					test_support::chat_demo_state()
+				} else if std::env::args().any(|arg| arg.starts_with("--demo-stale-roles")) {
+					let mut state = test_support::demo_state();
+					test_support::seed_stale_roles(&mut state);
+					state
 				} else {
 					let mut state = test_support::demo_state();
 					test_support::seed_demo_folder_mosaic(&mut state);
@@ -1594,6 +1598,23 @@ impl Desktop {
 					state
 				}
 			};
+		}
+		#[cfg(feature = "demo")]
+		if demo
+			&& std::env::args().any(|arg| arg.starts_with("--demo-stale-roles"))
+			&& let Some(Command::History { request, .. }) =
+				state.select(test_support::STALE_ROLES_VERIFY)
+		{
+			// The service refuses the history, as Discord does for a channel the member's
+			// current roles hide.
+			state.apply(Envelope {
+				generation: state.generation,
+				event: Event::HistoryFailed {
+					channel: test_support::STALE_ROLES_VERIFY,
+					request,
+					failure: Failure::Forbidden,
+				},
+			});
 		}
 		#[cfg(feature = "demo")]
 		if demo && std::env::args().any(|arg| arg == "--demo-group-dm") {
@@ -3751,6 +3772,45 @@ impl Desktop {
 							"Offline preview does not contact applications",
 						)),
 					})
+				}
+				Command::MemberSearch(request) if !request.users.is_empty() => {
+					// Only the own-member recheck asks by id here. `--demo-stale-roles` answers
+					// with the role the session missed; `=before` withholds the answer, as 0.1.6
+					// never asked.
+					if std::env::args().any(|arg| arg == "--demo-stale-roles=before") {
+						return;
+					}
+					let roles = if std::env::args().any(|arg| arg == "--demo-stale-roles") {
+						vec![test_support::STALE_ROLES_VERIFIED]
+					} else {
+						self.state
+							.permissions
+							.guilds
+							.get(&request.guild)
+							.and_then(|guild| guild.member.as_ref())
+							.map(|member| member.roles.clone())
+							.unwrap_or_default()
+					};
+					let rows = self
+						.state
+						.user
+						.clone()
+						.filter(|user| request.users.contains(&user.id))
+						.map(|user| model::Member {
+							roles,
+							user,
+							nick: None,
+							status: None,
+							custom_status: None,
+							activities: vec![],
+							clients: Default::default(),
+						})
+						.into_iter()
+						.collect();
+					Event::MemberSearch {
+						request,
+						result: Ok(rows),
+					}
 				}
 				Command::MemberSearch(request) => {
 					let query = request.query.to_lowercase();

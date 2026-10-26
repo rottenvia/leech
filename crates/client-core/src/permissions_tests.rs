@@ -1794,3 +1794,70 @@ fn thread_members_load_without_parent_list_and_reject_retired_replies() {
 	);
 	assert!(state.request_members().is_none());
 }
+
+#[test]
+fn refused_history_rechecks_our_roles_and_follows_discord() {
+	let mut state = state();
+	// A verification role that hides channel 20, as servers hide their #verify from members.
+	permission(
+		&mut state,
+		PermissionEvent::Channel {
+			channel: Id(20),
+			guild: Some(Id(10)),
+			overwrites: Patch::Value(vec![p::Overwrite {
+				id: Id(11),
+				kind: 0,
+				allow: 0,
+				deny: p::VIEW_CHANNEL,
+			}]),
+		},
+	);
+	assert!(state.can_view(Id(20)));
+	let Command::History { request, .. } = state.history(None) else {
+		panic!("history refresh")
+	};
+	apply(
+		&mut state,
+		Event::HistoryFailed {
+			channel: Id(20),
+			request,
+			failure: crate::auth::Failure::Forbidden,
+		},
+	);
+	assert_eq!(state.freshness, Freshness::Unavailable);
+	let Some(Command::MemberSearch(request)) = state.recheck_own_member() else {
+		panic!("A refusal our permissions contradict looks our member up again")
+	};
+	assert_eq!(
+		(request.guild, request.channel, request.users.as_slice()),
+		(Id(10), Id(20), [Id(2)].as_slice())
+	);
+	assert!(
+		state.recheck_own_member().is_none(),
+		"One lookup per refusal"
+	);
+	let member = |roles| model::Member {
+		roles,
+		user: user(),
+		nick: None,
+		status: None,
+		custom_status: None,
+		activities: vec![],
+		clients: Default::default(),
+	};
+	apply(
+		&mut state,
+		Event::MemberSearch {
+			request,
+			result: Ok(vec![member(vec![Id(11)])]),
+		},
+	);
+	assert!(
+		!state.can_view(Id(20)) && state.can_view(Id(22)),
+		"Discord's current roles replace the stale ones"
+	);
+	let Some(Command::History { channel, .. }) = state.recheck_own_member() else {
+		panic!("The refused channel is left for one the member can open")
+	};
+	assert_eq!((channel, state.selected), (Id(22), Some(Id(22))));
+}

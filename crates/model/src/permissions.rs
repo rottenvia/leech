@@ -272,15 +272,14 @@ pub fn effective(
 	let mut role_deny = 0;
 	let mut own = None;
 	for overwrite in overwrites {
-		if overwrite.id.0 == 0
-			|| overwrite.kind > 1
-			|| !seen.insert((overwrite.kind, overwrite.id))
-			|| (overwrite.kind == 0 && !role_bits.contains_key(&overwrite.id))
+		if overwrite.id.0 == 0 || overwrite.kind > 1 || !seen.insert((overwrite.kind, overwrite.id))
 		{
 			return None;
 		}
 		match overwrite.kind {
 			0 if overwrite.id == guild.id => everyone = Some(overwrite),
+			// Only the member's own roles count, so an overwrite left by a deleted role (shown
+			// as @deleted-role in Discord) changes nothing.
 			0 if self_roles.contains(&overwrite.id) => {
 				role_allow |= overwrite.allow;
 				role_deny |= overwrite.deny;
@@ -571,15 +570,22 @@ mod tests {
 				kind: 2,
 				..overwrite
 			}],
-			vec![Overwrite {
-				id: Id(42),
-				..overwrite
-			}],
 			vec![overwrite; 2],
 			vec![overwrite; MAX_OVERWRITES + 1],
 		] {
 			assert_eq!(effective(&valid, Id(7), Some(&invalid), 0), None);
 		}
+		let deleted_role = Overwrite {
+			id: Id(42),
+			kind: 0,
+			allow: 0,
+			deny: VIEW_CHANNEL,
+		};
+		assert_eq!(
+			effective(&valid, Id(7), Some(&[deleted_role]), 0),
+			effective(&valid, Id(7), Some(&[]), 0),
+			"An overwrite left by a deleted role is ignored, as Discord does"
+		);
 		let mut snapshot = Snapshot {
 			guilds: vec![valid],
 			channels: vec![Channel {
