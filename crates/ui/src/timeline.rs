@@ -2821,19 +2821,20 @@ impl TimelineView {
 					let mut reaction_menu = false;
 					// A double-click away from text, links and media uses the selected reaction preset.
 					let mut double_click = None;
+					let top = if self.compact_messages {
+						3
+					} else if system_run {
+						0
+					} else if compact {
+						1
+					} else {
+						group_gap(self.compact_messages)
+					};
 					let row = egui::Frame::NONE
 						.inner_margin(egui::Margin {
 							left: 16,
 							right: 16,
-							top: if self.compact_messages {
-								3
-							} else if system_run {
-								0
-							} else if compact {
-								1
-							} else {
-								group_gap(self.compact_messages)
-							},
+							top,
 							bottom: 1,
 						})
 						.show(ui, |ui| {
@@ -3214,7 +3215,7 @@ impl TimelineView {
 												None,
 												&message.author,
 											);
-											surface.keep(&author);
+											surface.through(&author);
 										},
 									);
 									ui.spacing_mut().item_spacing.x = body_spacing;
@@ -3239,7 +3240,9 @@ impl TimelineView {
 										&mut self.user_action,
 									);
 									profile.person_click(ui, &avatar, None, &message.author);
-									surface.keep(&avatar);
+									// Like a link (and the name): a click opens the profile, a
+									// drag selects.
+									surface.through(&avatar);
 								}
 								ui.vertical(|ui| {
 									ui.set_width(ui.available_width());
@@ -3295,7 +3298,7 @@ impl TimelineView {
 													None,
 													&message.author,
 												);
-												surface.keep(&author);
+												surface.through(&author);
 												if let Some(tag) = tag {
 													let tag = crate::profiles::server_tag(
 														ui, tag, avatars, state.demo,
@@ -3789,7 +3792,10 @@ impl TimelineView {
 									fill_header_line(ui, compact, text_line);
 								});
 							});
+							// The gap above a message group selects too, as in Discord: a drag
+							// starting there must not fall between two rows' bands.
 							let mut cover = ui.min_rect();
+							cover.min.y -= f32::from(top);
 							if body_bottom.is_finite() {
 								cover.max.y = body_bottom;
 							}

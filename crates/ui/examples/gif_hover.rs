@@ -182,16 +182,15 @@ fn member_row() {
 	assert!(view.take_avatar_requests().contains(&key));
 	let still = ColorImage::filled([2, 2], Color32::RED);
 	view.accept_avatar(&ctx, key.clone(), Some(still.clone()));
-	view.accept_gif_animation(
-		key,
-		vec![
-			(Duration::from_secs(1), Arc::new(still)),
-			(
-				Duration::from_secs(1),
-				Arc::new(ColorImage::filled([2, 2], Color32::BLUE)),
-			),
-		],
-	);
+	let frames = vec![
+		(Duration::from_secs(1), Arc::new(still)),
+		(
+			Duration::from_secs(1),
+			Arc::new(ColorImage::filled([2, 2], Color32::BLUE)),
+		),
+	];
+	// Frames decoded with the still while nothing hovers are released, not kept.
+	view.accept_gif_animation(key.clone(), frames.clone());
 	let output = frame(&mut state, &mut view, true, Pos2::ZERO);
 	let still_id = *output
 		.textures_delta
@@ -219,6 +218,10 @@ fn member_row() {
 	let pointer = egui::pos2(member.right() + 80.0, member.center().y);
 	assert!(!member.contains(pointer), "hover the name side of the row");
 	output.drop_without_applying_deltas();
+	// Hovering the row asks for them again and plays them once they arrive.
+	frame(&mut state, &mut view, true, pointer).drop_without_applying_deltas();
+	assert!(view.take_avatar_requests().contains(&key));
+	view.accept_gif_animation(key, frames);
 	let output = frame(&mut state, &mut view, true, pointer);
 	let animated_id = *output
 		.textures_delta
