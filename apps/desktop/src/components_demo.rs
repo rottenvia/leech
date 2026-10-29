@@ -71,6 +71,8 @@ pub fn respond(request: client_core::interactions::Request) -> Event {
 	Event::Interaction(event)
 }
 
+// Only debug demo builds run `--demo-check-components`.
+#[cfg(debug_assertions)]
 pub fn check() {
 	let mut state = test_support::demo_state();
 	let channel = state.selected.unwrap();

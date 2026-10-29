@@ -28,6 +28,8 @@ const MAX_FRAME_BYTES: usize = (WIDTH * 4 + 4096) * HEIGHT;
 const INVALID: &str = "Camera did not provide a bounded 640×480 RGB frame";
 const UNAVAILABLE: &str = "Camera is busy or unavailable. Check Windows Settings > Privacy & security > Camera and allow desktop apps to access your camera.";
 const TIMEOUT: &str = "Camera stopped delivering frames; check the device and try again";
+/// No picture at all yet: a virtual camera, such as OBS's, sends none until its app starts it.
+const NO_PICTURE: &str = "The camera sent no picture. If it is a virtual camera such as OBS's, start it in its app first.";
 
 // Like the attachment decoder, balance COM/MF on their owning worker. Locals holding
 // COM objects are declared after this guard and therefore released before it.
@@ -226,6 +228,7 @@ pub(super) fn run(
 		reader
 	};
 	let mut last_frame = Instant::now();
+	let mut delivered = false;
 	while !shared.stopped.load(Ordering::Acquire) {
 		let requested = Instant::now();
 		// SAFETY: Async reader returns immediately; callbacks never request more
@@ -236,7 +239,7 @@ pub(super) fn run(
 				return Ok(());
 			}
 			if last_frame.elapsed() >= Duration::from_secs(5) {
-				return Err(TIMEOUT);
+				return Err(if delivered { TIMEOUT } else { NO_PICTURE });
 			}
 			match receive.recv_timeout(Duration::from_millis(50)) {
 				Ok(result) => break result?,
@@ -249,6 +252,7 @@ pub(super) fn run(
 		}
 		if let Some(rgb) = result.rgb {
 			last_frame = Instant::now();
+			delivered = true;
 			if !shared.stopped.load(Ordering::Acquire) {
 				emit(rgb)?;
 			}

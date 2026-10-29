@@ -1,7 +1,7 @@
 //! Compatibility path for virtual cameras registered only with DirectShow.
 #![allow(non_snake_case)] // Custom COM interfaces preserve the Qedit.h method names.
 use super::super::format;
-use super::{FRAME_INTERVAL, HEIGHT, INVALID, Shared, TIMEOUT, UNAVAILABLE, WIDTH};
+use super::{FRAME_INTERVAL, HEIGHT, INVALID, NO_PICTURE, Shared, TIMEOUT, UNAVAILABLE, WIDTH};
 use std::{
 	ffi::c_void,
 	mem::ManuallyDrop,
@@ -258,7 +258,9 @@ fn rgb_dimensions(media: &AM_MEDIA_TYPE) -> Result<(usize, usize, bool), &'stati
 			.read_unaligned()
 			.bmiHeader
 	};
-	if bitmap.biBitCount != 24 || bitmap.biPlanes != 1 || bitmap.biCompression != 0 {
+	// biPlanes is ignored: it means nothing for packed RGB, and Windows' converter behind
+	// NV12-only sources such as OBS Virtual Camera leaves the source's 3 in it.
+	if bitmap.biBitCount != 24 || bitmap.biCompression != 0 {
 		return Err(INVALID);
 	}
 	Ok(dimensions)
@@ -493,17 +495,19 @@ pub(super) fn run(
 		(capture, receive, width, height, bottom_up)
 	};
 	let mut last = Instant::now();
+	let mut delivered = false;
 	while !shared.stopped.load(Ordering::Acquire) {
 		match receive.recv_timeout(Duration::from_millis(50)) {
 			Ok(bytes) => {
 				let rgb = rgb_frame(&bytes?, width, height, bottom_up)?;
 				last = Instant::now();
+				delivered = true;
 				if !shared.stopped.load(Ordering::Acquire) {
 					emit(rgb)?;
 				}
 			}
 			Err(mpsc::RecvTimeoutError::Timeout) if last.elapsed() < Duration::from_secs(5) => {}
-			_ => return Err(TIMEOUT),
+			_ => return Err(if delivered { TIMEOUT } else { NO_PICTURE }),
 		}
 	}
 	drop(capture);
@@ -524,8 +528,9 @@ fn rgb_frame(
 		return Err(INVALID);
 	}
 	let mut rgb = vec![0; WIDTH * HEIGHT * 3];
-	// ponytail: bounded nearest-neighbor resize; replace with filtered scaling if
-	// virtual-camera quality measurements justify additional processing.
+	// Letterboxed into the stream size. Each pixel averages the source pixels it covers, so
+	// a 1080p virtual camera does not shimmer the way skipping two of every three would;
+	// the aspect-preserving fit keeps that at most 3×3 source pixels.
 	let (draw_width, draw_height) = if width * HEIGHT > height * WIDTH {
 		(WIDTH, (height * WIDTH / width).max(1))
 	} else {
@@ -533,21 +538,29 @@ fn rgb_frame(
 	};
 	let left = (WIDTH - draw_width) / 2;
 	let top = (HEIGHT - draw_height) / 2;
+	let span = |index: usize, source: usize, target: usize| {
+		let start = index * source / target;
+		start..((index + 1) * source / target).max(start + 1)
+	};
 	for y in 0..draw_height {
-		let source_y = y * height / draw_height;
-		let source_y = if bottom_up {
-			height - 1 - source_y
-		} else {
-			source_y
-		};
+		let rows = span(y, height, draw_height);
 		for x in 0..draw_width {
-			let source = source_y * pitch + (x * width / draw_width) * 3;
+			let columns = span(x, width, draw_width);
+			let mut sum = [0u32; 3];
+			for row in rows.clone() {
+				let row = if bottom_up { height - 1 - row } else { row };
+				for pixel in
+					bytes[row * pitch..][columns.start * 3..columns.end * 3].chunks_exact(3)
+				{
+					sum[0] += u32::from(pixel[2]);
+					sum[1] += u32::from(pixel[1]);
+					sum[2] += u32::from(pixel[0]);
+				}
+			}
+			let count = (rows.len() * columns.len()) as u32;
 			let dest = ((top + y) * WIDTH + left + x) * 3;
-			rgb[dest..dest + 3].copy_from_slice(&[
-				bytes[source + 2],
-				bytes[source + 1],
-				bytes[source],
-			]);
+			rgb[dest..dest + 3]
+				.copy_from_slice(&sum.map(|total| ((total + count / 2) / count) as u8));
 		}
 	}
 	Ok(rgb)
@@ -586,6 +599,14 @@ mod tests {
 		let end = (HEIGHT - 1) * WIDTH * 3 + center;
 		assert_eq!(&top[end..end + 3], &[6, 5, 4]);
 		assert_eq!(&top[..3], &[0, 0, 0]);
+		// 1080p fits as 640x360 (3:1); every output pixel averages its 3x3 block.
+		let mut stripes = vec![0; 1920 * 3 * 1080];
+		for (index, pixel) in stripes.chunks_exact_mut(3).enumerate() {
+			pixel.fill(if index % 3 == 0 { 90 } else { 0 });
+		}
+		let fitted = rgb_frame(&stripes, 1920, 1080, false).unwrap();
+		let middle = (HEIGHT / 2 * WIDTH + WIDTH / 2) * 3;
+		assert_eq!(&fitted[middle..middle + 3], &[30, 30, 30]);
 		let wide = rgb_frame(&vec![255; 16 * 3 * 9], 16, 9, false).unwrap();
 		assert_eq!(&wide[..WIDTH * 60 * 3], &vec![0; WIDTH * 60 * 3]);
 		assert_eq!(

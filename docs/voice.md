@@ -716,7 +716,11 @@ video processor to resize/convert to 640×480 RGB32.
 DirectShow discovery/capture additionally covers virtual cameras such as OBS and
 NVIDIA Broadcast, which may not appear in Media Foundation enumeration.
 Its native input is limited to 1920×1080, converted to RGB24 and fitted into
-640×480 with aspect-preserving nearest-neighbor scaling and black bars. It retains
+640×480 with aspect-preserving area averaging (each pixel averages the source pixels it
+covers, at most 3×3) and black bars. Windows' converter behind NV12-only sources such as
+OBS Virtual Camera reports `biPlanes = 3` on the RGB24 type; that field is ignored, since
+it means nothing for packed RGB. Before October 29, 2026 it was rejected, so OBS Virtual
+Camera always failed with "Camera did not provide a bounded 640×480 RGB frame". It retains
 one callback frame (at most 8,294,400 bytes) and validates the negotiated input
 allocator against eight buffers of at most that size each. Vendor-driver and
 upstream decoder allocations remain separate from those application limits.
@@ -735,7 +739,10 @@ The device-free format-selection check is
 `cargo run --locked -p discord-voice --example camera_format`; native negotiation
 and performance still require owner-operated hardware validation.
 
-Frame waits time out after five seconds without a usable frame; stop is checked at
+Frame waits time out after five seconds without a usable frame. A camera that never sent
+one says so and points at virtual cameras, which (like OBS's) send nothing until their app
+starts them. Camera status shows in the camera button's tooltip and failures as toasts,
+not on the stage, where each line squeezed the DM call's avatars. Stop is checked at
 most every 100 ms while waiting. Native driver initialization/teardown has no hard
 deadline. The process-wide worker slot stays occupied until cleanup finishes so rapid
 toggles cannot accumulate blocked capture workers. Native driver/codec allocations
