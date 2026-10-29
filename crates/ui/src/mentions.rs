@@ -1985,8 +1985,12 @@ pub fn debug_role_mentions_check(state: &mut State) {
 		let mut role_color = egui::Color32::TRANSPARENT;
 		let output = ctx.run_ui(Default::default(), |ui| {
 			let colors = crate::design::palette(ui);
-			role_color =
-				crate::design::role_name_color(0xe67e22, colors.mention_bg, colors.mention_text);
+			// Against the panel, like the pill's own text.
+			role_color = crate::design::role_name_color(
+				0xe67e22,
+				ui.visuals().panel_fill,
+				colors.mention_text,
+			);
 			assert_ne!(role_color, colors.mention_text);
 			let roles = known_roles(state, channel);
 			let mut preview = egui::text::LayoutJob::default();
@@ -2028,49 +2032,76 @@ pub fn debug_role_mentions_check(state: &mut State) {
 			);
 			assert_eq!(galley.job.text, thread_draft);
 		});
-		fn count(shape: &egui::Shape, role_color: egui::Color32) -> usize {
+		fn texts<'a>(shape: &'a egui::Shape, out: &mut Vec<&'a egui::epaint::TextShape>) {
 			match shape {
-				egui::Shape::Text(text) => {
-					let value = &text.galley.job.text;
-					if value.contains("@Role check") {
-						assert!(
-							value.contains("Hey guys"),
-							"role and body must share a galley"
-						);
-						assert!(
-							text.galley.rows.iter().any(|row| row
-								.visuals
-								.mesh
-								.vertices
-								.iter()
-								.any(|vertex| vertex.color == role_color)),
-							"role color must reach the painted text"
-						);
-						let row = &text.galley.rows[0];
-						let baseline = row.glyphs.iter().find(|g| g.chr == '@').unwrap().pos.y;
-						let body = row.glyphs.iter().find(|g| g.chr == 'H').unwrap().pos.y;
-						assert!(
-							(baseline - body).abs() <= 1.0,
-							"role and body baselines must match"
-						);
-						return 1;
-					}
-					usize::from(matches!(value.trim(), "Thread with spaces" | "Forum check"))
-				}
-				egui::Shape::Vec(shapes) => {
-					shapes.iter().map(|shape| count(shape, role_color)).sum()
-				}
-				_ => 0,
+				egui::Shape::Text(text) => out.push(text),
+				egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+				_ => {}
 			}
 		}
-		assert_eq!(
-			output
-				.shapes
+		/// Baseline of the first `chr` in a painted galley, in screen coordinates.
+		fn baseline(text: &egui::epaint::TextShape, chr: char) -> f32 {
+			text.galley
+				.rows
 				.iter()
-				.map(|shape| count(&shape.shape, role_color))
-				.sum::<usize>(),
-			3,
+				.find_map(|row| {
+					row.glyphs
+						.iter()
+						.find(|glyph| glyph.chr == chr)
+						.map(|glyph| text.pos.y + row.pos.y + glyph.pos.y)
+				})
+				.unwrap_or_else(|| panic!("{chr:?} must be painted"))
+		}
+		let mut painted = Vec::new();
+		for shape in &output.shapes {
+			texts(&shape.shape, &mut painted);
+		}
+		// A role mention is a pill with its own galley, as in Discord. The selection layer
+		// under it paints no glyphs.
+		let roles: Vec<_> = painted
+			.iter()
+			.filter(|text| {
+				text.galley.job.text.contains("@Role check")
+					&& text
+						.galley
+						.rows
+						.iter()
+						.any(|row| !row.visuals.mesh.is_empty())
+			})
+			.collect();
+		assert_eq!(
+			roles.len(),
+			1,
 			"only the plain role mention should resolve; code stays literal and spoilers stay hidden"
+		);
+		let role = roles[0];
+		assert!(
+			role.galley.rows.iter().any(|row| row
+				.visuals
+				.mesh
+				.vertices
+				.iter()
+				.any(|vertex| vertex.color == role_color)),
+			"role color must reach the painted text"
+		);
+		let body = painted
+			.iter()
+			.find(|text| text.galley.job.text.contains("Hey guys"))
+			.expect("message body");
+		assert!(
+			(baseline(role, '@') - baseline(body, 'H')).abs() <= 1.0,
+			"role and body baselines must match"
+		);
+		assert_eq!(
+			painted
+				.iter()
+				.filter(|text| matches!(
+					text.galley.job.text.trim(),
+					"Thread with spaces" | "Forum check"
+				))
+				.count(),
+			2,
+			"thread and forum references must resolve"
 		);
 		output.drop_without_applying_deltas();
 	}
