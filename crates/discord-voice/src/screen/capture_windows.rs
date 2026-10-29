@@ -157,11 +157,9 @@ impl Sink {
 		if !self.0.gpu.load(Ordering::Acquire) {
 			return false;
 		}
-		let result = bound
-			.ok_or("Captured frame could not be bound")
-			.and_then(|(device, context, texture)| {
-				self.send_surface(device, context, &texture, input)
-			});
+		let result = bound.ok_or("Captured frame could not be bound").and_then(
+			|(device, context, texture)| self.send_surface(device, context, &texture, input),
+		);
 		match result {
 			Ok(sent) => {
 				if !sent {
@@ -312,7 +310,11 @@ impl GraphicsCaptureApiHandler for Handler {
 			control.stop();
 			return Err(error);
 		}
-		let bound = bind(frame.device(), frame.device_context(), frame.as_raw_texture());
+		let bound = bind(
+			frame.device(),
+			frame.device_context(),
+			frame.as_raw_texture(),
+		);
 		if sink.try_surface(bound, size) {
 			return Ok(());
 		}
@@ -809,7 +811,9 @@ mod tests {
 			next_preview: Instant::now(),
 			output: (1280, 720),
 		};
-		let monitor = Monitor::primary().expect("primary display").as_raw_hmonitor() as isize;
+		let monitor = Monitor::primary()
+			.expect("primary display")
+			.as_raw_hmonitor() as isize;
 		let mut duplication = Duplication::open(monitor, flags).expect("duplication");
 		let deadline = Instant::now() + Duration::from_secs(3);
 		let (mut pictures, mut encoder, mut bytes) = (0, None, 0);
@@ -836,7 +840,11 @@ mod tests {
 					)
 					.expect("hardware encoder on the duplication device")
 				});
-				bytes += encoder.encode_surface(&surface, pictures == 0).expect("encode").0.len();
+				bytes += encoder
+					.encode_surface(&surface, pictures == 0)
+					.expect("encode")
+					.0
+					.len();
 				pending.store(false, Ordering::Release);
 				pictures += 1;
 			}
