@@ -351,6 +351,7 @@ fn main() -> eframe::Result {
 	}
 	if let Ok(root) = local_store::data_dir() {
 		discord_voice::stream_log::set_directory(root.join("logs"));
+		ui::fonts::cache_cjk(root.join("fonts"), platform::memory::map_file);
 	}
 	// Fixture runs may overlap; real launches show the running client instead of duplicating it.
 	let mut instance = if demo {
