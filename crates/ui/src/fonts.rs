@@ -1,6 +1,9 @@
 //! Bundled OFL fallback faces. Eframe separately provides native system-font fallback.
-use egui::{Context, FontData, FontDefinitions, FontFamily};
-use std::sync::{Arc, Mutex, Weak};
+use egui::{Context, FontData, FontDefinitions, FontFamily, epaint::text::Blob};
+use std::{
+	path::{Path, PathBuf},
+	sync::{Arc, Mutex, OnceLock, Weak},
+};
 
 pub const MAX_CUSTOM_FONT_BYTES: usize = 32 * 1024 * 1024;
 const CUSTOM: [&str; 3] = [
@@ -387,6 +390,8 @@ pub fn apply_custom(ctx: &Context, font: Option<&CustomFont>) {
 /// Latin-only sessions never pay for the decode; language changes reuse the same bytes.
 const CJK_ZSTD: &[u8] = include_bytes!("../../../assets/fonts/NotoSansCJK-Regular.ttc.zst");
 const CJK_BYTES: usize = 19_484_784;
+/// FNV-1a of the inflated collection; a cache file that does not match is written again.
+const CJK_HASH: u64 = 0xc7a5_a8d1_8e92_effb;
 const ARABIC: &[u8] = include_bytes!("../../../assets/fonts/NotoSansArabic.ttf");
 const MATH: &[u8] = include_bytes!("../../../assets/fonts/NotoSansMath-Regular.otf");
 /// Subset of Noto Sans Symbols 2 (punctuation, arrows, technical, miscellaneous
@@ -498,7 +503,7 @@ pub fn install(ctx: &Context) {
 }
 
 fn install_cjk(ctx: &Context, shared: &Mutex<FontDefinitions>) {
-	let mut data = FontData::from_owned(cjk());
+	let mut data = cjk_font();
 	let mut definitions = shared.lock().expect("font definitions");
 	data.index = cjk_index(crate::i18n::current());
 	add_fallback(&mut definitions, "Noto Sans CJK", data);
@@ -553,6 +558,56 @@ std::thread_local! {
 	static CJK_DECODES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// Maps a file read-only, keeping its pages file-backed.
+pub type MapFile = fn(&Path) -> std::io::Result<Blob>;
+
+static CJK_CACHE: OnceLock<(PathBuf, MapFile)> = OnceLock::new();
+
+/// Keep the inflated CJK collection as a file in `directory` and map it, so its 19 MB stay
+/// file-backed instead of private heap. Set once, before the first CJK text.
+pub fn cache_cjk(directory: PathBuf, map: MapFile) {
+	let _ = CJK_CACHE.set((directory, map));
+}
+
+fn cjk_font() -> FontData {
+	CJK_CACHE
+		.get()
+		.and_then(|(directory, map)| cached_cjk(directory, *map))
+		.unwrap_or_else(|| FontData::from_owned(cjk()))
+}
+
+// ponytail: a new font asset leaves the previous cache file behind; prune siblings if the
+// asset starts changing often.
+fn cached_cjk(directory: &Path, map: MapFile) -> Option<FontData> {
+	let path = directory.join(format!("NotoSansCJK-Regular-{CJK_HASH:016x}.ttc"));
+	let load = || {
+		map(&path)
+			.ok()
+			.filter(|blob| {
+				let bytes = (**blob).as_ref();
+				bytes.len() == CJK_BYTES && fnv1a(bytes) == CJK_HASH
+			})
+			.map(|blob| FontData::from_blob(blob, 0))
+	};
+	if let Some(font) = load() {
+		return Some(font);
+	}
+	// Written whole under another name and renamed, so no reader maps a partial file.
+	std::fs::create_dir_all(directory).ok()?;
+	let partial = path.with_extension(format!("{}.partial", std::process::id()));
+	std::fs::write(&partial, cjk()).ok()?;
+	if std::fs::rename(&partial, &path).is_err() {
+		let _ = std::fs::remove_file(&partial);
+	}
+	load()
+}
+
+fn fnv1a(bytes: &[u8]) -> u64 {
+	bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+		(hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+	})
+}
+
 /// The bundled archive always inflates; a corrupt asset is a build defect, not a runtime path.
 fn cjk() -> Vec<u8> {
 	#[cfg(test)]
@@ -593,7 +648,7 @@ fn definitions(with_cjk: bool) -> FontDefinitions {
 	}
 	for (name, data) in with_cjk
 		.then(|| {
-			let mut data = FontData::from_owned(cjk());
+			let mut data = cjk_font();
 			data.index = cjk_index(crate::i18n::current());
 			("Noto Sans CJK", data)
 		})
@@ -685,6 +740,35 @@ mod tests {
 	}
 
 	#[test]
+	fn cjk_cache_inflates_once_and_rewrites_a_damaged_file() {
+		let directory =
+			std::env::temp_dir().join(format!("leech-cjk-cache-{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&directory);
+		let read: MapFile = |path| Ok(Arc::new(std::fs::read(path)?));
+		let before = CJK_DECODES.get();
+		let font = cached_cjk(&directory, read).expect("written and mapped");
+		assert_eq!(font.bytes().len(), CJK_BYTES);
+		assert_eq!(CJK_DECODES.get(), before + 1);
+		assert!(cached_cjk(&directory, read).is_some());
+		assert_eq!(
+			CJK_DECODES.get(),
+			before + 1,
+			"a valid cache file is not inflated again"
+		);
+		let path = std::fs::read_dir(&directory)
+			.unwrap()
+			.next()
+			.unwrap()
+			.unwrap()
+			.path();
+		std::fs::write(&path, b"damaged").unwrap();
+		assert!(cached_cjk(&directory, read).is_some());
+		assert_eq!(CJK_DECODES.get(), before + 2);
+		assert_eq!(std::fs::metadata(&path).unwrap().len(), CJK_BYTES as u64);
+		std::fs::remove_dir_all(&directory).unwrap();
+	}
+
+	#[test]
 	fn startup_does_not_decode_cjk_but_on_demand_definitions_do() {
 		let before = CJK_DECODES.get();
 		install(&Context::default());
@@ -720,6 +804,7 @@ mod tests {
 		);
 		let collection = cjk();
 		assert_eq!(collection.len(), CJK_BYTES);
+		assert_eq!(fnv1a(&collection), CJK_HASH);
 		for (language, index, glyph) in [
 			(crate::i18n::Language::Japanese, 0, 45132),
 			(crate::i18n::Language::ChineseSimplified, 2, 45133),

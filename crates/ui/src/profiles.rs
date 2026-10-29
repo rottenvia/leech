@@ -2722,9 +2722,10 @@ pub fn show_with_session(
 ) -> Option<Action> {
 	session.reconcile_card_input(state.generation, user.id);
 	let colors = design::palette(ui);
-	let viewport = ui.ctx().content_rect();
+	let viewport = design::below_title_bar(ui.ctx());
 	let view = view.filter(|_| !user.webhook);
 	let full = session.full && !user.webhook;
+	let trigger = session.trigger;
 	let mut expand = full;
 	let bounds = viewport.shrink(if full { 32.0 } else { 8.0 });
 	let full_width = FULL_WIDTH.min(bounds.width());
@@ -3674,10 +3675,13 @@ pub fn show_with_session(
 		}
 		modal.response.rect
 	} else {
+		// Opened leftwards (from the member list), the card clears the whole row it came from,
+		// as in Discord, instead of covering the avatars beside the click.
+		let left_of = trigger.map_or(anchor.x, |rect| rect.left().min(anchor.x));
 		let x = if anchor.x + 12.0 + width <= bounds.right() {
 			anchor.x + 12.0
 		} else {
-			(anchor.x - 12.0 - width).max(bounds.left())
+			(left_of - 12.0 - width).max(bounds.left())
 		};
 		egui::Area::new(egui::Id::unique("user-profile-popout"))
 			.kind(egui::UiKind::Popup)
@@ -4691,6 +4695,35 @@ mod tests {
 			.memory(|m| m.area_rect(egui::Id::unique("user-profile-popout")))
 			.unwrap();
 		assert!(rect.right() <= right_anchor.x - 12.0 + 1.0);
+
+		// Opened from a member row, it clears the whole row, and it stays below the title strip.
+		let row = Rect::from_min_max(pos2(760.0, 4.0), pos2(1000.0, 46.0));
+		let mut session = ProfileSession {
+			trigger: Some(row),
+			..Default::default()
+		};
+		crate::design::set_title_strip(&ctx, true);
+		let output = ctx.run_ui(input(vec2(1000.0, 900.0), vec![]), |ui| {
+			show_with_session(
+				ui,
+				&user,
+				Some(&profile),
+				&state,
+				&mut images,
+				&mut opening,
+				&mut FormatCache::default(),
+				true,
+				pos2(950.0, 20.0),
+				&mut session,
+			);
+		});
+		output.drop_without_applying_deltas();
+		crate::design::set_title_strip(&ctx, false);
+		let rect = ctx
+			.memory(|m| m.area_rect(egui::Id::unique("user-profile-popout")))
+			.unwrap();
+		assert!(rect.right() <= row.left() - 12.0 + 1.0, "{rect:?}");
+		assert!(rect.top() >= crate::design::TITLE_BAR_HEIGHT, "{rect:?}");
 
 		let output = ctx.run_ui(
 			input(

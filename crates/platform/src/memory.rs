@@ -38,3 +38,30 @@ pub fn release_freed_memory() {
 		}
 	}
 }
+
+/// Maps a file read-only. Its pages stay file-backed, so the system can drop and reread them,
+/// and they never count as this process's private memory the way a heap copy does.
+#[allow(unsafe_code)]
+pub fn map_file(
+	path: &std::path::Path,
+) -> std::io::Result<std::sync::Arc<dyn AsRef<[u8]> + Send + Sync>> {
+	let file = std::fs::File::open(path)?;
+	// SAFETY: callers map only files the app wrote whole and renamed into place. Windows refuses
+	// to truncate or rewrite a file while a mapping of it exists.
+	let map = unsafe { memmap2::Mmap::map(&file)? };
+	Ok(std::sync::Arc::new(map))
+}
+
+#[cfg(test)]
+mod tests {
+	#[test]
+	fn a_mapped_file_reads_back_its_bytes() {
+		let path = std::env::temp_dir().join(format!("leech-map-{}", std::process::id()));
+		std::fs::write(&path, b"mapped bytes").unwrap();
+		let map = super::map_file(&path).unwrap();
+		assert_eq!((*map).as_ref(), b"mapped bytes");
+		drop(map);
+		std::fs::remove_file(&path).unwrap();
+		assert!(super::map_file(&path).is_err());
+	}
+}

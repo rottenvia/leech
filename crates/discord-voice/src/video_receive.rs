@@ -24,7 +24,11 @@ const QUEUE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_WIDTH: u32 = 1920;
 const MAX_PIXELS: u64 = 1920 * 1080;
 const START_CODE: [u8; 4] = [0, 0, 0, 1];
+/// A picture queued longer than this is late: decoded to keep its references whole, but
+/// shown only when no newer picture of that source waits behind it.
 const MAX_DECODE_AGE: Duration = Duration::from_millis(150);
+/// Past this the backlog is dropped and a keyframe asked for instead.
+const MAX_BACKLOG_AGE: Duration = Duration::from_millis(500);
 /// How long packets behind a sequence gap wait for a retransmission before the picture is
 /// given up and a keyframe requested instead.
 const REPAIR_WAIT: Duration = Duration::from_millis(250);
@@ -710,7 +714,7 @@ impl Receivers {
 /// Decoder thread: cleartext access units in, bounded RGBA frames out through the sink.
 /// Dropping the returned sender ends the thread and releases every decoder.
 pub(crate) fn spawn_decoder(sink: VideoSink) -> Result<(DecoderQueue, Lost), &'static str> {
-	// Keep short bursts, but recover from a fresh keyframe instead of replaying stale video.
+	// Keep short bursts; a late backlog is decoded quickly and only its newest picture shown.
 	let (send, receive) = sync_channel(16);
 	let lost: Lost = Arc::new(Mutex::new(Vec::new()));
 	let report = lost.clone();
@@ -976,7 +980,8 @@ fn decode_loop(
 	// After a decode error, predictions are skipped until a keyframe rebuilds the references.
 	let mut broken: Vec<u64> = Vec::new();
 	let mut scratch = Vec::new();
-	while let Ok(message) = receive.recv() {
+	let mut next = None;
+	while let Some(message) = next.take().or_else(|| receive.recv().ok()) {
 		let had_active = !active.is_empty();
 		active.retain(|user, lifetime| {
 			let retained = lifetime.load(Ordering::Acquire);
@@ -1010,7 +1015,7 @@ fn decode_loop(
 			age.as_millis().min(u128::from(u64::MAX)) as u64,
 			Ordering::Relaxed,
 		);
-		if age > MAX_DECODE_AGE {
+		if age > MAX_BACKLOG_AGE {
 			counters.stale.fetch_add(1, Ordering::Relaxed);
 			decoders.remove(&frame.user);
 			decoder_counts(&decoders, &counters);
@@ -1071,6 +1076,17 @@ fn decode_loop(
 		let (width, height) = decoded;
 		if !lifetime.load(Ordering::Acquire) {
 			continue;
+		}
+		// Catching up: a late picture with a newer one of its source queued is not shown.
+		if age > MAX_DECODE_AGE
+			&& let Ok(message) = receive.try_recv()
+		{
+			let newer = matches!(&message, Decode::Frame(queued, ..) if queued.user == frame.user);
+			next = Some(message);
+			if newer {
+				counters.stale.fetch_add(1, Ordering::Relaxed);
+				continue;
+			}
 		}
 		counters.pictures.fetch_add(1, Ordering::Relaxed);
 		sink(RemoteFrame {
@@ -1160,7 +1176,7 @@ mod tests {
 		receive.recv_timeout(Duration::from_secs(10)).unwrap()
 	}
 
-	/// Decodes one keyframe, resending it when a loaded runner held it past `MAX_DECODE_AGE`.
+	/// Decodes one keyframe, resending it when a loaded runner held it past `MAX_BACKLOG_AGE`.
 	fn decoder_cleanup_decode(queue: &DecoderQueue, user: u64, data: &[u8]) {
 		let deadline = Instant::now() + Duration::from_secs(10);
 		loop {
@@ -1182,6 +1198,59 @@ mod tests {
 			}
 			assert!(Instant::now() < deadline, "keyframe stayed stale");
 		}
+	}
+
+	/// Runs the software decoder over keyframes queued `ages` milliseconds ago and returns
+	/// the pictures shown, the late count and the users asked for a keyframe.
+	fn decode_backlog(ages: &[u64]) -> (u64, u64, Vec<u64>) {
+		let data = decoder_cleanup_keyframe(32, 32);
+		let (queue, receive) = decoder_cleanup_queue(ages.len());
+		let lifetime = Arc::new(AtomicBool::new(true));
+		let now = Instant::now();
+		for age in ages {
+			let permit = queue
+				.bytes
+				.clone()
+				.try_acquire_many_owned(data.len() as u32)
+				.unwrap();
+			let frame = Encoded {
+				user: 7,
+				data: data.clone(),
+				keyframe: true,
+			};
+			let queued = now - Duration::from_millis(*age);
+			assert!(
+				queue
+					.send
+					.try_send(Decode::Frame(frame, permit, queued, lifetime.clone()))
+					.is_ok()
+			);
+		}
+		drop(queue);
+		let shown = Arc::new(AtomicU64::new(0));
+		let count = shown.clone();
+		let sink: VideoSink = Arc::new(move |_| {
+			count.fetch_add(1, Ordering::Relaxed);
+		});
+		let lost: Lost = Arc::default();
+		let counters = Arc::new(DecoderCounters::default());
+		decode_loop(receive, sink, lost.clone(), counters.clone(), false);
+		let lost = lost.lock().unwrap().clone();
+		(
+			shown.load(Ordering::Relaxed),
+			counters.stale.load(Ordering::Relaxed),
+			lost,
+		)
+	}
+
+	#[test]
+	fn a_late_backlog_is_decoded_and_only_its_newest_picture_shown() {
+		// The decoder catches up instead of throwing its references away, so no viewer
+		// makes the sender send everyone a keyframe for a moment of local slowness.
+		assert_eq!(decode_backlog(&[300, 250, 200]), (1, 2, vec![]));
+		assert_eq!(decode_backlog(&[100, 50]), (2, 0, vec![]));
+		// A backlog too old to replay is dropped and refreshed by a keyframe as before.
+		assert_eq!(decode_backlog(&[600]), (0, 1, vec![7]));
 	}
 
 	#[test]

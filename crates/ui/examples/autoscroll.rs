@@ -345,9 +345,11 @@ fn main() {
 			"a second click must stop latched autoscroll, not start a new origin"
 		);
 	}
+	// A row whose header and avatar are on screen, not one half under the channel bar.
 	let (row_id, row) = labels
 		.borrow()
 		.iter()
+		.filter(|(_, pos)| pos.y > 160.0)
 		.find_map(|(text, pos)| {
 			text.strip_prefix("Autoscroll row ")
 				.and_then(|rest| rest.parse::<u64>().ok())
@@ -637,10 +639,12 @@ fn main() {
 		.find(|(text, _)| text.contains("synthetic-landscape") || text.contains("offline preview"))
 		.map(|(_, pos)| *pos)
 		.unwrap_or(egui::pos2(date.x, date.y + 80.0));
+	// From the blank side of the row: the image itself is a click target, and dragging an
+	// image does not select text in Discord either.
 	let from_media = drag_select(
 		&mut frame,
 		&copied,
-		egui::pos2(media.x - 20.0, media.y + 30.0),
+		egui::pos2(1040.0, media.y + 30.0),
 		egui::pos2(media.x + 180.0, media.y - 80.0),
 	);
 	assert!(
@@ -659,6 +663,10 @@ fn main() {
 			.find(|entry| entry.id == channel)
 			.unwrap()
 			.last_message = Some(model::Id(2000));
+	}
+	// A middle press within `WHEEL_SLIP` of the wheel ticks above is a slipped wheel click.
+	for _ in 0..40 {
+		frame(vec![]);
 	}
 	frame(vec![egui::Event::PointerMoved(origin)]);
 	middle.set(ui::scroll::Middle {

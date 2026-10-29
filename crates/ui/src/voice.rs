@@ -2310,14 +2310,9 @@ impl MessagingUi {
 			if let Some((_, error)) = state.voice.ring_error.filter(|(id, _)| *id == channel) {
 				notices.push((error.into(), true));
 			}
-			// Screen-share status stays in the share dialog and the button's tooltip: as a stage
-			// notice it pushed the DM avatars into a smaller band (Discord shows none).
-			if !self.voice_camera_status.is_empty() {
-				notices.push((self.voice_camera_status.into(), false));
-			}
-			if call.watching.is_none() && !self.voice_stream_status.is_empty() {
-				notices.push((self.voice_stream_status.into(), false));
-			}
+			// Share, camera and watch status stay in their buttons' tooltips, and failures
+			// arrive as toasts: as stage notices they squeezed the DM avatars into a smaller
+			// band, and a failure's text stayed there for good (Discord shows none).
 			if call.server_deafened {
 				notices.push(("Deafened by the server".into(), false));
 			} else if call.server_muted {
@@ -3808,7 +3803,9 @@ impl MessagingUi {
 					"Turn on camera"
 				},
 				if camera {
-					"Stop sharing your camera"
+					camera_status(self.voice_camera_status)
+				} else if !self.voice_camera_status.is_empty() {
+					self.voice_camera_status
 				} else if state.offline_preview() {
 					"Camera is off in the offline preview"
 				} else if !cfg!(any(
@@ -5271,7 +5268,9 @@ impl MessagingUi {
 							"Turn on camera"
 						},
 						if camera {
-							"Stop sharing your camera"
+							camera_status(self.voice_camera_status)
+						} else if !self.voice_camera_status.is_empty() {
+							self.voice_camera_status
 						} else if state.offline_preview() {
 							"Camera is off in the offline preview"
 						} else if !self.voice_camera_available {
@@ -6089,6 +6088,15 @@ fn speaking_avatar(ui: &egui::Ui, avatar: &egui::Response, name: &str) {
 	let label = format!("{name} · Speaking");
 	// Callers own the avatar's tooltip; a second one here would stack under it.
 	avatar.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &label));
+}
+
+/// The camera button's tooltip while the camera is on: what it is doing, if anything.
+fn camera_status(status: &'static str) -> &'static str {
+	if status.is_empty() {
+		"Stop sharing your camera"
+	} else {
+		status
+	}
 }
 
 fn stage_notices(ui: &mut egui::Ui, notices: &[(String, bool)]) {
@@ -7725,6 +7733,11 @@ mod tests {
 			view.stage_notices(&state, channel, true)
 				.contains(&("Synthetic recipient error".into(), true))
 		);
+		// Camera and watch status live in tooltips and toasts: each stage notice line took
+		// about 38 px from the DM band's 80 px avatars.
+		view.voice_camera_status = "Opening camera…";
+		view.voice_stream_status = "The stream did not start; try watching again";
+		assert_eq!(view.stage_notices(&state, channel, true).len(), 1);
 		// A ring chosen for an earlier attempt of this call is dropped.
 		view.ring_request = Some((channel, request + 1, Id(2), false));
 		let _ = state.voice.take_commands().count();

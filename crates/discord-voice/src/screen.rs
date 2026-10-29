@@ -173,7 +173,8 @@ impl Worker {
 		#[cfg(target_os = "linux")]
 		let worker_preview_visible = preview_visible.clone();
 		// A few frames of slack absorbs send jitter without forcing keyframes on every hiccup.
-		let (send, frames) = tokio::sync::mpsc::channel(3);
+		// One encoded picture may wait while the pacer drains the last; more is only delay.
+		let (send, frames) = tokio::sync::mpsc::channel(1);
 		let (complete, done) = mpsc::sync_channel(1);
 		let (audio_send, audio) = if settings.audio && audio_supported() {
 			let (send, receive) = tokio::sync::mpsc::channel(4);

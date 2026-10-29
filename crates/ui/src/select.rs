@@ -192,22 +192,30 @@ impl Surface {
 				.get(embedded)
 				.is_some_and(|embed| embed.after <= position)
 			{
-				show_embed(ui, &embeds[embedded], menu_open);
+				show_embed(ui, &embeds[embedded]);
 				embedded += 1;
 			}
 			if !run.rect.is_positive() || !ui.is_rect_visible(run.rect) {
 				continue;
 			}
 			if menu_open {
-				if !run.galley.job.text.is_empty() {
-					let color = if run.painted {
-						Color32::TRANSPARENT
-					} else {
-						ui.visuals().text_color()
-					};
-					ui.painter()
-						.add(TextShape::new(run.galley_pos, run.galley, color));
-				}
+				// The menu owns the pointer, but the selection must still meet its cursors:
+				// egui drops a selection it does not see for a frame, and the menu's Copy
+				// with it. A band that senses nothing keeps it without starting another.
+				let color = if run.painted {
+					Color32::TRANSPARENT
+				} else {
+					ui.visuals().text_color()
+				};
+				let response = ui.interact(run.rect, run.band, Sense::empty());
+				LabelSelectionState::label_text_selection(
+					ui,
+					&response,
+					run.galley_pos,
+					run.galley,
+					color,
+					Stroke::NONE,
+				);
 				continue;
 			}
 			let mut response: Option<Response> = None;
@@ -230,9 +238,8 @@ impl Surface {
 			let Some(response) = response else {
 				continue;
 			};
-			if run.galley.job.text.is_empty() {
-				continue;
-			}
+			// A blank run (a media-only row) has no text of its own, but anchors a drag that
+			// continues into its neighbours' text.
 			let color = if run.painted {
 				Color32::TRANSPARENT
 			} else {
@@ -248,13 +255,22 @@ impl Surface {
 			);
 		}
 		for embed in &embeds[embedded..] {
-			show_embed(ui, embed, menu_open);
+			show_embed(ui, embed);
 		}
+		// The widget registered for focus already. While Tab passes focus on, nothing holds it,
+		// and a second registration here would take it back instead of the next widget.
+		let passing = ui.input(|input| input.key_pressed(egui::Key::Tab))
+			&& ui.memory(|memory| memory.focused().is_none());
 		for over in self.overlays {
+			let sense = if passing {
+				over.sense - Sense::FOCUSABLE
+			} else {
+				over.sense
+			};
 			ui.interact_opt(
 				over.rect,
 				over.id,
-				over.sense,
+				sense,
 				InteractOptions { move_to_top: true },
 			);
 		}
@@ -435,21 +451,14 @@ pub(crate) fn band_sense() -> Sense {
 	Sense::CLICK | Sense::DRAG
 }
 
-/// Paint a deferred widget galley, registering its selection unless a menu owns the pointer.
-fn show_embed(ui: &mut egui::Ui, embed: &Embed, menu_open: bool) {
+/// Paint a deferred widget galley and register its selection. An open menu sits above it, so
+/// the widget's own response cannot start a new selection under the menu.
+fn show_embed(ui: &mut egui::Ui, embed: &Embed) {
 	if !embed.response.rect.is_positive() || !ui.is_rect_visible(embed.response.rect) {
 		return;
 	}
 	// The galley carries its own per-token colours; the fallback only covers unstyled glyphs.
 	let color = ui.visuals().text_color();
-	if menu_open {
-		ui.painter().add(TextShape::new(
-			embed.galley_pos,
-			embed.galley.clone(),
-			color,
-		));
-		return;
-	}
 	LabelSelectionState::label_text_selection(
 		ui,
 		&embed.response,

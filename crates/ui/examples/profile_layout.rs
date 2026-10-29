@@ -78,11 +78,11 @@ fn main() {
 		generation: state.generation,
 		event: Event::Permissions(permissions::Event::Guild(changed)),
 	});
+	// Roles on the card come from current member data, so an open card stays open, as
+	// in Discord; only a rejected permission update clears it.
 	assert!(
-		state.profile.is_none(),
-		"changed permissions still invalidate the profile"
+		state.profile.as_ref().unwrap().data.is_some(),
+		"changed permissions keep the open profile"
 	);
-	println!(
-		"Profile whitespace, single-line clan tag and unchanged-permission refresh checks passed."
-	);
+	println!("Profile whitespace, single-line clan tag and permission refresh checks passed.");
 }

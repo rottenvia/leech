@@ -20,6 +20,7 @@ fn windows_icon() {
 	use std::{path::PathBuf, process::Command};
 	println!("cargo:rerun-if-changed=../../packaging/windows/Leech.ico");
 	println!("cargo:rerun-if-changed=../../packaging/windows/leech.rc");
+	println!("cargo:rerun-if-changed=../../packaging/windows/leech.manifest");
 	let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap())
 		.join("../../packaging/windows");
 	let out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());

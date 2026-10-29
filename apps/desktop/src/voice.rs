@@ -878,6 +878,8 @@ impl Voice {
 			ui.voice_camera_preview = None;
 			ui.voice_camera_status =
 				"Camera device changed. Turn on the camera to use the selected device.";
+			ui.toasts
+				.push(ui::design::Level::Info, ui.voice_camera_status);
 			state.set_call_camera(false);
 			return;
 		}
@@ -891,6 +893,7 @@ impl Voice {
 			ui.voice_camera_preview = None;
 			if requested && let Some(error) = error {
 				ui.voice_camera_status = error;
+				ui.toasts.push(ui::design::Level::Error, error);
 				state.set_call_camera(false);
 			}
 			return;
@@ -945,6 +948,7 @@ impl Voice {
 				}
 				Err(error) => {
 					ui.voice_camera_status = error;
+					ui.toasts.push(ui::design::Level::Error, error);
 					state.set_call_camera(false);
 					return;
 				}

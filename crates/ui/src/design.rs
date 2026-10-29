@@ -1549,6 +1549,22 @@ pub fn apply(ctx: &egui::Context) {
 }
 /// Height of the messaging window's custom title strip, in egui points.
 pub const TITLE_BAR_HEIGHT: f32 = 36.0;
+const TITLE_STRIP: &str = "leech-title-strip";
+
+/// Records whether this frame draws the title strip, for [`below_title_bar`].
+pub fn set_title_strip(ctx: &egui::Context, shown: bool) {
+	let height = if shown { TITLE_BAR_HEIGHT } else { 0.0 };
+	ctx.data_mut(|data| data.insert_temp(egui::Id::unique(TITLE_STRIP), height));
+}
+
+/// The window below its title strip: popups open here so they never cover the caption.
+pub fn below_title_bar(ctx: &egui::Context) -> egui::Rect {
+	let mut rect = ctx.content_rect();
+	rect.min.y += ctx
+		.data(|data| data.get_temp::<f32>(egui::Id::unique(TITLE_STRIP)))
+		.unwrap_or(0.0);
+	rect
+}
 /// Space reserved at the left of window strips for macOS traffic lights.
 pub const TRAFFIC_LIGHT_INSET: f32 = if cfg!(target_os = "macos") { 72.0 } else { 0.0 };
 

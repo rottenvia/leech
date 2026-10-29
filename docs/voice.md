@@ -482,7 +482,14 @@ In a connected call, select **Share your screen**, choose a display/window, 480p
 
 480p uses 854×480 pixels and a target video bitrate of 2 Mbps at 15/30 fps or 4 Mbps at 60 fps.
 
-Capture uses macOS 14+ ScreenCaptureKit or Windows Graphics Capture. On macOS,
+Capture uses macOS 14+ ScreenCaptureKit or Windows Graphics Capture. Windows Graphics
+Capture receives almost no frames from a fullscreen game that presents through
+independent flip or exclusive mode (Counter-Strike 2 sent 4–8 a second, and nothing once
+focused), so while a shared window covers its whole display and is on top, Windows reads
+that display through DXGI desktop duplication instead and returns to the window capture
+when the game leaves fullscreen, is minimized or is covered. Duplication never runs while
+the window is hidden, so nothing else on the display is shared. A window that fills its
+display is captured without the cursor. On macOS,
 Share Screen offers the native `SCContentSharingPicker` to choose one display or
 window. Source discovery only advertises that choice; it does not enumerate private
 window titles, request screen-recording permission or open the picker. The owner
@@ -709,7 +716,11 @@ video processor to resize/convert to 640×480 RGB32.
 DirectShow discovery/capture additionally covers virtual cameras such as OBS and
 NVIDIA Broadcast, which may not appear in Media Foundation enumeration.
 Its native input is limited to 1920×1080, converted to RGB24 and fitted into
-640×480 with aspect-preserving nearest-neighbor scaling and black bars. It retains
+640×480 with aspect-preserving area averaging (each pixel averages the source pixels it
+covers, at most 3×3) and black bars. Windows' converter behind NV12-only sources such as
+OBS Virtual Camera reports `biPlanes = 3` on the RGB24 type; that field is ignored, since
+it means nothing for packed RGB. Before October 29, 2026 it was rejected, so OBS Virtual
+Camera always failed with "Camera did not provide a bounded 640×480 RGB frame". It retains
 one callback frame (at most 8,294,400 bytes) and validates the negotiated input
 allocator against eight buffers of at most that size each. Vendor-driver and
 upstream decoder allocations remain separate from those application limits.
@@ -728,7 +739,10 @@ The device-free format-selection check is
 `cargo run --locked -p discord-voice --example camera_format`; native negotiation
 and performance still require owner-operated hardware validation.
 
-Frame waits time out after five seconds without a usable frame; stop is checked at
+Frame waits time out after five seconds without a usable frame. A camera that never sent
+one says so and points at virtual cameras, which (like OBS's) send nothing until their app
+starts them. Camera status shows in the camera button's tooltip and failures as toasts,
+not on the stage, where each line squeezed the DM call's avatars. Stop is checked at
 most every 100 ms while waiting. Native driver initialization/teardown has no hard
 deadline. The process-wide worker slot stays occupied until cleanup finishes so rapid
 toggles cannot accumulate blocked capture workers. Native driver/codec allocations
@@ -794,9 +808,12 @@ between the UDP socket and the display, so a frozen viewer is diagnosed from one
 - `decrypt_failed`: access units that failed DAVE decryption.
 - `gated`: predicted pictures rejected because a keyframe is still owed after loss.
 - `queue_full`: frames dropped because the decoder thread was behind.
-- `decode_queue_ms` / `stale_frames`: maximum decoder queue wait and pictures discarded
-  after waiting over 150 ms. Discarding requests a fresh keyframe instead of replaying
-  stale video. The native macOS pipeline drains every three submissions.
+- `decode_queue_ms` / `stale_frames`: maximum decoder queue wait and late pictures. A
+  picture that waited over 150 ms is still decoded, so the references stay whole, but is
+  shown only when no newer picture of its source waits behind it; the decoder catches up
+  in a few milliseconds instead of asking the sender for a keyframe. A backlog older than
+  500 ms is dropped and refreshed by a keyframe. The native macOS pipeline drains every
+  three submissions.
 - `keyframes` / `keyframes_without_params`: keyframes handed to the decoder, and how
   many lacked inline SPS/PPS. A rebuilt decoder cannot start from those.
 - `pli_sent`: Picture Loss Indications sent (at most one per owed sender per 500 ms).

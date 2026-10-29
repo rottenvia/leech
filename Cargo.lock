@@ -5285,6 +5285,7 @@ dependencies = [
  "keyring-core",
  "ksni",
  "mac-usernotifications",
+ "memmap2",
  "model",
  "notify-rust",
  "objc2 0.6.4",

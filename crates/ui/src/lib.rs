@@ -4475,6 +4475,7 @@ impl MessagingUi {
 			.guild
 			.and_then(|id| state.guild(id))
 			.map_or_else(|| language.text("direct-messages"), |g| g.name.clone());
+		design::set_title_strip(ui.ctx(), self.shows_title_bar());
 		if self.shows_title_bar() {
 			self.title_bar(ui, state, &mut commands, &title);
 		}
