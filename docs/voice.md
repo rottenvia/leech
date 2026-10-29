@@ -482,7 +482,14 @@ In a connected call, select **Share your screen**, choose a display/window, 480p
 
 480p uses 854×480 pixels and a target video bitrate of 2 Mbps at 15/30 fps or 4 Mbps at 60 fps.
 
-Capture uses macOS 14+ ScreenCaptureKit or Windows Graphics Capture. On macOS,
+Capture uses macOS 14+ ScreenCaptureKit or Windows Graphics Capture. Windows Graphics
+Capture receives almost no frames from a fullscreen game that presents through
+independent flip or exclusive mode (Counter-Strike 2 sent 4–8 a second, and nothing once
+focused), so while a shared window covers its whole display and is on top, Windows reads
+that display through DXGI desktop duplication instead and returns to the window capture
+when the game leaves fullscreen, is minimized or is covered. Duplication never runs while
+the window is hidden, so nothing else on the display is shared. A window that fills its
+display is captured without the cursor. On macOS,
 Share Screen offers the native `SCContentSharingPicker` to choose one display or
 window. Source discovery only advertises that choice; it does not enumerate private
 window titles, request screen-recording permission or open the picker. The owner
@@ -794,9 +801,12 @@ between the UDP socket and the display, so a frozen viewer is diagnosed from one
 - `decrypt_failed`: access units that failed DAVE decryption.
 - `gated`: predicted pictures rejected because a keyframe is still owed after loss.
 - `queue_full`: frames dropped because the decoder thread was behind.
-- `decode_queue_ms` / `stale_frames`: maximum decoder queue wait and pictures discarded
-  after waiting over 150 ms. Discarding requests a fresh keyframe instead of replaying
-  stale video. The native macOS pipeline drains every three submissions.
+- `decode_queue_ms` / `stale_frames`: maximum decoder queue wait and late pictures. A
+  picture that waited over 150 ms is still decoded, so the references stay whole, but is
+  shown only when no newer picture of its source waits behind it; the decoder catches up
+  in a few milliseconds instead of asking the sender for a keyframe. A backlog older than
+  500 ms is dropped and refreshed by a keyframe. The native macOS pipeline drains every
+  three submissions.
 - `keyframes` / `keyframes_without_params`: keyframes handed to the decoder, and how
   many lacked inline SPS/PPS. A rebuilt decoder cannot start from those.
 - `pli_sent`: Picture Loss Indications sent (at most one per owed sender per 500 ms).

@@ -664,11 +664,21 @@ retiring a finished audio worker no longer stops video. Viewer stream snapshots 
 SSRC/RTX mappings without resetting unchanged pictures, and failed video authentication
 requests a fresh keyframe. No encryption fallback or additional codec is introduced.
 
-Authenticated RTCP receiver/sender reports and matching REMB estimates now adjust the
-encoder target once per second, between 250 kbps and the selected preset. At least 5%
-reported loss reduces the target by 20%; fresh low-loss feedback permits gradual 5%
-recovery after two seconds without congestion. Missing feedback does not increase the
-rate. REMB reserves wire overhead and expires after five seconds. Native encoder rates
+Sender rate control (revised October 29, 2026) starts at 2.5 Mbps, or the preset if lower,
+and is reconsidered every 250 ms between 250 kbps and the preset. Loss is the larger of
+the RTCP fraction lost, first-time NACKed packets over packets sent, and datagrams the
+local socket refused. At 10% loss, or with 80 ms of uplink queueing, the target is cut by
+15% or half the loss rate, whichever is more (at most half), and the next cut waits 500
+ms for the queue to drain. At 2% loss or 30 ms of queueing it holds. Otherwise fresh
+feedback grows it 8% a second, or 2% near the rate of the last cut. Queueing is the voice
+server's UDP pong round trip above its ten-to-twenty-second minimum: while sharing,
+pings go out every 250 ms instead of every five seconds. Discord's SFU sent a constant
+4.2 Mbps REMB in every owner log, so REMB stays only a ceiling (less 20% wire overhead,
+expiring after five seconds). On a simulated 2 Mbps uplink with a 500 ms router buffer
+the previous once-a-second loss controller averaged 355 ms of queued video (500 ms
+worst); this one averages 21 ms (115 ms worst) at the same throughput. Live pong
+behavior is unverified; without pongs the loss signals still apply. Missing feedback
+does not increase the rate. Native encoder rates
 update in place where supported; software encoders and older Linux plugins restart with
 an IDR. Linux restarts retain the approved portal session and application audio.
 
@@ -724,7 +734,8 @@ quality is not established by these changes.
 Watched streams have a session-only 0–200% audio volume and mute control, independent
 of participant voice levels. Audio playout retains at most two queued 20 ms frames
 and clears delayed mixer output after a stall. Decoder input is bounded to 16 pictures
-and 16 MiB, with a 150 ms age limit and keyframe recovery. These bounds reduce backlog;
+and 16 MiB; pictures late by 150 ms are decoded but only the newest is shown, and a
+500 ms backlog is dropped for a keyframe. These bounds reduce backlog;
 they do not implement sender-clock audio/video synchronization or establish live sync.
 
 September 27 preview update: hovering a currently streaming guild participant requests
@@ -802,7 +813,7 @@ permission, virtual device, output rerouting or recording file is added.
 
 Gateway opcodes 18/19 and STREAM_CREATE/STREAM_SERVER_UPDATE/STREAM_DELETE are unofficial normal-user behavior, checked against [discord.py-self](https://github.com/dolfies/discord.py-self/blob/master/discord/gateway.py). A separate RTC connection uses the stream RTC server/channel IDs and the parent call session, sharing one ephemeral DAVE signing identity. The `rtc_server_id - 1` MLS group mapping comes from [discord-native-voice](https://github.com/dolfies/discord-native-voice/blob/master/discord/ext/native_voice/stream_client.py); it is not an official protocol guarantee. H264 negotiation and UDP transport are required; mismatches fail visibly. Video is DAVE-encrypted before RFC 6184 packetization and per-packet transport AEAD. There is no plaintext fallback. [DAVE protocol](https://github.com/discord/dave-protocol/blob/main/protocol.md) supplies the encryption requirement.
 
-Screen source discovery and capture occur off the UI/audio threads. Application-owned source lists are capped at 64 labels of 256 bytes. Raw BGRA frames are capped at 3840×2160/33,177,600 bytes; macOS requests the selected output dimensions. Windows prechecks source size and stops on oversized callback frames, but its upstream driver adapter can resize its native GPU pool before that callback. One raw frame and three encoded frames can be queued; on Windows the raw frame is normally an NV12 GPU texture at the stream size. H264 frames are capped at 2 MiB, encrypted packetization at 2,048 fragments of at most 1,200 transport bytes. Quality presets target 2–12 Mbps (12 Mbps only at 1080p60), with frame dropping under load. They are limits/targets, not measured delivery guarantees.
+Screen source discovery and capture occur off the UI/audio threads. Application-owned source lists are capped at 64 labels of 256 bytes. Raw BGRA frames are capped at 3840×2160/33,177,600 bytes; macOS requests the selected output dimensions. Windows prechecks source size and stops on oversized callback frames, but its upstream driver adapter can resize its native GPU pool before that callback. One raw frame and one encoded frame can be queued (three before October 29, 2026); on Windows the raw frame is normally an NV12 GPU texture at the stream size. H264 frames are capped at 2 MiB, encrypted packetization at 2,048 fragments of at most 1,200 transport bytes. Quality presets target 2–12 Mbps (12 Mbps only at 1080p60), with frame dropping under load. They are limits/targets, not measured delivery guarantees.
 
 Call and stream transports send an eight-byte native UDP ping after discovery and every
 five seconds, including receive-only streams and muted calls. The packet uses the

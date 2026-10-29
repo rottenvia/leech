@@ -676,4 +676,69 @@ mod tests {
 			assert_eq!(u32::try_from(&value).unwrap(), 1);
 		}
 	}
+
+	/// A busy game-like picture plane: random flat blocks, `block` pixels square.
+	fn blocks(seed: &mut u32, width: usize, height: usize, block: usize) -> Vec<u8> {
+		let columns = width.div_ceil(block);
+		let shades: Vec<u8> = (0..columns * height.div_ceil(block))
+			.map(|_| {
+				*seed ^= *seed << 13;
+				*seed ^= *seed >> 17;
+				*seed ^= *seed << 5;
+				*seed as u8
+			})
+			.collect();
+		(0..width * height)
+			.map(|index| shades[index / width / block * columns + index % width / block])
+			.collect()
+	}
+
+	/// A keyframe or scene change far above the frame budget queues behind the uplink and
+	/// delays every later picture. NVENC's low-latency CBR keeps them near 1.4x on its own
+	/// (it ignores CODECAPI_AVEncCommonBufferSize), so a regression shows up here.
+	#[test]
+	#[ignore = "needs a hardware H.264 encoder"]
+	fn hard_pictures_stay_near_the_frame_budget() {
+		let (width, height, fps, bit_rate) = (1280, 720, 60, 4_000_000);
+		let mut encoder = Encoder::new(Config {
+			width,
+			height,
+			fps,
+			bit_rate,
+			max_bytes: 4 << 20,
+			keyframe_interval: 3000,
+			profile: Profile::Main,
+		})
+		.unwrap();
+		let budget = (bit_rate / 8 / fps) as usize;
+		let mut seed = 0x2545_f491;
+		let mut planes = (Vec::new(), Vec::new(), Vec::new());
+		let mut sizes = Vec::new();
+		for index in 0..90 {
+			// A new random picture every 30 frames: the IDR and two hard scene changes.
+			if index % 30 == 0 {
+				let (width, height) = (width as usize, height as usize);
+				planes = (
+					blocks(&mut seed, width, height, 32),
+					blocks(&mut seed, width / 2, height / 2, 16),
+					blocks(&mut seed, width / 2, height / 2, 16),
+				);
+			}
+			let (data, _) = encoder
+				.encode(&planes.0, &planes.1, &planes.2, false)
+				.unwrap();
+			if !data.is_empty() {
+				sizes.push(data.len());
+			}
+		}
+		let largest = sizes.iter().copied().max().unwrap();
+		eprintln!(
+			"{}: budget {budget} B, largest {largest} B ({:.1}x), total {} B over {} pictures",
+			encoder.name(),
+			largest as f64 / budget as f64,
+			sizes.iter().sum::<usize>(),
+			sizes.len()
+		);
+		assert!(largest <= budget * 4, "largest picture {largest} B");
+	}
 }

@@ -12,6 +12,7 @@ use futures_util::{SinkExt, StreamExt};
 use opus2::{Application, Bitrate, Channels, Encoder};
 use serde_json::{Value, json};
 use std::{
+	collections::VecDeque,
 	net::{IpAddr, SocketAddr},
 	sync::{
 		Arc,
@@ -123,16 +124,16 @@ impl UdpFailures {
 		socket: &UdpSocket,
 		data: &[u8],
 		outage: &'static str,
-	) -> Result<(), &'static str> {
+	) -> Result<bool, &'static str> {
 		if socket.try_send(data).is_ok() {
 			self.0 = None;
-			return Ok(());
+			return Ok(true);
 		}
 		let now = Instant::now();
 		if now.duration_since(*self.0.get_or_insert(now)) >= UDP_OUTAGE {
 			return Err(outage);
 		}
-		Ok(())
+		Ok(false)
 	}
 }
 /// NACK every lost video packet that is due, so its sender resends it; a repaired picture
@@ -179,7 +180,8 @@ fn udp_keepalive(
 	*sequence = sequence.wrapping_add(1);
 	let mut packet = [0x13, 0x37, 0xca, 0xfe, 0, 0, 0, 0];
 	packet[4..].copy_from_slice(&sequence.to_le_bytes());
-	failures.send(socket, &packet, "Voice UDP keepalive failed")
+	failures.send(socket, &packet, "Voice UDP keepalive failed")?;
+	Ok(())
 }
 fn number(data: &Value, key: &str) -> Result<u64, &'static str> {
 	data[key].as_u64().ok_or("Malformed voice signaling field")
@@ -1194,12 +1196,15 @@ async fn run_stream_inner(
 	let mut outgoing_keyframe = false;
 	// When the frame now leaving was queued, for the stream log's send time.
 	let mut queued_at: Option<Instant> = None;
-	if video.is_some() {
+	if let Some(video) = &video {
+		video.bitrate.store(rate.target, Ordering::Release);
 		crate::stream_log::set(
 			crate::stream_log::Count::TargetNow,
 			u64::from(rate.target / 1000),
 		);
 	}
+	// Outstanding UDP pings while sharing, whose pongs time the uplink queue.
+	let mut pings: VecDeque<(u32, Instant)> = VecDeque::new();
 	let mut signal_window = Instant::now();
 	let mut signal_count = 0u16;
 	let mut packet = [0u8; MAX_PACKET + 1];
@@ -1248,7 +1253,8 @@ async fn run_stream_inner(
 					crate::stream_log::add(crate::stream_log::Count::Resent,1);
 				}
 				for packet in outgoing.next_batch(now,rate.target) {
-					udp_failures.send(socket,&crypto.seal(&packet.header,&packet.payload)?,"Stream UDP send failed")?;
+					let sent=udp_failures.send(socket,&crypto.seal(&packet.header,&packet.payload)?,"Stream UDP send failed")?;
+					rate.sent(1,u32::from(!sent));
 					if rtx_ssrc!=0 {history.remember(packet,now);}
 				}
 				metrics.finish(crate::diagnostics::Stage::VideoSend,start);
@@ -1267,7 +1273,13 @@ async fn run_stream_inner(
 				if discovering && now>=discovery_deadline {return Err("Discord stream UDP discovery timed out");}
 				if !discovering && now>=next_udp_ping && let Some(socket)=&udp {
 					udp_keepalive(socket,&mut udp_failures,&mut udp_ping_sequence)?;
-					next_udp_ping=now+Duration::from_secs(5);
+					// While sharing, ping often enough to see the uplink queue grow.
+					let probing=announced && video.is_some();
+					if probing {
+						if pings.len()>=8 {pings.pop_front();}
+						pings.push_back((udp_ping_sequence,now));
+					} else {pings.clear();}
+					next_udp_ping=now+if probing {Duration::from_millis(250)} else {Duration::from_secs(5)};
 				}
 				if let Some(interval)=heartbeat_ms && now>=heartbeat_at {
 					if awaiting_ack.is_some() {return Err("Discord stream heartbeat was not acknowledged");}
@@ -1288,6 +1300,11 @@ async fn run_stream_inner(
 				if secure && let Some(video)=&video && let Some(target)=rate.tick(now) {
 					video.bitrate.store(target,Ordering::Release);
 					crate::stream_log::set(crate::stream_log::Count::TargetNow,u64::from(target/1000));
+				}
+				if video.is_some() {
+					let (trip,queued)=rate.delay(now).map_or((0,0),|(trip,queued)| (trip.as_millis().max(1) as u64,queued.as_millis() as u64));
+					crate::stream_log::set(crate::stream_log::Count::RoundTripNow,trip);
+					crate::stream_log::set(crate::stream_log::Count::QueuedNow,queued);
 				}
 				if secure && !announced {
 					invalidate_stream(&mut video, &mut share_audio);
@@ -1393,18 +1410,29 @@ async fn run_stream_inner(
 					continue;
 				}
 				if length>MAX_PACKET {continue;}
+				// The voice server's pong echoes a ping's sequence; media is never 8 bytes.
+				if length==8 {
+					let sequence=u32::from_le_bytes([packet[4],packet[5],packet[6],packet[7]]);
+					if let Some(index)=pings.iter().position(|(sent,_)| *sent==sequence) {
+						let now=Instant::now();
+						rate.round_trip(now.duration_since(pings[index].1),now);
+						pings.drain(..=index);
+					}
+					continue;
+				}
 				let Some(crypto)=&encryption else {continue;};
 				if let Some(video)=&video && let Some(feedback)=crypto.feedback(&packet[..length],video_ssrc) {
 					if announced && dave.ready && !dave.transitioning() && video.ready.load(Ordering::Acquire) {
 						let now=Instant::now();
-						rate.observe(feedback.loss,feedback.bitrate);
+						rate.observe(feedback.loss,feedback.bitrate,now);
 						{
 							use crate::stream_log::{Count, add, set};
 							add(Count::NacksIn,feedback.nacks.len() as u64);
 							if let Some(loss)=feedback.loss {set(Count::LossNow,u64::from(loss));}
 							if let Some(bitrate)=feedback.bitrate {set(Count::EstimateNow,u64::from(bitrate/1000).max(1));}
 						}
-						let missing=if rtx_ssrc!=0 {history.request(&feedback.nacks,now)} else {!feedback.nacks.is_empty()};
+						let (missing,fresh)=if rtx_ssrc!=0 {history.request(&feedback.nacks,now)} else {(!feedback.nacks.is_empty(),feedback.nacks.len() as u32)};
+						rate.nacked(fresh);
 						if (feedback.keyframe || missing) && now>=next_keyframe {
 							crate::stream_log::add(crate::stream_log::Count::KeyframeAsks,1);
 							video.keyframe.store(true,Ordering::Release);

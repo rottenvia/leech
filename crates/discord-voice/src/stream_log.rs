@@ -50,10 +50,13 @@ pub(crate) enum Count {
 	NacksIn,
 	Resent,
 	KeyframeAsks,
-	/// Sender rate control in kbit/s and the loss viewers report, in 1/256.
+	/// Sender rate control in kbit/s, the loss viewers report in 1/256, and the voice
+	/// server's ping round trip with the part of it spent queued, in milliseconds.
 	TargetNow,
 	EstimateNow,
 	LossNow,
+	RoundTripNow,
+	QueuedNow,
 	/// Watching: video packets, packets found missing, recovered, given up and asked for.
 	Packets,
 	Lost,
@@ -70,9 +73,15 @@ pub(crate) enum Count {
 const COUNTS_LEN: usize = Count::Stale as usize + 1;
 
 fn is_now(count: usize) -> bool {
-	[Count::TargetNow, Count::EstimateNow, Count::LossNow]
-		.iter()
-		.any(|now| *now as usize == count)
+	[
+		Count::TargetNow,
+		Count::EstimateNow,
+		Count::LossNow,
+		Count::RoundTripNow,
+		Count::QueuedNow,
+	]
+	.iter()
+	.any(|now| *now as usize == count)
 }
 
 pub(crate) fn add(count: Count, value: u64) {
@@ -215,9 +224,9 @@ fn write_loop(directory: &Path, receive: &mpsc::Receiver<String>) {
 				}
 				lines.push(line);
 			} else {
-				COUNTS[Count::TargetNow as usize].store(0, Ordering::Relaxed);
-				COUNTS[Count::EstimateNow as usize].store(0, Ordering::Relaxed);
-				COUNTS[Count::LossNow as usize].store(0, Ordering::Relaxed);
+				for now in (0..COUNTS_LEN).filter(|count| is_now(*count)) {
+					COUNTS[now].store(0, Ordering::Relaxed);
+				}
 			}
 		}
 		for line in lines {
@@ -270,13 +279,18 @@ fn share_line(counts: &[u64; COUNTS_LEN]) -> String {
 	);
 	let _ = write!(
 		line,
-		" target_mbps={:.1} estimate_mbps={} loss={:.1}% nack_in={} resent={} kf_asks={}",
+		" target_mbps={:.1} estimate_mbps={} loss={:.1}% rtt_ms={} queue_ms={} nack_in={} resent={} kf_asks={}",
 		get(Count::TargetNow) as f64 / 1e3,
 		match get(Count::EstimateNow) {
 			0 => "-".into(),
 			kbps => format!("{:.1}", kbps as f64 / 1e3),
 		},
 		get(Count::LossNow) as f64 * 100.0 / 256.0,
+		match get(Count::RoundTripNow) {
+			0 => "-".into(),
+			millis => millis.to_string(),
+		},
+		get(Count::QueuedNow),
 		get(Count::NacksIn),
 		get(Count::Resent),
 		get(Count::KeyframeAsks),
