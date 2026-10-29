@@ -4,6 +4,22 @@ Recent synthetic/offline measurements are workload-specific. They do not establi
 performance, universal device results or application-wide memory bounds. The raw PR screenshot,
 log and per-run evidence archive has been removed; the summaries below retain the useful results.
 
+## Windows private memory — October 30, 2026
+
+On the owner's RTX 3060 machine a live session read 215 MB private working set (Task Manager's
+Memory column) and 481 MB private bytes. A read-only `VirtualQueryEx` survey of its regions found
+277 MB of that commit write-combined: GPU upload mappings that are mostly not resident. Ordinary
+private read/write memory was 166 MB, against 49 MB in the demo. A counting allocator put the
+demo's Rust heap at 5 MB, so the demo's remaining ~170 MB is the D3D12 driver and system
+libraries. The Vulkan backend measured 366 MB private on the same demo, so DX12 stays the default.
+
+- The executable now carries a manifest that opts into the Windows segment heap. Demo private
+  bytes dropped from 177-195 MB to 174-175 MB; sessions that churn more allocations gain more.
+- The bundled CJK face is mapped from a cache file instead of being inflated onto the heap,
+  removing the 18.6-19.5 MB that earlier allocation stacks attributed to `install_cjk`.
+- A 1080p stream being watched adds about 55 MB of private bytes that plateau; re-uploading the
+  frame every frame for two minutes showed no growth after the first minute.
+
 ## Frame cost on state changes — October 26, 2026
 
 `crates/ui/examples/frame_bench.rs` times one UI pass plus tessellation on synthetic screens

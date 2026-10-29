@@ -1,5 +1,14 @@
 # Local storage policy and audit
 
+## CJK font cache (October 30, 2026)
+
+The first CJK text inflates the bundled Noto Sans CJK collection once into
+`<data folder>/fonts/NotoSansCJK-Regular-<hash>.ttc` (19,484,784 bytes). Later runs map that
+file read-only instead of inflating 19 MB onto the heap again. The file is written under a
+temporary name and renamed into place. It is used only when its length and FNV-1a hash match
+the bundled font; otherwise it is written again, and if that fails the font stays on the heap
+as before. It holds only the bundled font, no account data. Deleting it is safe.
+
 ## GIF preview recovery (October 13, 2026)
 
 Failed GIF animation downloads show a still during the existing five-second backoff,
