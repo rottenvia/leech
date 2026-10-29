@@ -1,6 +1,8 @@
 //! Offline component -> interaction -> modal -> private response debug exercise.
+#[cfg(debug_assertions)]
+use client_core::{Command, Envelope};
 use client_core::{
-	Command, Envelope, Event,
+	Event,
 	interactions::{Data, Modal},
 };
 use model::{Component, Id};

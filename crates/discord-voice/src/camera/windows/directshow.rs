@@ -549,12 +549,13 @@ fn rgb_frame(
 			let mut sum = [0u32; 3];
 			for row in rows.clone() {
 				let row = if bottom_up { height - 1 - row } else { row };
-				for pixel in
-					bytes[row * pitch..][columns.start * 3..columns.end * 3].chunks_exact(3)
+				for [blue, green, red] in bytes[row * pitch..][columns.start * 3..columns.end * 3]
+					.as_chunks::<3>()
+					.0
 				{
-					sum[0] += u32::from(pixel[2]);
-					sum[1] += u32::from(pixel[1]);
-					sum[2] += u32::from(pixel[0]);
+					sum[0] += u32::from(*red);
+					sum[1] += u32::from(*green);
+					sum[2] += u32::from(*blue);
 				}
 			}
 			let count = (rows.len() * columns.len()) as u32;
@@ -601,7 +602,7 @@ mod tests {
 		assert_eq!(&top[..3], &[0, 0, 0]);
 		// 1080p fits as 640x360 (3:1); every output pixel averages its 3x3 block.
 		let mut stripes = vec![0; 1920 * 3 * 1080];
-		for (index, pixel) in stripes.chunks_exact_mut(3).enumerate() {
+		for (index, pixel) in stripes.as_chunks_mut::<3>().0.iter_mut().enumerate() {
 			pixel.fill(if index % 3 == 0 { 90 } else { 0 });
 		}
 		let fitted = rgb_frame(&stripes, 1920, 1080, false).unwrap();
