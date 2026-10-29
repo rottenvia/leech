@@ -625,14 +625,23 @@ impl Capture {
 			next_preview: Instant::now(),
 			output: (settings.width, settings.height),
 		};
-		// Started here so a source that cannot be captured fails the share at once.
-		let first = start_capture(settings.source, flags.clone(), settings.cursor)?;
+		// Started here so a source that cannot be captured fails the share at once. A game
+		// already covering its display goes straight to duplication, so window capture never
+		// touches its presentation (or its cursor) even briefly.
+		let first = match fullscreen_display(settings.source) {
+			Some(_) => None,
+			None => Some(start_capture(
+				settings.source,
+				flags.clone(),
+				settings.cursor,
+			)?),
+		};
 		let halt = Arc::new(AtomicBool::new(false));
 		let watcher_halt = halt.clone();
 		let (source, cursor) = (settings.source, settings.cursor);
 		let watcher = std::thread::Builder::new()
 			.name("screen-capture".into())
-			.spawn(move || watch(source, flags, cursor, Some(first), watcher_halt))
+			.spawn(move || watch(source, flags, cursor, first, watcher_halt))
 			.map_err(|_| "Screen capture could not be started")?;
 		let mut capture = Self {
 			halt,
