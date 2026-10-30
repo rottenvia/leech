@@ -3956,17 +3956,17 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = パフォーマンス統計
 # Context: performance_statistics
-updates-performance-statistics-description = 起動時間、フレーム時間、メモリ使用量、配信品質をこのコンピューターに保存します。コピーした診断情報に含まれます。
+updates-performance-statistics-description = 起動時間、フレーム時間、メモリ使用量、配信品質をこのコンピューターに保存します。起動時間、フレーム時間、メモリ使用量は Leech の開発者にも送信されます。
 # Context: performance_statistics
 updates-performance-notice-title = パフォーマンス統計
 # Context: performance_statistics
-updates-performance-notice-body = Leech 0.1.9 から、遅くなる原因を見つけるため、Leech はパフォーマンス統計をこのコンピューターに保存します:
+updates-performance-notice-body = Leech は、遅くなる原因を見つけて直すため、パフォーマンス統計を保存します:
 # Context: performance_statistics
-updates-performance-notice-speed = 起動時間、フレーム時間、メモリ使用量
+updates-performance-notice-speed = 起動時間、フレーム時間、メモリ使用量 (Leech の開発者にも送信)
 # Context: performance_statistics
-updates-performance-notice-streams = 配信と通話の品質: フレームレート、エンコード時間、ビットレート、パケットロス、遅延
+updates-performance-notice-streams = 配信と通話の品質: フレームレート、エンコード時間、ビットレート、パケットロス、遅延 (このコンピューターにのみ保存)
 # Context: performance_statistics
-updates-performance-notice-system = Leech のバージョン、システム、グラフィックカード、ディスプレイのリフレッシュレート
+updates-performance-notice-system = Leech のバージョン、システム、グラフィックカード、ディスプレイのリフレッシュレート (一緒に送信)
 # Context: performance_statistics
 updates-performance-notice-never = メッセージ、名前、サーバー、チャンネル、アカウント情報、音声、映像は含みません。設定 → アップデートでいつでもオフにできます。
 # Context: performance_statistics

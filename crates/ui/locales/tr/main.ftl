@@ -3956,17 +3956,17 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Performans istatistikleri
 # Context: performance_statistics
-updates-performance-statistics-description = Başlatma süresini, kare sürelerini, bellek kullanımını ve yayın kalitesini bu bilgisayarda tut. Kopyalanan tanılama bilgileri bunları içerir.
+updates-performance-statistics-description = Başlatma süresini, kare sürelerini, bellek kullanımını ve yayın kalitesini bu bilgisayarda tut. Başlatma süresi, kare süreleri ve bellek kullanımı Leech geliştiricisine de gönderilir.
 # Context: performance_statistics
 updates-performance-notice-title = Performans istatistikleri
 # Context: performance_statistics
-updates-performance-notice-body = Leech 0.1.9 sürümünden itibaren, onu neyin yavaşlattığını bulmak için performans istatistiklerini bu bilgisayarda tutar:
+updates-performance-notice-body = Leech, onu neyin yavaşlattığını bulup düzeltmek için performans istatistikleri tutar:
 # Context: performance_statistics
-updates-performance-notice-speed = Başlatma süresi, kare süreleri ve bellek kullanımı
+updates-performance-notice-speed = Başlatma süresi, kare süreleri ve bellek kullanımı; Leech geliştiricisine de gönderilir
 # Context: performance_statistics
-updates-performance-notice-streams = Yayın ve arama kalitesi: kare hızı, kodlama süresi, bit hızı, paket kaybı ve gecikme
+updates-performance-notice-streams = Yayın ve arama kalitesi: kare hızı, kodlama süresi, bit hızı, paket kaybı ve gecikme; yalnızca bu bilgisayarda
 # Context: performance_statistics
-updates-performance-notice-system = Leech sürümü, sistem, ekran kartı ve ekran yenileme hızı
+updates-performance-notice-system = Leech sürümü, sistem, ekran kartı ve ekran yenileme hızı; bunlarla birlikte gönderilir
 # Context: performance_statistics
 updates-performance-notice-never = Asla mesajlar, adlar, sunucular, kanallar, hesap bilgileri, ses veya görüntü değil. Ayarlar → Güncellemeler bölümünden istediğin zaman kapatabilirsin.
 # Context: performance_statistics

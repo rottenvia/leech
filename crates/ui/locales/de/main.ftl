@@ -3962,17 +3962,17 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Leistungsstatistiken
 # Context: performance_statistics
-updates-performance-statistics-description = Startzeit, Bildzeiten, Speichernutzung und Streamqualität auf diesem Computer speichern. Kopierte Diagnosedaten enthalten sie.
+updates-performance-statistics-description = Startzeit, Bildzeiten, Speichernutzung und Streamqualität auf diesem Computer speichern. Startzeit, Bildzeiten und Speichernutzung gehen auch an den Entwickler von Leech.
 # Context: performance_statistics
 updates-performance-notice-title = Leistungsstatistiken
 # Context: performance_statistics
-updates-performance-notice-body = Ab Leech 0.1.9 speichert Leech Leistungsstatistiken auf diesem Computer, um herauszufinden, was es langsam macht:
+updates-performance-notice-body = Leech speichert Leistungsstatistiken, um zu finden und zu beheben, was es langsam macht:
 # Context: performance_statistics
-updates-performance-notice-speed = Startzeit, Bildzeiten und Speichernutzung
+updates-performance-notice-speed = Startzeit, Bildzeiten und Speichernutzung, die auch an den Entwickler von Leech gehen
 # Context: performance_statistics
-updates-performance-notice-streams = Stream- und Anrufqualität: Bildrate, Kodierzeit, Bitrate, Paketverlust und Latenz
+updates-performance-notice-streams = Stream- und Anrufqualität: Bildrate, Kodierzeit, Bitrate, Paketverlust und Latenz, nur auf diesem Computer
 # Context: performance_statistics
-updates-performance-notice-system = Die Leech-Version, das System, die Grafikkarte und die Bildwiederholrate
+updates-performance-notice-system = Die Leech-Version, das System, die Grafikkarte und die Bildwiederholrate, die mitgesendet werden
 # Context: performance_statistics
 updates-performance-notice-never = Niemals Nachrichten, Namen, Server, Kanäle, Kontodaten, Audio oder Video. Jederzeit abschaltbar unter Einstellungen → Updates.
 # Context: performance_statistics

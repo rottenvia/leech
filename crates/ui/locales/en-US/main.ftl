@@ -4098,17 +4098,17 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Performance statistics
 # Context: performance_statistics
-updates-performance-statistics-description = Keep startup time, frame times, memory use and stream quality on this computer. Copied diagnostics include them.
+updates-performance-statistics-description = Keep startup time, frame times, memory use and stream quality on this computer. Startup time, frame times and memory use are also sent to Leech's developer.
 # Context: performance_statistics
 updates-performance-notice-title = Performance statistics
 # Context: performance_statistics
-updates-performance-notice-body = Starting with Leech 0.1.9, Leech keeps performance statistics on this computer, to find what makes it slow:
+updates-performance-notice-body = Leech keeps performance statistics to find and fix what makes it slow:
 # Context: performance_statistics
-updates-performance-notice-speed = Startup time, frame times and memory use
+updates-performance-notice-speed = Startup time, frame times and memory use, also sent to Leech's developer
 # Context: performance_statistics
-updates-performance-notice-streams = Stream and call quality: frame rate, encode time, bitrate, packet loss and latency
+updates-performance-notice-streams = Stream and call quality: frame rate, encode time, bitrate, packet loss and latency, kept only on this computer
 # Context: performance_statistics
-updates-performance-notice-system = The Leech version, system, graphics card and display refresh rate
+updates-performance-notice-system = The Leech version, system, graphics card and display refresh rate, sent with them
 # Context: performance_statistics
 updates-performance-notice-never = Never messages, names, servers, channels, account details, audio or video. Turn this off any time in Settings → Updates.
 # Context: performance_statistics

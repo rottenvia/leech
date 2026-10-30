@@ -3965,17 +3965,17 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Statystyki wydajności
 # Context: performance_statistics
-updates-performance-statistics-description = Przechowuj na tym komputerze czas uruchamiania, czasy klatek, użycie pamięci i jakość streamu. Skopiowana diagnostyka je zawiera.
+updates-performance-statistics-description = Przechowuj na tym komputerze czas uruchamiania, czasy klatek, użycie pamięci i jakość streamu. Czas uruchamiania, czasy klatek i użycie pamięci trafiają też do twórcy Leech.
 # Context: performance_statistics
 updates-performance-notice-title = Statystyki wydajności
 # Context: performance_statistics
-updates-performance-notice-body = Od wersji 0.1.9 Leech przechowuje na tym komputerze statystyki wydajności, by znaleźć, co go spowalnia:
+updates-performance-notice-body = Leech przechowuje statystyki wydajności, by znaleźć i naprawić to, co go spowalnia:
 # Context: performance_statistics
-updates-performance-notice-speed = Czas uruchamiania, czasy klatek i użycie pamięci
+updates-performance-notice-speed = Czas uruchamiania, czasy klatek i użycie pamięci, wysyłane też do twórcy Leech
 # Context: performance_statistics
-updates-performance-notice-streams = Jakość streamów i rozmów: liczba klatek, czas kodowania, przepływność, utrata pakietów i opóźnienie
+updates-performance-notice-streams = Jakość streamów i rozmów: liczba klatek, czas kodowania, przepływność, utrata pakietów i opóźnienie, tylko na tym komputerze
 # Context: performance_statistics
-updates-performance-notice-system = Wersja Leech, system, karta graficzna i częstotliwość odświeżania ekranu
+updates-performance-notice-system = Wersja Leech, system, karta graficzna i częstotliwość odświeżania ekranu, wysyłane razem z nimi
 # Context: performance_statistics
 updates-performance-notice-never = Nigdy wiadomości, nazwy, serwery, kanały, dane konta, dźwięk ani obraz. Wyłączysz to w każdej chwili w Ustawienia → Aktualizacje.
 # Context: performance_statistics

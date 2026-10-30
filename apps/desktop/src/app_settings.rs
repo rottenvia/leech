@@ -63,7 +63,6 @@ impl Settings {
 			call_hide_non_video: ui.call_hide_non_video,
 			restore_ms: ui.restore_ms,
 			performance_stats: ui.performance_stats,
-			performance_notice: self.current.performance_notice,
 			transparency_blur: ui.transparency_blur,
 			transparency: ui.transparency,
 			blur: ui.blur,
@@ -92,27 +91,6 @@ impl Settings {
 				self.state.dirty = true;
 			}
 		}
-	}
-	/// Whether this launch shows the one-time performance statistics notice. Either way it
-	/// counts as seen from now on, answered or not: in the preferences, and in `marker`, which
-	/// a build that rewrites the preferences without this field cannot drop.
-	pub fn take_performance_notice(
-		&mut self,
-		used_before: bool,
-		marker: Option<&std::path::Path>,
-	) -> bool {
-		if !self.loaded {
-			return false;
-		}
-		let seen = self.current.performance_notice || marker.is_some_and(std::path::Path::exists);
-		if !self.current.performance_notice {
-			self.current.performance_notice = true;
-			self.state.dirty = true;
-		}
-		if !seen && let Some(marker) = marker {
-			let _ = std::fs::write(marker, b"");
-		}
-		!seen && used_before
 	}
 	/// Restores saved device preferences, including the opt-in composer conversion.
 	pub fn apply(&self, ui: &mut ui::MessagingUi) {
@@ -432,39 +410,6 @@ mod tests {
 		assert!(ui.notification_options.current_channel);
 		assert!(!settings.state.touched);
 		assert!(!settings.state.dirty);
-	}
-
-	#[test]
-	fn the_performance_notice_shows_once_even_unanswered_or_wiped_by_an_older_build() {
-		let marker =
-			std::env::temp_dir().join(format!("leech-performance-notice-{}", std::process::id()));
-		let _ = std::fs::remove_file(&marker);
-		let launch = |seen: bool| {
-			let mut settings = Settings::from_preferences(Ok(AppPreferences {
-				performance_notice: seen,
-				..AppPreferences::default()
-			}));
-			let shown = settings.take_performance_notice(true, Some(&marker));
-			assert!(settings.current.performance_notice);
-			shown
-		};
-		assert!(launch(false), "someone who used Leech before sees it");
-		assert!(marker.exists());
-		assert!(!launch(true), "never again once answered or left open");
-		assert!(
-			!launch(false),
-			"nor after an older build drops the saved flag"
-		);
-
-		// A new installation records it as seen without showing it.
-		let _ = std::fs::remove_file(&marker);
-		let mut fresh = Settings::from_preferences(Ok(AppPreferences::default()));
-		assert!(!fresh.take_performance_notice(false, Some(&marker)));
-		assert!(fresh.state.dirty && marker.exists());
-		// Unread preferences decide nothing.
-		let mut unread = Settings::from_preferences(Err(local_store::StoreError::Unavailable));
-		assert!(!unread.take_performance_notice(true, None));
-		let _ = std::fs::remove_file(&marker);
 	}
 
 	#[test]

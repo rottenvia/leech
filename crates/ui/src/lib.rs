@@ -454,10 +454,12 @@ pub struct MessagingUi {
 	/// How long restoring a saved login took lately, in milliseconds; the restore screen's
 	/// bar and time left follow it. Zero until one has been measured.
 	pub restore_ms: u32,
-	/// Keep performance statistics on this computer.
+	/// Keep performance statistics and send them to Leech's developer.
 	pub performance_stats: bool,
-	/// The one-time performance statistics notice is still to be shown.
+	/// The one-time performance statistics notice is still to be shown or answered.
 	pub performance_notice_pending: bool,
+	/// The notice was on screen this session, so it counts as shown.
+	pub performance_notice_shown: bool,
 	/// The conversation shown and when the switch to it began, for the content fade.
 	conversation_fade: Option<(Option<Id>, f64)>,
 	/// Session-only visibility of the selected guild voice channel's chat.
