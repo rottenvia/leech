@@ -1835,7 +1835,12 @@ impl Desktop {
 		#[cfg(feature = "demo")]
 		let used_before =
 			used_before || demo && std::env::args().any(|arg| arg == "--demo-performance-notice");
-		messaging.performance_notice_pending &= used_before;
+		let marker = local_store::data_dir()
+			.ok()
+			.filter(|_| !demo)
+			.map(|root| root.join("performance-notice-shown"));
+		messaging.performance_notice_pending =
+			app_settings.take_performance_notice(used_before, marker.as_deref());
 		#[cfg(feature = "demo")]
 		if demo {
 			messaging.transparency_blur = transparency_available;

@@ -14,7 +14,10 @@ add this session's frame count, frames over 16 ms and memory.
 
 `AppPreferences` gains `performance_stats` (default on) and `performance_notice`. The notice
 that statistics are kept is shown once to people whose preferences predate it (a saved window
-or a measured restore); a new installation records it as seen without showing it.
+or a measured restore); a new installation records it as seen without showing it. It counts as
+seen as soon as a launch decides about it, answered or not, and an empty
+`<data folder>/performance-notice-shown` marker keeps it seen when a build that predates the
+field rewrites the preferences without it.
 
 ## CJK font cache (October 30, 2026)
 

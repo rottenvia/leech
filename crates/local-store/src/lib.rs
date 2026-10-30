@@ -63,8 +63,8 @@ pub struct AppPreferences {
 	pub restore_ms: u32,
 	/// Keep performance statistics on this computer, in `logs/performance.jsonl`.
 	pub performance_stats: bool,
-	/// The one-time notice about performance statistics was shown, or skipped on a new
-	/// installation.
+	/// A launch decided about the one-time notice on performance statistics: showed it, or
+	/// skipped it on a new installation.
 	pub performance_notice: bool,
 	pub transparency_blur: bool,
 	pub transparency: u8,
