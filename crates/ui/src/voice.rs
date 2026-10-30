@@ -2205,41 +2205,18 @@ impl MessagingUi {
 			let status = format!("{name} · {label}");
 			avatar.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &status));
 			avatar.clone().on_hover_text(status);
-			// Plates keep a small status just above the avatar; the frameless DM stage relies on
-			// the ring. A ring's dots ebb and refill (3, 2, 1, 2) once per ring cycle, laid out
-			// from the full width so the word itself never shifts.
-			if !frameless && !compact {
-				let font = egui::FontId::proportional(11.0);
-				let base = label.trim_end_matches(['…', '.']);
-				let full = ui.painter().layout_no_wrap(
-					if ringing {
-						format!("{base}...")
-					} else {
-						label.clone()
-					},
-					font.clone(),
+			// Plates of people who left keep a small status just above the avatar. A ringing
+			// recipient shows only its ring, and the frameless DM stage relies on the ring too.
+			if !frameless && !compact && !ringing {
+				let label = ui.painter().layout_no_wrap(
+					label,
+					egui::FontId::proportional(11.0),
 					stage_tones().muted,
 				);
-				let shown = if ringing {
-					const STEP: f64 = OUTGOING_RING_CYCLE / 4.0;
-					let now = ui.input(|input| input.time);
-					let since = now - self.voice_ring_epoch.unwrap_or(0.0);
-					ui.ctx()
-						.request_repaint_after_secs((STEP - since.rem_euclid(STEP)) as f32);
-					let dots =
-						[3, 2, 1, 2][(since.rem_euclid(OUTGOING_RING_CYCLE) / STEP) as usize % 4];
-					ui.painter().layout_no_wrap(
-						format!("{base}{}", ".".repeat(dots)),
-						font,
-						stage_tones().muted,
-					)
-				} else {
-					full.clone()
-				};
-				let top = (avatar_rect.top() - 8.0 - full.size().y).max(rect.top() + 6.0);
+				let top = (avatar_rect.top() - 8.0 - label.size().y).max(rect.top() + 6.0);
 				ui.painter().galley(
-					egui::pos2(rect.center().x - full.size().x * 0.5, top),
-					shown,
+					egui::pos2(rect.center().x - label.size().x * 0.5, top),
+					label,
 					stage_tones().muted,
 				);
 			}

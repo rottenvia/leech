@@ -56,6 +56,10 @@ pub(crate) fn fits_capture(width: u32, height: u32) -> bool {
 }
 pub const MAX_ENCODED_BYTES: usize = 2 * 1024 * 1024;
 
+/// How often the local preview of one's own share is replaced.
+#[cfg(not(target_os = "linux"))]
+pub(crate) const PREVIEW_INTERVAL: Duration = Duration::from_millis(66);
+
 /// Frames between scheduled IDR pictures: libwebrtc's H.264 default. Viewers that lose a
 /// picture ask for one with PLI or FIR, and every DAVE transition (a viewer joining) already
 /// forces one, so frequent periodic IDRs only add a large burst and a blurry frame each time.
@@ -277,7 +281,8 @@ impl Worker {
 		self.done.as_ref()?.try_recv().ok()
 	}
 
-	/// One local RGBA image, bounded to 640 by 360 pixels and replaced at most ten times a second.
+	/// One local RGBA image, bounded to 640 by 360 pixels and replaced at most every
+	/// [`PREVIEW_INTERVAL`].
 	pub fn take_preview(&self) -> Option<image::RgbaImage> {
 		self.preview.try_lock().ok()?.take()
 	}
@@ -387,15 +392,16 @@ fn encode_loop(
 		let now = Instant::now();
 		if let Some(frame) = &frame {
 			first_frame_deadline = None;
-			if now >= next_preview {
-				// A GPU picture has no pixels here; its capture thread publishes the preview.
-				if !on_gpu(frame) {
-					let image = preview_frame(frame)?;
-					if let Ok(mut slot) = preview.try_lock() {
-						*slot = Some(image);
-					}
+			// A GPU picture has no pixels here; its capture thread publishes the preview.
+			if now >= next_preview && !on_gpu(frame) {
+				let image = preview_frame(frame)?;
+				if let Ok(mut slot) = preview.try_lock() {
+					*slot = Some(image);
 				}
-				next_preview = now + Duration::from_millis(100);
+				next_preview = now + PREVIEW_INTERVAL;
+			}
+			// Either thread may have published it; the window takes it on its next frame.
+			if preview.try_lock().is_ok_and(|slot| slot.is_some()) {
 				wake();
 			}
 		}
@@ -914,7 +920,7 @@ pub(super) fn preview_frame(frame: &RawFrame) -> Result<image::RgbaImage, &'stat
 		.min(1.0);
 	let width = (f64::from(frame.width) * scale).round().max(1.0) as u32;
 	let height = (f64::from(frame.height) * scale).round().max(1.0) as u32;
-	// ponytail: nearest sampling keeps the ten-fps preview cheap; use filtered scaling if needed.
+	// ponytail: nearest sampling keeps the preview cheap; use filtered scaling if needed.
 	Ok(image::RgbaImage::from_fn(width, height, |x, y| {
 		let source_x = (x * frame.width / width) as usize;
 		let source_y = (y * frame.height / height) as usize;

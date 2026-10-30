@@ -104,6 +104,7 @@ struct Flags {
 	/// GPU pictures have no pixels for the encoder thread to preview, so capture publishes it.
 	preview: Arc<Mutex<Option<image::RgbaImage>>>,
 	next_preview: Instant,
+	last_picture: Instant,
 	/// Stream picture size.
 	output: (u32, u32),
 }
@@ -196,14 +197,24 @@ impl Sink {
 			self.1 = Some(gpu::Converter::new(device, context, input, self.0.output)?);
 		}
 		let converter = self.1.as_mut().expect("GPU screen converter");
+		// The copy queued last time is usually done by the next picture. Capture delivers
+		// pictures only when the screen changes, so with sparse pictures that next one may be
+		// seconds away: read this copy at once instead, the GPU being idle then anyway.
 		let now = Instant::now();
+		let sparse = now.duration_since(self.0.last_picture) >= Duration::from_millis(50);
+		self.0.last_picture = now;
+		let mut image = converter.read_preview(Duration::ZERO);
 		if now >= self.0.next_preview {
-			self.0.next_preview = now + Duration::from_millis(100);
-			if let Some(image) = converter.preview(texture)
-				&& let Ok(mut slot) = self.0.preview.try_lock()
-			{
-				*slot = Some(image);
+			self.0.next_preview = now + crate::screen::PREVIEW_INTERVAL;
+			converter.queue_preview(texture);
+			if sparse {
+				image = converter.read_preview(Duration::from_millis(5)).or(image);
 			}
+		}
+		if let Some(image) = image
+			&& let Ok(mut slot) = self.0.preview.try_lock()
+		{
+			*slot = Some(image);
 		}
 		let Some(surface) = converter.convert(texture)? else {
 			crate::stream_log::add(crate::stream_log::Count::CapturePool, 1);
@@ -623,6 +634,7 @@ impl Capture {
 			gpu,
 			preview,
 			next_preview: Instant::now(),
+			last_picture: Instant::now(),
 			output: (settings.width, settings.height),
 		};
 		// Started here so a source that cannot be captured fails the share at once. A game
@@ -818,6 +830,7 @@ mod tests {
 			gpu: Arc::new(AtomicBool::new(true)),
 			preview: Arc::new(Mutex::new(None)),
 			next_preview: Instant::now(),
+			last_picture: Instant::now(),
 			output: (1280, 720),
 		};
 		let monitor = Monitor::primary()
