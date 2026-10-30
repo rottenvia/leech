@@ -563,12 +563,13 @@ impl MessagingUi {
 		);
 	}
 
-	/// Tells people who used Leech before 0.1.9, once, that it now keeps performance
-	/// statistics, and what they hold. New installations never see it.
+	/// Tells everyone once that Leech keeps performance statistics and sends some to its
+	/// developer, and what they hold.
 	pub(super) fn performance_notice(&mut self, ctx: &egui::Context) {
 		if !self.performance_notice_pending {
 			return;
 		}
+		self.performance_notice_shown = true;
 		let response = crate::dialog::Dialog::new(
 			"performance-notice",
 			crate::i18n::translate("updates-performance-notice-title"),

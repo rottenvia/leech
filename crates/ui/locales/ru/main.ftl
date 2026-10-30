@@ -4086,15 +4086,15 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Статистика производительности
 # Context: performance_statistics
-updates-performance-statistics-description = Хранить на этом компьютере время запуска, время кадров, расход памяти и качество трансляции. Скопированная диагностика включает их.
+updates-performance-statistics-description = Хранить время запуска, время кадров, расход памяти и качество трансляции и отправлять их разработчику Leech. Скопированная диагностика включает их.
 # Context: performance_statistics
 updates-performance-notice-title = Статистика производительности
 # Context: performance_statistics
-updates-performance-notice-body = Начиная с версии 0.1.9, Leech хранит статистику производительности на этом компьютере, чтобы находить причины тормозов:
+updates-performance-notice-body = Leech собирает статистику производительности и отправляет её разработчику, чтобы находить и исправлять причины тормозов:
 # Context: performance_statistics
 updates-performance-notice-speed = Время запуска, время кадров и расход памяти
 # Context: performance_statistics
-updates-performance-notice-streams = Качество трансляций и звонков: частота кадров, время кодирования, битрейт, потери пакетов и задержка
+updates-performance-notice-streams = Качество трансляции, сводка по каждой трансляции: частота кадров, время кодирования, битрейт, потери пакетов и задержка
 # Context: performance_statistics
 updates-performance-notice-system = Версия Leech, система, видеокарта и частота обновления экрана
 # Context: performance_statistics

@@ -1828,14 +1828,19 @@ impl Desktop {
 		}
 		messaging.minimize_to_tray = tray_setting.enabled;
 		app_settings.apply(&mut messaging);
-		// Only people who used Leech before see the performance statistics notice; a new
-		// installation has neither a saved window nor a measured restore.
-		let used_before =
-			app_settings.current.window_geometry.is_some() || app_settings.current.restore_ms != 0;
+		let perf_stats = perf_stats::Stats::new(
+			local_store::data_dir()
+				.ok()
+				.filter(|_| !demo)
+				.map(|root| root.join("logs")),
+		);
+		// Everyone is told once that statistics are kept and sent, before any line goes.
+		messaging.performance_notice_pending = perf_stats.notice_due();
 		#[cfg(feature = "demo")]
-		let used_before =
-			used_before || demo && std::env::args().any(|arg| arg == "--demo-performance-notice");
-		messaging.performance_notice_pending &= used_before;
+		{
+			messaging.performance_notice_pending |=
+				demo && std::env::args().any(|arg| arg == "--demo-performance-notice");
+		}
 		#[cfg(feature = "demo")]
 		if demo {
 			messaging.transparency_blur = transparency_available;
@@ -2470,12 +2475,7 @@ impl Desktop {
 			startup,
 			splash: None,
 			focused: false,
-			perf_stats: perf_stats::Stats::new(
-				local_store::data_dir()
-					.ok()
-					.filter(|_| !demo)
-					.map(|root| root.join("logs")),
-			),
+			perf_stats,
 			tray: None,
 			tray_window,
 			#[cfg(target_os = "macos")]
@@ -8031,6 +8031,13 @@ impl eframe::App for Desktop {
 		) {
 			self.messaging.updates.performance = summary;
 		}
+		if self.messaging.performance_notice_shown {
+			self.perf_stats.notice_shown();
+		}
+		self.perf_stats.send(
+			&self.runtime,
+			self.messaging.performance_stats && !self.messaging.performance_notice_pending,
+		);
 	}
 }
 

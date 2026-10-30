@@ -1,0 +1,10 @@
+name = "leech-stats"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "leech-stats"
+# Printed by `npx wrangler d1 create leech-stats`.
+database_id = "49d50608-322e-45fb-a6f8-6ebe17f5ebad"

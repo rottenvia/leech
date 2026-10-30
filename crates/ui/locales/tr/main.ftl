@@ -3956,15 +3956,15 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Performans istatistikleri
 # Context: performance_statistics
-updates-performance-statistics-description = Başlatma süresini, kare sürelerini, bellek kullanımını ve yayın kalitesini bu bilgisayarda tut. Kopyalanan tanılama bilgileri bunları içerir.
+updates-performance-statistics-description = Başlatma süresini, kare sürelerini, bellek kullanımını ve yayın kalitesini tut ve Leech geliştiricisine gönder. Kopyalanan tanılama bilgileri bunları içerir.
 # Context: performance_statistics
 updates-performance-notice-title = Performans istatistikleri
 # Context: performance_statistics
-updates-performance-notice-body = Leech 0.1.9 sürümünden itibaren, onu neyin yavaşlattığını bulmak için performans istatistiklerini bu bilgisayarda tutar:
+updates-performance-notice-body = Leech, onu neyin yavaşlattığını bulup düzeltmek için performans istatistikleri tutar ve bunları geliştiricisine gönderir:
 # Context: performance_statistics
 updates-performance-notice-speed = Başlatma süresi, kare süreleri ve bellek kullanımı
 # Context: performance_statistics
-updates-performance-notice-streams = Yayın ve arama kalitesi: kare hızı, kodlama süresi, bit hızı, paket kaybı ve gecikme
+updates-performance-notice-streams = Yayın kalitesi, her yayın için özetlenir: kare hızı, kodlama süresi, bit hızı, paket kaybı ve gecikme
 # Context: performance_statistics
 updates-performance-notice-system = Leech sürümü, sistem, ekran kartı ve ekran yenileme hızı
 # Context: performance_statistics

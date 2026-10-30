@@ -3994,15 +3994,15 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = 性能统计
 # Context: performance_statistics
-updates-performance-statistics-description = 在这台电脑上保存启动时间、帧时间、内存占用和直播质量。复制的诊断信息会包含这些数据。
+updates-performance-statistics-description = 保存启动时间、帧时间、内存占用和直播质量，并发送给 Leech 的开发者。复制的诊断信息会包含这些数据。
 # Context: performance_statistics
 updates-performance-notice-title = 性能统计
 # Context: performance_statistics
-updates-performance-notice-body = 从 Leech 0.1.9 起，Leech 会在这台电脑上保存性能统计，用来找出变慢的原因：
+updates-performance-notice-body = Leech 会保存性能统计并发送给开发者，用来找出并修复变慢的原因：
 # Context: performance_statistics
 updates-performance-notice-speed = 启动时间、帧时间和内存占用
 # Context: performance_statistics
-updates-performance-notice-streams = 直播和通话质量：帧率、编码时间、码率、丢包和延迟
+updates-performance-notice-streams = 直播质量（按每次直播汇总）：帧率、编码时间、码率、丢包和延迟
 # Context: performance_statistics
 updates-performance-notice-system = Leech 版本、系统、显卡和显示器刷新率
 # Context: performance_statistics

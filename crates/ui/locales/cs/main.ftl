@@ -3975,15 +3975,15 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Statistiky výkonu
 # Context: performance_statistics
-updates-performance-statistics-description = Uchovávat v tomto počítači dobu spuštění, časy snímků, využití paměti a kvalitu streamu. Zkopírovaná diagnostika je obsahuje.
+updates-performance-statistics-description = Uchovávat dobu spuštění, časy snímků, využití paměti a kvalitu streamu a odesílat je vývojáři Leech. Zkopírovaná diagnostika je obsahuje.
 # Context: performance_statistics
 updates-performance-notice-title = Statistiky výkonu
 # Context: performance_statistics
-updates-performance-notice-body = Od verze 0.1.9 Leech uchovává v tomto počítači statistiky výkonu, aby šlo zjistit, co ho zpomaluje:
+updates-performance-notice-body = Leech uchovává statistiky výkonu a odesílá je svému vývojáři, aby šlo najít a opravit, co ho zpomaluje:
 # Context: performance_statistics
 updates-performance-notice-speed = Doba spuštění, časy snímků a využití paměti
 # Context: performance_statistics
-updates-performance-notice-streams = Kvalita streamů a hovorů: snímková frekvence, doba kódování, datový tok, ztráta paketů a latence
+updates-performance-notice-streams = Kvalita streamu, shrnutá za každý stream: snímková frekvence, doba kódování, datový tok, ztráta paketů a latence
 # Context: performance_statistics
 updates-performance-notice-system = Verze Leech, systém, grafická karta a obnovovací frekvence displeje
 # Context: performance_statistics

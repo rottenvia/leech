@@ -1,9 +1,12 @@
 //! A short, bounded log of screen-share health, written while sharing or watching so a tester
 //! can send it after a laggy stream. It holds counts, timings and hardware names only: no
-//! media, people, addresses or keys, and it never leaves this computer.
+//! media, people, addresses or keys, and it never leaves this computer. Each finished share
+//! or watched stream is also summed up in one summary (`take_summaries`), which goes with the
+//! performance statistics Leech sends.
 // Windows: local time, performance counters, DXGI adapter names and the build number.
 #![allow(unsafe_code)]
 use std::{
+	collections::BTreeMap,
 	fmt::Write as _,
 	io::Write as _,
 	path::{Path, PathBuf},
@@ -25,6 +28,11 @@ static SHARING: AtomicUsize = AtomicUsize::new(0);
 static WATCHING: AtomicUsize = AtomicUsize::new(0);
 static COUNTS: [AtomicU64; COUNTS_LEN] = [const { AtomicU64::new(0) }; COUNTS_LEN];
 static WRITER: Mutex<Option<mpsc::SyncSender<String>>> = Mutex::new(None);
+/// The share and the watched stream running now, as their seconds add up.
+static RUNNING: Mutex<[Option<Totals>; 2]> = Mutex::new([None, None]);
+/// Finished ones, summed up, oldest first; at most `KEEP` wait to be taken.
+static SUMMARIES: Mutex<Vec<serde_json::Value>> = Mutex::new(Vec::new());
+const KEEP: usize = 32;
 
 /// Per-second counters, reset each second: sums, or the largest value for the `Max` ones.
 /// The `Now` ones are the latest value and outlive the second.
@@ -108,6 +116,13 @@ pub fn path() -> Option<PathBuf> {
 
 /// One line with the time, dropped when the writer is busy or no folder was set.
 pub(crate) fn event(text: impl std::fmt::Display) {
+	let text = text.to_string();
+	if let Some(encoder) = text.strip_prefix("encoder: ")
+		&& let Ok(mut running) = RUNNING.lock()
+		&& let Some(share) = running[0].as_mut()
+	{
+		share.encoder = encoder.chars().take(120).collect();
+	}
 	if let Ok(writer) = WRITER.lock()
 		&& let Some(writer) = writer.as_ref()
 	{
@@ -123,6 +138,16 @@ pub(crate) struct Session {
 impl Session {
 	pub(crate) fn sharing(settings: crate::screen::Settings) -> Self {
 		let session = Self::start(false);
+		if let Ok(mut running) = RUNNING.lock()
+			&& let Some(share) = running[0].as_mut()
+		{
+			share.asked = Some((
+				settings.width,
+				settings.height,
+				settings.fps,
+				f64::from(settings.bit_rate()) / 1e6,
+			));
+		}
 		event(format_args!(
 			"=== sharing {}x{} at {} fps, up to {:.1} Mbps · Leech {} · {} ===",
 			settings.width,
@@ -146,7 +171,11 @@ impl Session {
 	}
 
 	fn start(watching: bool) -> Self {
-		if watching { &WATCHING } else { &SHARING }.fetch_add(1, Ordering::AcqRel);
+		if if watching { &WATCHING } else { &SHARING }.fetch_add(1, Ordering::AcqRel) == 0
+			&& let Ok(mut running) = RUNNING.lock()
+		{
+			running[usize::from(watching)] = Some(Totals::default());
+		}
 		if let Ok(mut writer) = WRITER.lock()
 			&& writer.is_none()
 			&& let Some(directory) = DIRECTORY.get()
@@ -172,7 +201,134 @@ impl Drop for Session {
 		} else {
 			"=== stopped sharing ==="
 		});
-		if self.watching { &WATCHING } else { &SHARING }.fetch_sub(1, Ordering::AcqRel);
+		if if self.watching { &WATCHING } else { &SHARING }.fetch_sub(1, Ordering::AcqRel) == 1
+			&& let Some(summary) = RUNNING
+				.lock()
+				.ok()
+				.and_then(|mut running| running[usize::from(self.watching)].take())
+				.and_then(|totals| totals.summary(self.watching))
+			&& let Ok(mut summaries) = SUMMARIES.lock()
+		{
+			if summaries.len() >= KEEP {
+				summaries.remove(0);
+			}
+			summaries.push(summary);
+		}
+	}
+}
+
+/// The finished shares and watched streams summed up since the last call, oldest first.
+pub fn take_summaries() -> Vec<serde_json::Value> {
+	SUMMARIES
+		.lock()
+		.map(|mut summaries| std::mem::take(&mut *summaries))
+		.unwrap_or_default()
+}
+
+/// One share or watched stream as its seconds add up: sums, peaks, and how many seconds each
+/// current value was known, plus system use.
+#[derive(Default)]
+struct Totals {
+	/// Sharing: the size, frame rate and Mbps it was asked for, and the encoder it used last.
+	asked: Option<(u32, u32, u32, f64)>,
+	encoder: String,
+	seconds: u64,
+	/// Sharing: seconds that encoded under 80% of the frame rate asked for. Watching: seconds
+	/// with a gap of over 250 ms between two pictures.
+	slow: u64,
+	sums: [u64; COUNTS_LEN],
+	peaks: [u64; COUNTS_LEN],
+	known: [u64; COUNTS_LEN],
+	/// Per name in the system sample: the sum, the peak and how many seconds had it.
+	load: BTreeMap<String, (f64, f64, u64)>,
+}
+
+impl Totals {
+	fn add(&mut self, counts: &[u64; COUNTS_LEN], system: &str, watching: bool) {
+		self.seconds += 1;
+		for (index, value) in counts.iter().enumerate() {
+			self.sums[index] += value;
+			self.peaks[index] = self.peaks[index].max(*value);
+			self.known[index] += u64::from(*value > 0);
+		}
+		self.slow += u64::from(if watching {
+			counts[Count::GapMaxMillis as usize] > 250
+		} else {
+			self.asked.is_some_and(|(_, _, fps, _)| {
+				counts[Count::Encoded as usize] * 5 < u64::from(fps) * 4
+			})
+		});
+		for (name, value) in system.split_whitespace().filter_map(|pair| {
+			let (name, value) = pair.split_once('=')?;
+			Some((name, value.strip_suffix('%')?.parse::<f64>().ok()?))
+		}) {
+			let entry = self.load.entry(name.to_owned()).or_default();
+			*entry = (entry.0 + value, entry.1.max(value), entry.2 + 1);
+		}
+	}
+
+	/// The stream summed up, or nothing for one shorter than five seconds.
+	fn summary(&self, watching: bool) -> Option<serde_json::Value> {
+		if self.seconds < 5 {
+			return None;
+		}
+		let round = |value: f64| (value * 10.0).round() / 10.0;
+		let sum = |count: Count| self.sums[count as usize];
+		let peak = |count: Count| self.peaks[count as usize];
+		let per_second = |count: Count| round(sum(count) as f64 / self.seconds as f64);
+		let average = |count: Count| sum(count) as f64 / self.known[count as usize].max(1) as f64;
+		let mut summary = if watching {
+			serde_json::json!({
+				"kind": "watch",
+				"seconds": self.seconds,
+				"fps_shown": per_second(Count::Pictures),
+				"slow_seconds": self.slow,
+				"gap_ms_max": peak(Count::GapMaxMillis),
+				"packets": sum(Count::Packets),
+				"lost": sum(Count::Lost),
+				"repaired": sum(Count::Repaired),
+				"gave_up": sum(Count::Unrepaired),
+				"nacks_out": sum(Count::NacksOut),
+				"kf_asks_out": sum(Count::KeyframeAsksOut),
+				"late": sum(Count::Stale),
+			})
+		} else {
+			let (width, height, fps, max_mbps) = self.asked.unwrap_or_default();
+			serde_json::json!({
+				"kind": "share",
+				"seconds": self.seconds,
+				"width": width,
+				"height": height,
+				"fps": fps,
+				"max_mbps": round(max_mbps),
+				"encoder": self.encoder,
+				"fps_captured": per_second(Count::Captured),
+				"fps_encoded": per_second(Count::Encoded),
+				"fps_sent": per_second(Count::SentFrames),
+				"slow_seconds": self.slow,
+				"enc_ms_avg": round(sum(Count::EncodeMicros) as f64 / sum(Count::Encoded).max(1) as f64 / 1e3),
+				"enc_ms_max": round(peak(Count::EncodeMaxMicros) as f64 / 1e3),
+				"send_ms_max": round(peak(Count::SendMaxMicros) as f64 / 1e3),
+				"mbps": round(sum(Count::SentBytes) as f64 * 8.0 / self.seconds as f64 / 1e6),
+				"target_mbps": round(average(Count::TargetNow) / 1e3),
+				"loss_pct": round(sum(Count::LossNow) as f64 / self.seconds as f64 * 100.0 / 256.0),
+				"loss_pct_max": round(peak(Count::LossNow) as f64 * 100.0 / 256.0),
+				"rtt_ms": round(average(Count::RoundTripNow)),
+				"rtt_ms_max": peak(Count::RoundTripNow),
+				"busy": sum(Count::CaptureBusy),
+				"pool": sum(Count::CapturePool),
+				"behind": sum(Count::Behind),
+				"keyframes": sum(Count::Keyframes),
+				"nacks_in": sum(Count::NacksIn),
+				"resent": sum(Count::Resent),
+				"kf_asks": sum(Count::KeyframeAsks),
+			})
+		};
+		for (name, (total, peak, seconds)) in &self.load {
+			summary[format!("{name}_pct")] = round(total / *seconds as f64).into();
+			summary[format!("{name}_pct_max")] = round(*peak).into();
+		}
+		Some(summary)
 	}
 }
 
@@ -211,6 +367,13 @@ fn write_loop(directory: &Path, receive: &mpsc::Receiver<String>) {
 				None
 			};
 			was_active = active;
+			if active && let Ok(mut running) = RUNNING.lock() {
+				for (watching, on) in [(false, sharing), (true, watching)] {
+					if let (true, Some(totals)) = (on, running[usize::from(watching)].as_mut()) {
+						totals.add(&counts, system.as_deref().unwrap_or_default(), watching);
+					}
+				}
+			}
 			if active {
 				let mut line = clock();
 				if sharing {
@@ -595,6 +758,51 @@ mod tests {
 		counts[Count::Repaired as usize] = 3;
 		assert!(watch_line(&counts).contains("repaired=3 "));
 		assert!(is_now(Count::TargetNow as usize) && !is_now(Count::SentBytes as usize));
+	}
+
+	#[test]
+	fn each_stream_is_summed_up_without_its_seconds() {
+		let mut share = Totals {
+			asked: Some((1920, 1080, 60, 8.0)),
+			encoder: "NVIDIA H.264 Encoder MFT reading GPU pictures".into(),
+			..Totals::default()
+		};
+		let mut counts = [0u64; COUNTS_LEN];
+		counts[Count::Encoded as usize] = 60;
+		counts[Count::EncodeMicros as usize] = 300_000;
+		counts[Count::LossNow as usize] = 0;
+		for second in 0..10 {
+			counts[Count::Encoded as usize] = if second < 8 { 60 } else { 30 };
+			counts[Count::LossNow as usize] = if second == 9 { 26 } else { 0 };
+			share.add(&counts, " gpu3d=10% cpu=20%", false);
+		}
+		let summary = share.summary(false).unwrap();
+		assert_eq!(summary["kind"], "share");
+		assert_eq!(summary["fps_encoded"], 54.0);
+		assert_eq!(summary["slow_seconds"], 2);
+		assert_eq!(
+			summary["loss_pct"], 1.0,
+			"a second without loss counts toward the average"
+		);
+		assert_eq!(summary["cpu_pct"], 20.0);
+		assert_eq!(summary["width"], 1920);
+
+		let mut watch = Totals::default();
+		counts[Count::Pictures as usize] = 30;
+		counts[Count::GapMaxMillis as usize] = 400;
+		for _ in 0..4 {
+			watch.add(&counts, "", true);
+		}
+		assert!(watch.summary(true).is_none(), "too short to sum up");
+		watch.add(&counts, "", true);
+		let summary = watch.summary(true).unwrap();
+		assert_eq!(
+			(
+				summary["fps_shown"].as_f64(),
+				summary["slow_seconds"].as_u64()
+			),
+			(Some(30.0), Some(5))
+		);
 	}
 
 	#[test]

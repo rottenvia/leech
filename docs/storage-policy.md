@@ -8,13 +8,24 @@ OS and Windows build, the graphics adapters, the architecture and the display re
 Each later line holds frame-time buckets of the UI callback, the slowest frame, the private
 working set and its peak in MB, and the launch-to-ready time once. Nothing names a person,
 server, channel or message. The file is cut at 512 KiB and kept once as
-`performance.previous.jsonl`; nothing is uploaded. Settings → Updates → Performance
-statistics turns it off, which also drops the interval in progress. Copied issue diagnostics
-add this session's frame count, frames over 16 ms and memory.
+`performance.previous.jsonl`. Settings → Updates → Performance statistics turns it off, which
+also drops the interval in progress and stops sending. Copied issue diagnostics add this
+session's frame count, frames over 16 ms and memory. `AppPreferences` gains
+`performance_stats` (default on).
 
-`AppPreferences` gains `performance_stats` (default on) and `performance_notice`. The notice
-that statistics are kept is shown once to people whose preferences predate it (a saved window
-or a measured restore); a new installation records it as seen without showing it.
+The same lines are sent to the owner's receiver (`tools/stats-worker`, a Cloudflare Worker
+with D1 that only the owner's account can read), at launch and then at most hourly, with a
+random 16-hex-digit installation name kept in `logs/performance.id`; `logs/performance.sent`
+records how far they were sent, so a failed send is retried and nothing goes twice. The
+receiver keeps only the lines, that name and the arrival time, and drops any key it does not
+know. The per-second `stream.log` is never sent: each finished share or watched stream of five
+seconds or more is summed up instead, in one `{"at", "stream"}` line of `performance.jsonl`
+(its size, frame rate and Mbps asked for, the encoder, average and slow-second frame rates,
+encode and send times, bitrate, loss, round trip, repairs and GPU and CPU use), written with
+the next summary or at close, even if Leech drew no frame meanwhile. Nothing is sent before everyone
+has been told once, in a notice listing what is kept and what is sent; it counts as shown once
+it is on screen, answered or not, recorded by an empty `logs/performance.notice`. While the
+receiver address in `perf_stats.rs` is empty, nothing is sent and no notice is due.
 
 ## CJK font cache (October 30, 2026)
 

@@ -3962,15 +3962,15 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Statistiques de performances
 # Context: performance_statistics
-updates-performance-statistics-description = Conserver sur cet ordinateur le temps de démarrage, les temps d’image, la mémoire utilisée et la qualité du stream. Les diagnostics copiés les incluent.
+updates-performance-statistics-description = Conserver le temps de démarrage, les temps d’image, la mémoire utilisée et la qualité du stream, et les envoyer au développeur de Leech. Les diagnostics copiés les incluent.
 # Context: performance_statistics
 updates-performance-notice-title = Statistiques de performances
 # Context: performance_statistics
-updates-performance-notice-body = Depuis Leech 0.1.9, Leech conserve des statistiques de performances sur cet ordinateur pour trouver ce qui le ralentit :
+updates-performance-notice-body = Leech conserve des statistiques de performances et les envoie à son développeur pour trouver et corriger ce qui le ralentit :
 # Context: performance_statistics
 updates-performance-notice-speed = Temps de démarrage, temps d’image et mémoire utilisée
 # Context: performance_statistics
-updates-performance-notice-streams = Qualité des streams et des appels : images par seconde, temps d’encodage, débit, perte de paquets et latence
+updates-performance-notice-streams = Qualité du stream, résumée par stream : images par seconde, temps d’encodage, débit, perte de paquets et latence
 # Context: performance_statistics
 updates-performance-notice-system = La version de Leech, le système, la carte graphique et la fréquence de l’écran
 # Context: performance_statistics

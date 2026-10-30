@@ -63,7 +63,6 @@ impl Settings {
 			call_hide_non_video: ui.call_hide_non_video,
 			restore_ms: ui.restore_ms,
 			performance_stats: ui.performance_stats,
-			performance_notice: !ui.performance_notice_pending,
 			transparency_blur: ui.transparency_blur,
 			transparency: ui.transparency,
 			blur: ui.blur,
@@ -115,7 +114,6 @@ impl Settings {
 		ui.call_hide_non_video = value.call_hide_non_video;
 		ui.restore_ms = value.restore_ms;
 		ui.performance_stats = value.performance_stats;
-		ui.performance_notice_pending = !value.performance_notice;
 		ui.transparency_blur = value.transparency_blur;
 		ui.transparency = value.transparency;
 		ui.blur = value.blur;
@@ -396,7 +394,6 @@ mod tests {
 		ui.transparency = defaults.transparency;
 		ui.blur = defaults.blur;
 		ui.performance_stats = defaults.performance_stats;
-		ui.performance_notice_pending = !defaults.performance_notice;
 		settings.observe(&ui);
 		assert!(
 			!settings.state.touched,
