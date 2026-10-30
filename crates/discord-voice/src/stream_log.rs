@@ -337,7 +337,7 @@ fn clock() -> String {
 }
 
 /// The OS and graphics adapters, for the session header.
-fn system() -> String {
+pub fn system() -> String {
 	#[cfg(target_os = "windows")]
 	{
 		use windows::Win32::Graphics::Dxgi::{

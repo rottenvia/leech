@@ -1635,6 +1635,18 @@ main-restoring-screen-leech = Leech
 main-restoring-screen-use-a-different-account = Použijte jiný účet
 # Context: restoring_screen
 main-restoring-screen-welcome-back = Vítejte zpět
+# Context: splash
+main-splash-starting = Spouštění Leech
+# Context: splash
+main-splash-updating = Aktualizace Leech
+# Context: splash
+main-splash-loading = Načítání
+# Context: splash
+main-splash-downloading = Stahování { $version }
+# Context: splash
+main-splash-installing = Instalace { $version }
+# Context: splash
+main-splash-restarting = Restartování
 # Context: sign_in_accounts
 main-sign-in-accounts-saved-accounts = Uložené účty
 # Context: sign_in_consent
@@ -3959,7 +3971,27 @@ updates-update-settings-could-not-load-or-save-update-preferences-changes-may-no
 # Context: update_settings
 updates-update-settings-download-update = Stáhnout aktualizaci
 # Context: update_settings
-updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Stahujte aktualizace na pozadí. Restartujte, až budete připraveni. Leech stále kontroluje při spuštění a pravidelně, když je vypnutý.
+updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Aktualizace se instalují při spuštění Leech. Ta, která vyjde, když je Leech otevřený, počká na další spuštění.
+# Context: performance_statistics
+updates-performance-statistics = Statistiky výkonu
+# Context: performance_statistics
+updates-performance-statistics-description = Uchovávat v tomto počítači dobu spuštění, časy snímků, využití paměti a kvalitu streamu. Zkopírovaná diagnostika je obsahuje.
+# Context: performance_statistics
+updates-performance-notice-title = Statistiky výkonu
+# Context: performance_statistics
+updates-performance-notice-body = Od verze 0.1.9 Leech uchovává v tomto počítači statistiky výkonu, aby šlo zjistit, co ho zpomaluje:
+# Context: performance_statistics
+updates-performance-notice-speed = Doba spuštění, časy snímků a využití paměti
+# Context: performance_statistics
+updates-performance-notice-streams = Kvalita streamů a hovorů: snímková frekvence, doba kódování, datový tok, ztráta paketů a latence
+# Context: performance_statistics
+updates-performance-notice-system = Verze Leech, systém, grafická karta a obnovovací frekvence displeje
+# Context: performance_statistics
+updates-performance-notice-never = Nikdy zprávy, jména, servery, kanály, údaje o účtu, zvuk ani video. Vypnout to můžete kdykoli v Nastavení → Aktualizace.
+# Context: performance_statistics
+updates-performance-notice-got-it = Rozumím
+# Context: performance_statistics
+updates-performance-notice-turn-off = Vypnout
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = Brzy staví s nejnovějšími změnami. Noční vydání může být méně spolehlivé.
 # Context: update_settings

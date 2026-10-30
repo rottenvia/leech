@@ -1,5 +1,21 @@
 # Local storage policy and audit
 
+## Performance statistics (October 30, 2026)
+
+From 0.1.9, Leech appends one JSON line per five minutes of use, and one at close, to
+`<data folder>/logs/performance.jsonl`. A session's first line names the Leech version, the
+OS and Windows build, the graphics adapters, the architecture and the display refresh rate.
+Each later line holds frame-time buckets of the UI callback, the slowest frame, the private
+working set and its peak in MB, and the launch-to-ready time once. Nothing names a person,
+server, channel or message. The file is cut at 512 KiB and kept once as
+`performance.previous.jsonl`; nothing is uploaded. Settings → Updates → Performance
+statistics turns it off, which also drops the interval in progress. Copied issue diagnostics
+add this session's frame count, frames over 16 ms and memory.
+
+`AppPreferences` gains `performance_stats` (default on) and `performance_notice`. The notice
+that statistics are kept is shown once to people whose preferences predate it (a saved window
+or a measured restore); a new installation records it as seen without showing it.
+
 ## CJK font cache (October 30, 2026)
 
 The first CJK text inflates the bundled Noto Sans CJK collection once into

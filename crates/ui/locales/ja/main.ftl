@@ -1625,6 +1625,18 @@ main-restoring-screen-leech = Leech
 main-restoring-screen-use-a-different-account = 別のアカウントを使用する
 # Context: restoring_screen
 main-restoring-screen-welcome-back = おかえり
+# Context: splash
+main-splash-starting = Leech を起動中
+# Context: splash
+main-splash-updating = Leech を更新中
+# Context: splash
+main-splash-loading = 読み込み中
+# Context: splash
+main-splash-downloading = { $version } をダウンロード中
+# Context: splash
+main-splash-installing = { $version } をインストール中
+# Context: splash
+main-splash-restarting = 再起動中
 # Context: sign_in_accounts
 main-sign-in-accounts-saved-accounts = 保存されたアカウント
 # Context: sign_in_consent
@@ -3940,7 +3952,27 @@ updates-update-settings-could-not-load-or-save-update-preferences-changes-may-no
 # Context: update_settings
 updates-update-settings-download-update = アップデートをダウンロード
 # Context: update_settings
-updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = バックグラウンドでアップデートをダウンロードします。準備ができたら再起動します。 Leech は起動時と、これがオフの場合でも定期的にチェックします。
+updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = アップデートは Leech の起動時にインストールされます。Leech を開いている間に公開されたものは次回の起動を待ちます。
+# Context: performance_statistics
+updates-performance-statistics = パフォーマンス統計
+# Context: performance_statistics
+updates-performance-statistics-description = 起動時間、フレーム時間、メモリ使用量、配信品質をこのコンピューターに保存します。コピーした診断情報に含まれます。
+# Context: performance_statistics
+updates-performance-notice-title = パフォーマンス統計
+# Context: performance_statistics
+updates-performance-notice-body = Leech 0.1.9 から、遅くなる原因を見つけるため、Leech はパフォーマンス統計をこのコンピューターに保存します:
+# Context: performance_statistics
+updates-performance-notice-speed = 起動時間、フレーム時間、メモリ使用量
+# Context: performance_statistics
+updates-performance-notice-streams = 配信と通話の品質: フレームレート、エンコード時間、ビットレート、パケットロス、遅延
+# Context: performance_statistics
+updates-performance-notice-system = Leech のバージョン、システム、グラフィックカード、ディスプレイのリフレッシュレート
+# Context: performance_statistics
+updates-performance-notice-never = メッセージ、名前、サーバー、チャンネル、アカウント情報、音声、映像は含みません。設定 → アップデートでいつでもオフにできます。
+# Context: performance_statistics
+updates-performance-notice-got-it = OK
+# Context: performance_statistics
+updates-performance-notice-turn-off = オフにする
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = 最新の変更を加えた初期のビルド。夜間リリースは信頼性が低くなる可能性があります。
 # Context: update_settings

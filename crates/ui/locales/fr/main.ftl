@@ -1624,6 +1624,18 @@ main-restoring-screen-leech = Leeche
 main-restoring-screen-use-a-different-account = Utiliser un autre compte
 # Context: restoring_screen
 main-restoring-screen-welcome-back = Content de te revoir
+# Context: splash
+main-splash-starting = Démarrage de Leech
+# Context: splash
+main-splash-updating = Mise à jour de Leech
+# Context: splash
+main-splash-loading = Chargement
+# Context: splash
+main-splash-downloading = Téléchargement de { $version }
+# Context: splash
+main-splash-installing = Installation de { $version }
+# Context: splash
+main-splash-restarting = Redémarrage
 # Context: sign_in_accounts
 main-sign-in-accounts-saved-accounts = Comptes enregistrés
 # Context: sign_in_consent
@@ -3946,7 +3958,27 @@ updates-update-settings-could-not-load-or-save-update-preferences-changes-may-no
 # Context: update_settings
 updates-update-settings-download-update = Télécharger la mise à jour
 # Context: update_settings
-updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Téléchargez les mises à jour en arrière-plan. Redémarrez lorsque vous êtes prêt. Leech vérifie toujours au démarrage et périodiquement lorsque cette option est désactivée.
+updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Les mises à jour s’installent au démarrage de Leech. Celle publiée pendant que Leech est ouvert attend le prochain lancement.
+# Context: performance_statistics
+updates-performance-statistics = Statistiques de performances
+# Context: performance_statistics
+updates-performance-statistics-description = Conserver sur cet ordinateur le temps de démarrage, les temps d’image, la mémoire utilisée et la qualité du stream. Les diagnostics copiés les incluent.
+# Context: performance_statistics
+updates-performance-notice-title = Statistiques de performances
+# Context: performance_statistics
+updates-performance-notice-body = Depuis Leech 0.1.9, Leech conserve des statistiques de performances sur cet ordinateur pour trouver ce qui le ralentit :
+# Context: performance_statistics
+updates-performance-notice-speed = Temps de démarrage, temps d’image et mémoire utilisée
+# Context: performance_statistics
+updates-performance-notice-streams = Qualité des streams et des appels : images par seconde, temps d’encodage, débit, perte de paquets et latence
+# Context: performance_statistics
+updates-performance-notice-system = La version de Leech, le système, la carte graphique et la fréquence de l’écran
+# Context: performance_statistics
+updates-performance-notice-never = Jamais de messages, noms, serveurs, salons, informations de compte, audio ou vidéo. Désactivable à tout moment dans Paramètres → Mises à jour.
+# Context: performance_statistics
+updates-performance-notice-got-it = Compris
+# Context: performance_statistics
+updates-performance-notice-turn-off = Désactiver
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = Premières versions avec les modifications les plus récentes. Les versions nocturnes peuvent être moins fiables.
 # Context: update_settings
