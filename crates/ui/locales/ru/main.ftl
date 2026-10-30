@@ -4086,17 +4086,17 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Статистика производительности
 # Context: performance_statistics
-updates-performance-statistics-description = Хранить на этом компьютере время запуска, время кадров, расход памяти и качество трансляции. Время запуска, время кадров и расход памяти также отправляются разработчику Leech.
+updates-performance-statistics-description = Хранить время запуска, время кадров, расход памяти и качество трансляции и отправлять их разработчику Leech. Скопированная диагностика включает их.
 # Context: performance_statistics
 updates-performance-notice-title = Статистика производительности
 # Context: performance_statistics
-updates-performance-notice-body = Leech собирает статистику производительности, чтобы находить и исправлять причины тормозов:
+updates-performance-notice-body = Leech собирает статистику производительности и отправляет её разработчику, чтобы находить и исправлять причины тормозов:
 # Context: performance_statistics
-updates-performance-notice-speed = Время запуска, время кадров и расход памяти — также отправляются разработчику Leech
+updates-performance-notice-speed = Время запуска, время кадров и расход памяти
 # Context: performance_statistics
-updates-performance-notice-streams = Качество трансляций и звонков: частота кадров, время кодирования, битрейт, потери пакетов и задержка — только на этом компьютере
+updates-performance-notice-streams = Качество трансляции, сводка по каждой трансляции: частота кадров, время кодирования, битрейт, потери пакетов и задержка
 # Context: performance_statistics
-updates-performance-notice-system = Версия Leech, система, видеокарта и частота обновления экрана — отправляются вместе с ними
+updates-performance-notice-system = Версия Leech, система, видеокарта и частота обновления экрана
 # Context: performance_statistics
 updates-performance-notice-never = Никогда не сообщения, имена, серверы, каналы, данные аккаунта, звук или видео. Отключить можно в любой момент в Настройки → Обновления.
 # Context: performance_statistics

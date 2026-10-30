@@ -3962,17 +3962,17 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Estadísticas de rendimiento
 # Context: performance_statistics
-updates-performance-statistics-description = Guardar en este equipo el tiempo de inicio, los tiempos de fotograma, el uso de memoria y la calidad de la transmisión. El tiempo de inicio, los tiempos de fotograma y el uso de memoria también se envían al desarrollador de Leech.
+updates-performance-statistics-description = Guardar el tiempo de inicio, los tiempos de fotograma, el uso de memoria y la calidad de la transmisión, y enviarlos al desarrollador de Leech. Los diagnósticos copiados los incluyen.
 # Context: performance_statistics
 updates-performance-notice-title = Estadísticas de rendimiento
 # Context: performance_statistics
-updates-performance-notice-body = Leech guarda estadísticas de rendimiento para descubrir y corregir lo que lo hace lento:
+updates-performance-notice-body = Leech guarda estadísticas de rendimiento y las envía a su desarrollador para descubrir y corregir lo que lo hace lento:
 # Context: performance_statistics
-updates-performance-notice-speed = Tiempo de inicio, tiempos de fotograma y uso de memoria, que también se envían al desarrollador de Leech
+updates-performance-notice-speed = Tiempo de inicio, tiempos de fotograma y uso de memoria
 # Context: performance_statistics
-updates-performance-notice-streams = Calidad de transmisiones y llamadas: fotogramas por segundo, tiempo de codificación, tasa de bits, pérdida de paquetes y latencia, solo en este equipo
+updates-performance-notice-streams = Calidad de la transmisión, resumida por transmisión: fotogramas por segundo, tiempo de codificación, tasa de bits, pérdida de paquetes y latencia
 # Context: performance_statistics
-updates-performance-notice-system = La versión de Leech, el sistema, la tarjeta gráfica y la frecuencia de la pantalla, que se envían con ellos
+updates-performance-notice-system = La versión de Leech, el sistema, la tarjeta gráfica y la frecuencia de la pantalla
 # Context: performance_statistics
 updates-performance-notice-never = Nunca mensajes, nombres, servidores, canales, datos de la cuenta, audio ni vídeo. Desactívalo cuando quieras en Ajustes → Actualizaciones.
 # Context: performance_statistics

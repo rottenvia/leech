@@ -20,14 +20,25 @@ assert.equal(
 	(
 		await post({
 			install,
-			lines: [{ session: 1, version: '0.1.11' }, { at: 2, memory_mb: 70 }, { name: 'no' }, [1], 3],
+			lines: [
+				{ session: 1, version: '0.1.11' },
+				{ at: 2, memory_mb: 70 },
+				{ at: 3, stream: { kind: 'share' } },
+				{ name: 'no' },
+				[1],
+				3,
+			],
 		})
 	).status,
 	204,
 );
 assert.equal(rows.length, 1);
 assert.equal(rows[0][1], install);
-assert.deepEqual(JSON.parse(rows[0][2]), [{ session: 1, version: '0.1.11' }, { at: 2, memory_mb: 70 }]);
+assert.deepEqual(JSON.parse(rows[0][2]), [
+	{ session: 1, version: '0.1.11' },
+	{ at: 2, memory_mb: 70 },
+	{ at: 3, stream: { kind: 'share' } },
+]);
 // Nothing worth keeping writes nothing.
 assert.equal((await post({ install, lines: [{ name: 'no' }] })).status, 204);
 assert.equal(rows.length, 1);

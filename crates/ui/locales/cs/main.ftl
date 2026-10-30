@@ -3975,17 +3975,17 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Statistiky výkonu
 # Context: performance_statistics
-updates-performance-statistics-description = Uchovávat v tomto počítači dobu spuštění, časy snímků, využití paměti a kvalitu streamu. Doba spuštění, časy snímků a využití paměti se odesílají i vývojáři Leech.
+updates-performance-statistics-description = Uchovávat dobu spuštění, časy snímků, využití paměti a kvalitu streamu a odesílat je vývojáři Leech. Zkopírovaná diagnostika je obsahuje.
 # Context: performance_statistics
 updates-performance-notice-title = Statistiky výkonu
 # Context: performance_statistics
-updates-performance-notice-body = Leech uchovává statistiky výkonu, aby šlo najít a opravit, co ho zpomaluje:
+updates-performance-notice-body = Leech uchovává statistiky výkonu a odesílá je svému vývojáři, aby šlo najít a opravit, co ho zpomaluje:
 # Context: performance_statistics
-updates-performance-notice-speed = Doba spuštění, časy snímků a využití paměti, odesílané i vývojáři Leech
+updates-performance-notice-speed = Doba spuštění, časy snímků a využití paměti
 # Context: performance_statistics
-updates-performance-notice-streams = Kvalita streamů a hovorů: snímková frekvence, doba kódování, datový tok, ztráta paketů a latence, jen v tomto počítači
+updates-performance-notice-streams = Kvalita streamu, shrnutá za každý stream: snímková frekvence, doba kódování, datový tok, ztráta paketů a latence
 # Context: performance_statistics
-updates-performance-notice-system = Verze Leech, systém, grafická karta a obnovovací frekvence displeje, odesílané spolu s nimi
+updates-performance-notice-system = Verze Leech, systém, grafická karta a obnovovací frekvence displeje
 # Context: performance_statistics
 updates-performance-notice-never = Nikdy zprávy, jména, servery, kanály, údaje o účtu, zvuk ani video. Vypnout to můžete kdykoli v Nastavení → Aktualizace.
 # Context: performance_statistics

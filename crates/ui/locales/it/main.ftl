@@ -3962,17 +3962,17 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Statistiche sulle prestazioni
 # Context: performance_statistics
-updates-performance-statistics-description = Conserva su questo computer tempo di avvio, tempi dei fotogrammi, uso della memoria e qualità dello stream. Tempo di avvio, tempi dei fotogrammi e uso della memoria vengono inviati anche allo sviluppatore di Leech.
+updates-performance-statistics-description = Conserva tempo di avvio, tempi dei fotogrammi, uso della memoria e qualità dello stream e inviali allo sviluppatore di Leech. La diagnostica copiata li include.
 # Context: performance_statistics
 updates-performance-notice-title = Statistiche sulle prestazioni
 # Context: performance_statistics
-updates-performance-notice-body = Leech conserva statistiche sulle prestazioni per trovare e correggere ciò che lo rallenta:
+updates-performance-notice-body = Leech conserva statistiche sulle prestazioni e le invia al suo sviluppatore per trovare e correggere ciò che lo rallenta:
 # Context: performance_statistics
-updates-performance-notice-speed = Tempo di avvio, tempi dei fotogrammi e uso della memoria, inviati anche allo sviluppatore di Leech
+updates-performance-notice-speed = Tempo di avvio, tempi dei fotogrammi e uso della memoria
 # Context: performance_statistics
-updates-performance-notice-streams = Qualità di stream e chiamate: frequenza dei fotogrammi, tempo di codifica, bitrate, perdita di pacchetti e latenza, solo su questo computer
+updates-performance-notice-streams = Qualità dello stream, riassunta per ogni stream: frequenza dei fotogrammi, tempo di codifica, bitrate, perdita di pacchetti e latenza
 # Context: performance_statistics
-updates-performance-notice-system = La versione di Leech, il sistema, la scheda grafica e la frequenza dello schermo, inviati insieme
+updates-performance-notice-system = La versione di Leech, il sistema, la scheda grafica e la frequenza dello schermo
 # Context: performance_statistics
 updates-performance-notice-never = Mai messaggi, nomi, server, canali, dati dell’account, audio o video. Puoi disattivarle quando vuoi in Impostazioni → Aggiornamenti.
 # Context: performance_statistics

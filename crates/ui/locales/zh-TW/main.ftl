@@ -3994,17 +3994,17 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = 效能統計
 # Context: performance_statistics
-updates-performance-statistics-description = 在這台電腦上保存啟動時間、影格時間、記憶體使用量和直播品質。啟動時間、影格時間和記憶體使用量也會傳送給 Leech 的開發者。
+updates-performance-statistics-description = 保存啟動時間、影格時間、記憶體使用量和直播品質，並傳送給 Leech 的開發者。複製的診斷資訊會包含這些資料。
 # Context: performance_statistics
 updates-performance-notice-title = 效能統計
 # Context: performance_statistics
-updates-performance-notice-body = Leech 會保存效能統計，用來找出並修正變慢的原因：
+updates-performance-notice-body = Leech 會保存效能統計並傳送給開發者，用來找出並修正變慢的原因：
 # Context: performance_statistics
-updates-performance-notice-speed = 啟動時間、影格時間和記憶體使用量，也會傳送給 Leech 的開發者
+updates-performance-notice-speed = 啟動時間、影格時間和記憶體使用量
 # Context: performance_statistics
-updates-performance-notice-streams = 直播和通話品質：影格率、編碼時間、位元率、封包遺失和延遲，只保存在這台電腦上
+updates-performance-notice-streams = 直播品質（按每次直播彙總）：影格率、編碼時間、位元率、封包遺失和延遲
 # Context: performance_statistics
-updates-performance-notice-system = Leech 版本、系統、顯示卡和螢幕更新率，隨統計一起傳送
+updates-performance-notice-system = Leech 版本、系統、顯示卡和螢幕更新率
 # Context: performance_statistics
 updates-performance-notice-never = 絕不包含訊息、名稱、伺服器、頻道、帳號資訊、音訊或影片。可隨時在 設定 → 更新 中關閉。
 # Context: performance_statistics

@@ -115,6 +115,8 @@ impl Stats {
 	) -> Option<String> {
 		let started = self.started.take()?;
 		if !enabled {
+			// Streams summed up while statistics are off are dropped too.
+			discord_voice::stream_log::take_summaries();
 			*self = Self {
 				next_send: self.next_send,
 				sending: self.sending.clone(),
@@ -151,9 +153,16 @@ impl Stats {
 	}
 
 	/// Writes what this interval holds; on close, `wait` for the file before exiting.
+	/// Streams finished since the last write go with it, even when Leech drew no frame, as
+	/// while it stayed minimized over a game.
 	pub fn write(&mut self, gpu: &str, refresh: Option<Duration>, wait: bool) {
 		let frames: u64 = self.buckets.iter().sum();
-		let Some(directory) = self.directory.clone().filter(|_| frames > 0) else {
+		let streams = discord_voice::stream_log::take_summaries();
+		let Some(directory) = self
+			.directory
+			.clone()
+			.filter(|_| frames > 0 || !streams.is_empty())
+		else {
 			return;
 		};
 		let header = (!self.introduced).then(|| {
@@ -167,21 +176,28 @@ impl Stats {
 			})
 		});
 		self.introduced = true;
-		let line = serde_json::json!({
-			"at": unix_seconds(),
-			"startup_ms": self.startup_ms.take(),
-			"frame_us_limits": LIMITS,
-			"frame_us_buckets": self.buckets,
-			"frame_us_max": self.max_micros,
-			"memory_mb": self.memory >> 20,
-			"memory_peak_mb": self.memory_peak >> 20,
+		let at = unix_seconds();
+		let line = (frames > 0).then(|| {
+			serde_json::json!({
+				"at": at,
+				"startup_ms": self.startup_ms.take(),
+				"frame_us_limits": LIMITS,
+				"frame_us_buckets": self.buckets,
+				"frame_us_max": self.max_micros,
+				"memory_mb": self.memory >> 20,
+				"memory_peak_mb": self.memory_peak >> 20,
+			})
 		});
+		let streams: Vec<_> = streams
+			.into_iter()
+			.map(|stream| serde_json::json!({ "at": at, "stream": stream }))
+			.collect();
 		self.buckets = Default::default();
 		self.max_micros = 0;
 		// Off the UI thread: the disk may be slow or asleep.
 		let writer = std::thread::spawn(move || {
 			let mut text = String::new();
-			for record in header.iter().chain([&line]) {
+			for record in header.iter().chain(&line).chain(&streams) {
 				text.push_str(&record.to_string());
 				text.push('\n');
 			}

@@ -3,7 +3,7 @@
 // stored: no address and no headers, only the lines, the installation's random name and when
 // they came.
 
-/// The only keys a line may have: a session's first line, then its summaries.
+/// The only keys a line may have: a session's first line, then its summaries and streams.
 const KEYS = new Set([
 	'session',
 	'version',
@@ -18,6 +18,8 @@ const KEYS = new Set([
 	'frame_us_max',
 	'memory_mb',
 	'memory_peak_mb',
+	// A finished share or watched stream, summed up.
+	'stream',
 ]);
 const MAX_BYTES = 256 * 1024;
 const MAX_LINES = 2000;

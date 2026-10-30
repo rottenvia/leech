@@ -3962,17 +3962,17 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Leistungsstatistiken
 # Context: performance_statistics
-updates-performance-statistics-description = Startzeit, Bildzeiten, Speichernutzung und Streamqualität auf diesem Computer speichern. Startzeit, Bildzeiten und Speichernutzung gehen auch an den Entwickler von Leech.
+updates-performance-statistics-description = Startzeit, Bildzeiten, Speichernutzung und Streamqualität speichern und an den Entwickler von Leech senden. Kopierte Diagnosedaten enthalten sie.
 # Context: performance_statistics
 updates-performance-notice-title = Leistungsstatistiken
 # Context: performance_statistics
-updates-performance-notice-body = Leech speichert Leistungsstatistiken, um zu finden und zu beheben, was es langsam macht:
+updates-performance-notice-body = Leech speichert Leistungsstatistiken und sendet sie an seinen Entwickler, um zu finden und zu beheben, was es langsam macht:
 # Context: performance_statistics
-updates-performance-notice-speed = Startzeit, Bildzeiten und Speichernutzung, die auch an den Entwickler von Leech gehen
+updates-performance-notice-speed = Startzeit, Bildzeiten und Speichernutzung
 # Context: performance_statistics
-updates-performance-notice-streams = Stream- und Anrufqualität: Bildrate, Kodierzeit, Bitrate, Paketverlust und Latenz, nur auf diesem Computer
+updates-performance-notice-streams = Streamqualität, zusammengefasst pro Stream: Bildrate, Kodierzeit, Bitrate, Paketverlust und Latenz
 # Context: performance_statistics
-updates-performance-notice-system = Die Leech-Version, das System, die Grafikkarte und die Bildwiederholrate, die mitgesendet werden
+updates-performance-notice-system = Die Leech-Version, das System, die Grafikkarte und die Bildwiederholrate
 # Context: performance_statistics
 updates-performance-notice-never = Niemals Nachrichten, Namen, Server, Kanäle, Kontodaten, Audio oder Video. Jederzeit abschaltbar unter Einstellungen → Updates.
 # Context: performance_statistics
