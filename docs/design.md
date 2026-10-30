@@ -102,12 +102,13 @@ after them. No placeholder shows for a wait under 0.15 s, and none is cut off: w
 comes, the placeholder's last frame fades out under it while the content fades in over 0.22 s.
 Opening a conversation that is already loaded fades it in briefly, so the click visibly lands.
 Channel glyphs in the sidebar grow a little under the pointer. On Windows, Leech opens as a 300 by 350 splash
-(`apps/desktop/src/splash.rs`): the Leech mark crawls on the spot, its tail lifting and sliding
-in from right to left along its own curve while the body bunches and a swell rides up to the
-head, then reaching back out; under it, a bar with the stage and time left. It holds for at least
+(`apps/desktop/src/splash.rs`): the Leech worm, seen from above and shaped like the app mark,
+crawls slowly up a wave toward the top edge like a snake, rests a moment, then slowly slips
+back down the same wave to where it started, as if on a wet floor, its head leaving a line of
+oil that soaks away early in the next climb. Under it, a bar with the stage and time left. It holds for at least
 0.9 s, waits up to 4 s for the first update check, fades to its background and then grows into
-the saved window. An update found at launch installs there instead: drops fall into the mark's
-head and its body fills with colour, head to tail, as the download runs. A release that lands
+the saved window. An update found at launch installs there instead: the worm keeps crawling while drops fall
+onto its head and its body fills with colour, head to tail, as the download runs. A release that lands
 while Leech is open only shows the update prompt and installs at the next launch. A restore
 still running after 12 s grows into the full restore screen, which has a way out:
 the app mark with a passing sheen, a determinate bar with a glowing head, and the stage with

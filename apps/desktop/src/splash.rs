@@ -1,6 +1,6 @@
 //! The compact launch window. Leech opens as a 300 by 350 splash and grows to its saved
 //! size once the account is ready or the sign-in screen is needed; an update found at launch
-//! installs here instead, the mark drinking it in.
+//! installs here instead, the worm drinking it in.
 use eframe::egui::{self, Color32, Pos2, Vec2, pos2, vec2};
 use std::f32::consts::TAU;
 use std::time::{Duration, Instant};
@@ -15,21 +15,6 @@ pub const LONGEST: Duration = Duration::from_secs(12);
 pub const UPDATE_WAIT: Duration = Duration::from_secs(4);
 /// Seconds the finished bar holds and the splash fades to its bare background.
 const FADE: f32 = 0.22;
-
-/// The mark's centre line, a cubic through these points, and its radius along that line, at
-/// a third and two thirds of its length. Fitted to the 256 px app icon (98% overlap).
-const SPINE: [Vec2; 4] = [
-	vec2(93.0, 83.1),
-	vec2(81.2, 159.9),
-	vec2(111.5, 210.3),
-	vec2(185.8, 171.5),
-];
-const RADII: [f32; 4] = [37.8, 29.3, 21.0, 14.1];
-const EYE: Vec2 = vec2(93.1, 82.7);
-const EYE_RADIUS: f32 = 15.7;
-/// The icon's mark spans x 56 to 200 and y 45 to 205.
-const MARK_CENTER: Vec2 = vec2(128.0, 125.0);
-const SAMPLES: usize = 84;
 
 pub enum Look<'a> {
 	/// Restoring the session: the current stage, and whether it has finished.
@@ -146,20 +131,10 @@ impl Splash {
 		painter.rect_filled(rect, 0, canvas);
 		// Everything but the background fades, so the window grows from a plain colour.
 		let alpha = 1.0 - smooth(fade);
-		let center = pos2(rect.center().x, rect.top() + 138.0);
 		let t = time as f32;
-		glow(
+		worm(
 			painter,
-			center,
-			palette.accent,
-			ui.visuals().dark_mode,
-			t,
-			alpha,
-		);
-		mark(
-			painter,
-			center,
-			0.66,
+			pos2(rect.center().x, rect.top()),
 			t,
 			updating.then_some(self.fill),
 			palette.accent,
@@ -248,21 +223,6 @@ fn smooth(t: f32) -> f32 {
 	t * t * (3.0 - 2.0 * t)
 }
 
-fn cubic(spine: &[Vec2; 4], t: f32) -> Vec2 {
-	let u = 1.0 - t;
-	spine[0] * (u * u * u)
-		+ spine[1] * (3.0 * u * u * t)
-		+ spine[2] * (3.0 * u * t * t)
-		+ spine[3] * (t * t * t)
-}
-
-/// Ease out with a small overshoot, so a reach stretches a little past rest and settles.
-fn overshoot(t: f32) -> f32 {
-	const BACK: f32 = 0.9;
-	let t = t - 1.0;
-	1.0 + (BACK + 1.0) * t * t * t + BACK * t * t
-}
-
 /// A soft rose light behind the mark that breathes with it.
 fn glow(painter: &egui::Painter, center: Pos2, accent: Color32, dark: bool, t: f32, alpha: f32) {
 	let breath = 0.5 + 0.5 * (t * 2.0).sin();
@@ -293,17 +253,245 @@ fn radial(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
 	painter.add(egui::Shape::mesh(mesh));
 }
 
-/// The Leech mark, alive. While Leech starts it crawls on the spot: the tail lifts and pulls
-/// in from right to left, bunching the body, which thickens and lifts the head while a swell
-/// rides up to it; then the tail reaches back out along the ground, a little past rest, and
-/// settles. The eye blinks now and then. While an update installs (`fill` is `Some`), drops
-/// fall into its head and each gulp carries the colour further down its body, which fills
-/// from head to tail with the progress.
-#[allow(clippy::too_many_arguments)]
-fn mark(
+/// The worm, seen from above: it crawls up a wave like a snake, then slips back down. Sizes
+/// are in points from the window's top edge and centre line.
+const LENGTH: f32 = 92.0;
+/// Half-widths along the body from head (0) to tail (1), in the app icon's proportions: a
+/// round head that tapers through the body to the tail.
+const WIDTHS: [(f32, f32); 4] = [(0.0, 19.7), (0.33, 15.2), (0.67, 10.9), (1.0, 7.3)];
+/// The wave it crawls along: its wavelength and how far it sways to each side. Its tightest
+/// bend stays wider than the body, so the inner side never creases.
+const WAVE: f32 = 84.0;
+const SWAY: f32 = 8.0;
+/// How far up the head climbs: a whole wave, so slipping straight back down lands the body
+/// on the same curve it starts the next climb from.
+const CLIMB: f32 = WAVE;
+/// The head's highest point, just under the top edge.
+const TOP: f32 = 38.0;
+/// Seconds of each part of one loop: climbing, resting at the top, slipping down, settling.
+const CRAWL: f32 = 5.2;
+const REST: f32 = 0.5;
+const SLIP: f32 = 2.8;
+const SETTLE: f32 = 0.4;
+const LOOP: f32 = CRAWL + REST + SLIP + SETTLE;
+/// The line of oil its head leaves as it slips: how much of the head's width touches the
+/// floor, and how long the oil takes to soak away once it climbs again.
+const FILM: f32 = 0.66;
+const SOAK: f32 = 1.6;
+const SAMPLES: usize = 72;
+
+/// Where the wave is at height `y` below the window top.
+fn sway(y: f32) -> f32 {
+	SWAY * (y * TAU / WAVE).sin()
+}
+
+/// Arc length along the wave, tabulated by height, so the body keeps its length on the bends.
+struct Path {
+	heights: Vec<f32>,
+	lengths: Vec<f32>,
+}
+
+impl Path {
+	const STEP: f32 = 0.5;
+
+	fn new() -> Self {
+		let (from, to) = (TOP - 16.0, TOP + CLIMB + LENGTH + 16.0);
+		let mut heights = vec![from];
+		let mut lengths = vec![0.0];
+		let mut y = from;
+		while y < to {
+			let next = y + Self::STEP;
+			let length = vec2(sway(next) - sway(y), Self::STEP).length();
+			lengths.push(lengths.last().copied().unwrap_or(0.0) + length);
+			heights.push(next);
+			y = next;
+		}
+		Self { heights, lengths }
+	}
+
+	fn length_at(&self, y: f32) -> f32 {
+		Self::lerp(&self.heights, &self.lengths, y)
+	}
+
+	fn height_at(&self, length: f32) -> f32 {
+		Self::lerp(&self.lengths, &self.heights, length)
+	}
+
+	/// `to` at `at` along the increasing `from`.
+	fn lerp(from: &[f32], to: &[f32], at: f32) -> f32 {
+		let index = from
+			.partition_point(|value| *value < at)
+			.clamp(1, from.len() - 1);
+		let (a, b) = (from[index - 1], from[index]);
+		let t = ((at - a) / (b - a)).clamp(0.0, 1.0);
+		to[index - 1] + (to[index] - to[index - 1]) * t
+	}
+}
+
+/// The worm at one moment.
+struct Pose {
+	/// Head first: each point's offset from the window's top centre, its half-width before
+	/// any swell, and how far along the body it is.
+	body: Vec<(Vec2, f32, f32)>,
+	/// How far below the head's top pose the oil reaches, and how strongly it shows.
+	oil: (f32, f32),
+}
+
+fn pose(path: &Path, t: f32) -> Pose {
+	let top = path.length_at(TOP);
+	let start = path.length_at(TOP + CLIMB);
+	let at = t.rem_euclid(LOOP);
+	// Where the head is along the wave, how far the whole body has slipped down, and the oil.
+	let (head, slip, oil) = if at < CRAWL {
+		let p = at / CRAWL;
+		// Mostly steady, easing in and out at the ends.
+		let q = 0.5 * (p + smooth(p));
+		let head = start - (start - top) * q;
+		// The oil from the last slip soaks away early in the climb; the first climb has none.
+		let oil = if t >= LOOP {
+			(CLIMB, 1.0 - smooth((at / SOAK).min(1.0)))
+		} else {
+			(0.0, 0.0)
+		};
+		(head, 0.0, oil)
+	} else if at < CRAWL + REST {
+		(top, 0.0, (0.0, 0.0))
+	} else if at < CRAWL + REST + SLIP {
+		// Loses its grip slowly, slides, and slows to a stop where it started, its head
+		// oiling the floor it slides over.
+		let p = (at - CRAWL - REST) / SLIP;
+		let slip = CLIMB * smooth(smooth(p));
+		(top, slip, (slip, 1.0))
+	} else {
+		(top, CLIMB, (CLIMB, 1.0))
+	};
+	let body = (0..SAMPLES)
+		.map(|i| {
+			let s = i as f32 / (SAMPLES - 1) as f32;
+			let y = path.height_at(head + LENGTH * s);
+			(vec2(sway(y), y + slip), width(s), s)
+		})
+		.collect();
+	Pose { body, oil }
+}
+
+fn width(s: f32) -> f32 {
+	let index = WIDTHS
+		.partition_point(|(at, _)| *at < s)
+		.clamp(1, WIDTHS.len() - 1);
+	let (a, b) = (WIDTHS[index - 1], WIDTHS[index]);
+	a.1 + (b.1 - a.1) * smooth(((s - a.0) / (b.0 - a.0)).clamp(0.0, 1.0))
+}
+
+/// The line of oil the worm's head left as it slipped, from its top pose to `reach` below.
+/// Its edges are soft and uneven like a spill, glints catch the light along it, the older
+/// end is fainter, and it narrows as it soaks away.
+fn oil(
 	painter: &egui::Painter,
-	center: Pos2,
-	scale: f32,
+	origin: Pos2,
+	reach: f32,
+	strength: f32,
+	accent: Color32,
+	alpha: f32,
+) {
+	const STEP: f32 = 1.5;
+	/// How much oil shows across the film, from its left edge (0) to its right (1).
+	const ACROSS: [(f32, f32); 5] = [
+		(0.0, 0.7),
+		(0.07, 1.0),
+		(0.5, 0.85),
+		(0.93, 0.9),
+		(1.0, 0.6),
+	];
+	let amount = |u: f32| {
+		let index = ACROSS
+			.partition_point(|(at, _)| *at < u)
+			.clamp(1, ACROSS.len() - 1);
+		let (a, b) = (ACROSS[index - 1], ACROSS[index]);
+		a.1 + (b.1 - a.1) * ((u - a.0) / (b.0 - a.0)).clamp(0.0, 1.0)
+	};
+	let shown = strength * alpha;
+	if reach < 0.5 || shown <= 0.0 {
+		return;
+	}
+	// The slip is straight down, so the head sweeps a straight band.
+	let (x, half) = (sway(TOP), width(0.0) * FILM * (0.6 + 0.4 * strength));
+	let (from, to) = (TOP - half, TOP + reach + half);
+	let base = accent.gamma_multiply(0.26 * shown);
+	let gloss =
+		ui::design::mix(accent.to_opaque(), Color32::WHITE, 0.4).gamma_multiply(0.6 * shown);
+	// A feather, the lit rim, the film's stops around a glint streak of three, a feather.
+	const COLUMNS: u32 = 10;
+	let mut mesh = egui::Mesh::default();
+	let mut rows = 0;
+	let mut y = from;
+	while y <= to + STEP {
+		let row = y.min(to);
+		y += STEP;
+		// Where the head's circle, swept down by `reach`, crosses this row.
+		let off = (TOP - row).max(row - TOP - reach).max(0.0);
+		let across = (half * half - off * off).max(0.0).sqrt();
+		let (mut left, mut right) = (x - across, x + across);
+		// Uneven edges in gentle bulges, narrowing to nothing at the ends.
+		let edge = ((right - left) / 6.0).min(1.0);
+		left += edge * (1.5 * (row * 0.13 + 1.3).sin() + 0.5 * (row * 0.31).sin());
+		right += edge * (1.5 * (row * 0.11 + 4.1).sin() + 0.5 * (row * 0.29 + 2.0).sin());
+		let right = right.max(left);
+		// The newest oil, next to the head, shows most.
+		let fresh = 0.5 + 0.5 * smooth(((row - from) / (to - from)).clamp(0.0, 1.0));
+		let streak = 0.33 + 0.06 * (row * 0.09).sin();
+		let glint = (0.5 + 0.5 * (row * 0.11 + 0.7).sin()) * (0.5 + 0.5 * (row * 0.29 + 2.1).sin());
+		let point = |u: f32| origin + vec2(left + (right - left) * u, row);
+		let film = |u: f32| base.gamma_multiply(amount(u) * fresh);
+		mesh.colored_vertex(point(0.0) - vec2(1.0, 0.0), Color32::TRANSPARENT);
+		// The edge toward the light catches it, as does a broken streak along the film.
+		for (u, lit) in [
+			(0.0, 0.5),
+			(0.07, 0.0),
+			(streak - 0.06, 0.0),
+			(streak, glint),
+			(streak + 0.06, 0.0),
+			(0.5, 0.0),
+			(0.93, 0.0),
+			(1.0, 0.0),
+		] {
+			// The light over the film, both premultiplied.
+			let (lit, under) = (gloss.gamma_multiply(lit * fresh), film(u));
+			let cover = 1.0 - f32::from(lit.a()) / 255.0;
+			let over = |a: u8, b: u8| (f32::from(a) + f32::from(b) * cover).round() as u8;
+			mesh.colored_vertex(
+				point(u),
+				Color32::from_rgba_premultiplied(
+					over(lit.r(), under.r()),
+					over(lit.g(), under.g()),
+					over(lit.b(), under.b()),
+					over(lit.a(), under.a()),
+				),
+			);
+		}
+		mesh.colored_vertex(point(1.0) + vec2(1.0, 0.0), Color32::TRANSPARENT);
+		if rows > 0 {
+			let (above, here) = ((rows - 1) * COLUMNS, rows * COLUMNS);
+			for column in 0..COLUMNS - 1 {
+				mesh.add_triangle(above + column, above + column + 1, here + column);
+				mesh.add_triangle(above + column + 1, here + column + 1, here + column);
+			}
+		}
+		rows += 1;
+	}
+	painter.add(egui::Shape::mesh(mesh));
+}
+
+/// The Leech worm, seen from above. It crawls up a wave toward the top edge like a snake,
+/// rests a moment, then slowly slips back down the same wave, as if on a wet floor, to where
+/// it started, its head leaving a line of oil that soaks away as it climbs again. The eye
+/// blinks now and then. While an update installs (`fill` is `Some`), drops fall onto its head
+/// as it goes and each gulp carries the colour further down its body, which fills from head
+/// to tail with the progress.
+#[allow(clippy::too_many_arguments)]
+fn worm(
+	painter: &egui::Painter,
+	origin: Pos2,
 	t: f32,
 	fill: Option<f32>,
 	accent: Color32,
@@ -311,30 +499,13 @@ fn mark(
 	dark: bool,
 	alpha: f32,
 ) {
-	let place = |point: Vec2| center + (point - MARK_CENTER) * scale;
-	// One crawl: the tail pulls in, holds, then reaches back out. Gulps follow the drops.
-	const CRAWL: f32 = 1.6;
-	const PULL: f32 = 0.42;
-	const HOLD: f32 = 0.5;
 	const DRIP: f32 = 0.95;
-	let phase = (t / CRAWL).fract();
-	// How far the tail has pulled in (1) and how high it is lifted while moving.
-	let (bunch, lift) = match fill {
-		Some(_) => (0.0, 0.0),
-		None if phase < PULL => (smooth(phase / PULL), (phase / PULL * TAU / 2.0).sin()),
-		None if phase < HOLD => (1.0, 0.0),
-		None => (1.0 - overshoot((phase - HOLD) / (1.0 - HOLD)), 0.0),
-	};
+	let path = Path::new();
+	let pose = pose(&path, t);
+	// Only a gulp swells the body.
 	let swell = |s: f32| -> f32 {
 		match fill {
-			// The pull's swell rides from the tail up to the head.
-			None => {
-				if phase > PULL + 0.12 {
-					return 0.0;
-				}
-				let at = 1.0 - phase / (PULL + 0.12);
-				0.09 * (-((s - at) / 0.1).powi(2)).exp()
-			}
+			None => 0.0,
 			Some(_) => (0..2)
 				.map(|back| {
 					// Each drop lands at 0.55 of its cycle and its gulp travels for a cycle.
@@ -342,108 +513,86 @@ fn mark(
 					if !(0.0..1.0).contains(&phase) {
 						return 0.0;
 					}
-					0.13 * (1.0 - phase) * (-((s - phase * 1.1) / 0.08).powi(2)).exp()
+					0.18 * (1.0 - phase) * (-((s - phase * 1.1) / 0.08).powi(2)).exp()
 				})
 				.sum(),
 		}
 	};
-	// The bunched body lifts the head; a gulp dips it.
-	let reach = match fill {
-		None => bunch,
+	// A gulp dips the head.
+	let dip = match fill {
+		None => 0.0,
 		Some(_) => {
 			let phase = (t / DRIP).fract();
 			let land = ((phase - 0.5) / 0.08).clamp(0.0, 1.0);
 			let rise = ((phase - 0.58) / 0.3).clamp(0.0, 1.0);
-			-0.6 * smooth(land) * (1.0 - smooth(rise))
+			2.0 * smooth(land) * (1.0 - smooth(rise))
 		}
 	};
-	let head_shift = vec2(1.0, -3.5) * reach;
-	let breath = 1.0 + 0.018 * (t * 2.0).sin();
-
-	// The tail slides in along its own curve, so the bend keeps its round inner corner.
-	let end = 1.0 - 0.24 * bunch;
-	let mut spine = [(Vec2::ZERO, 0.0f32); SAMPLES];
-	let mut length = [0.0f32; SAMPLES];
-	for (i, sample) in spine.iter_mut().enumerate() {
-		let u = i as f32 / (SAMPLES - 1) as f32;
-		sample.0 = cubic(&SPINE, u * end);
-		if i > 0 {
-			length[i] = length[i - 1]
-				+ (sample.0 - cubic(&SPINE, (i - 1) as f32 / (SAMPLES - 1) as f32 * end)).length();
-		}
-	}
-	let total = length[SAMPLES - 1];
-	let points: Vec<(Pos2, f32, f32)> = spine
+	let breath = 1.0 + 0.02 * (t * 2.0).sin();
+	let points: Vec<(Pos2, f32, f32)> = pose
+		.body
 		.iter()
-		.zip(length)
-		.map(|(&(point, _), length)| {
-			let s = length / total;
-			// A bunched body is shorter, so its lower half thickens.
-			let thicken = 1.0 + 0.06 * bunch * ((s - 0.3) / 0.4).clamp(0.0, 1.0);
-			let radius = interpolate(s) * breath * thicken * (1.0 + swell(s));
-			// The head end follows the reach; the tail lifts while it moves.
-			let pull = (1.0 - s).powi(2);
-			let raise = vec2(0.0, -6.0 * lift * s.powi(3));
-			(place(point + head_shift * pull + raise), radius * scale, s)
+		.map(|&(at, half, s)| {
+			let at = at + vec2(0.0, dip * (1.0 - s).powi(3));
+			(origin + at, half * breath * (1.0 + swell(s)), s)
 		})
 		.collect();
 
 	let shade = |color: Color32| color.gamma_multiply(alpha);
-	// A soft shadow ties the mark to the ground.
-	let ground = place(vec2(128.0 - 14.0 * bunch, 212.0));
-	painter.add(egui::Shape::ellipse_filled(
-		ground,
-		vec2(46.0 * scale * (1.0 - 0.2 * bunch), 5.0 * scale),
-		Color32::BLACK.gamma_multiply(if dark { 0.16 } else { 0.08 } * alpha),
-	));
-	let body = match fill {
+	glow(painter, points[SAMPLES / 2].0, accent, dark, t, alpha);
+	oil(painter, origin, pose.oil.0, pose.oil.1, accent, alpha);
+	let body_color = match fill {
 		None => accent,
 		Some(_) => ui::design::mix(canvas.to_opaque(), accent.to_opaque(), 0.26),
 	};
-	for &(point, radius, _) in &points {
-		painter.circle_filled(point, radius, shade(body));
+	// Tail first, so the head end stays on top.
+	for &(point, radius, _) in points.iter().rev() {
+		painter.circle_filled(point, radius, shade(body_color));
 	}
 	if let Some(fill) = fill {
 		// The colour's front soaks in over a short stretch instead of ending in a hard cap.
-		// Painted tail first, so the fuller circles nearer the head stay on top.
 		const FRONT: f32 = 0.08;
 		// Past the tail at full progress, so the tip fills too.
 		let reached = fill.clamp(0.0, 1.0) * (1.0 + FRONT);
 		for &(point, radius, s) in points.iter().rev() {
 			if s <= reached {
 				let depth = smooth(((reached - s) / FRONT).min(1.0));
-				painter.circle_filled(point, radius, shade(ui::design::mix(body, accent, depth)));
+				painter.circle_filled(
+					point,
+					radius,
+					shade(ui::design::mix(body_color, accent, depth)),
+				);
 			}
 		}
-		// The drop: falls onto the head, then sinks in with a ripple.
+		// The drop: falls onto the head, then sinks in and lights it from inside.
 		let phase = (t / DRIP).fract();
-		let head = points[0];
-		let top = head.0 - vec2(0.0, head.1);
+		let (head, radius, _) = points[0];
+		let top = head - vec2(0.0, radius);
 		if phase < 0.55 {
 			let fall = phase / 0.55;
-			let start = top - vec2(0.0, 62.0);
+			let start = top - vec2(0.0, 44.0);
 			let at = start + (top - start) * (fall * fall);
 			let appear = (fall / 0.2).min(1.0);
 			let stretch = 1.0 + 0.5 * fall * fall;
 			painter.add(egui::Shape::ellipse_filled(
 				at,
-				vec2(4.4 / stretch.sqrt(), 4.4 * stretch),
+				vec2(4.0 / stretch.sqrt(), 4.0 * stretch),
 				shade(accent.gamma_multiply(appear)),
 			));
 		} else if phase < 0.85 {
-			// Sinking in, the drop lights the head from inside.
 			let sink = (phase - 0.55) / 0.3;
 			let lit = ui::design::mix(accent.to_opaque(), Color32::WHITE, 0.45);
 			radial(
 				painter,
-				top + vec2(0.0, 6.0 + 10.0 * sink),
-				(7.0 + 12.0 * sink) * scale / 0.66,
+				head,
+				6.0 + 11.0 * sink,
 				shade(lit.gamma_multiply(0.7 * (1.0 - sink))),
 			);
 		}
 	}
-	// The eye moves with the head and blinks every few seconds.
-	let eye = place(EYE + head_shift);
+	// The eye sits toward the front of the head and blinks every few seconds.
+	let (head, radius, _) = points[0];
+	let ahead = (head - points[3].0).normalized();
 	let blink = {
 		let phase = (t % 3.7) / 0.16;
 		if phase < 1.0 {
@@ -452,17 +601,12 @@ fn mark(
 			0.0
 		}
 	};
+	let eye = radius * 0.42;
 	painter.add(egui::Shape::ellipse_filled(
-		eye,
-		vec2(EYE_RADIUS, (EYE_RADIUS * (1.0 - 0.9 * blink)).max(1.2)) * scale,
+		head + ahead * radius * 0.18,
+		vec2(eye, (eye * (1.0 - 0.9 * blink)).max(0.6)),
 		shade(canvas.to_opaque()),
 	));
-}
-
-fn interpolate(s: f32) -> f32 {
-	let at = (s * 3.0).clamp(0.0, 3.0);
-	let index = (at as usize).min(2);
-	RADII[index] + (RADII[index + 1] - RADII[index]) * (at - index as f32)
 }
 
 #[cfg(test)]
@@ -470,14 +614,33 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn the_mark_spans_the_icon_and_finished_splashes_fade_out() {
-		// Head and tail caps reach the icon's mark bounds within a few icon pixels.
-		let head = cubic(&SPINE, 0.0);
-		let tail = cubic(&SPINE, 1.0);
-		assert!((head.y - RADII[0] - 45.0).abs() < 3.0);
-		assert!((tail.x + RADII[3] - 200.0).abs() < 3.0);
-		assert_eq!(interpolate(0.0), RADII[0]);
-		assert_eq!(interpolate(1.0), RADII[3]);
+	fn the_worm_loops_inside_its_band_and_finished_splashes_fade_out() {
+		let path = Path::new();
+		// The slip lands the body exactly where the next climb starts.
+		let start = pose(&path, 0.0).body;
+		let settled = pose(&path, LOOP - 0.01).body;
+		for (a, b) in start.iter().zip(&settled) {
+			assert!((a.0 - b.0).length() < 0.6, "{:?} {:?}", a.0, b.0);
+		}
+		// It stays between the top edge and the title, and keeps its length on the bends.
+		for frame in 0..400 {
+			let pose = pose(&path, frame as f32 * LOOP / 400.0);
+			for &(at, half, _) in &pose.body {
+				assert!(at.y - half > 16.0 && at.y + half < 222.0 && at.x.abs() < 40.0);
+			}
+			let length: f32 = pose
+				.body
+				.windows(2)
+				.map(|pair| (pair[1].0 - pair[0].0).length())
+				.sum();
+			assert!((length - LENGTH).abs() < 1.0, "{length}");
+		}
+		// The oil is laid by the slip and soaks away early in the next climb, never the first.
+		let oil = |t: f32| pose(&path, t).oil;
+		assert_eq!(oil(1.0).1, 0.0);
+		assert!((oil(LOOP - 0.01).0 - CLIMB).abs() < 0.01 && oil(LOOP - 0.01).1 == 1.0);
+		assert!(oil(LOOP + 0.01).1 > 0.99 && oil(LOOP + SOAK).1 == 0.0);
+		assert!(oil(CRAWL + REST + SLIP * 0.5).0 < CLIMB);
 
 		let ctx = egui::Context::default();
 		let mut splash = Splash::new(0);
