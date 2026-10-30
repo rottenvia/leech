@@ -192,19 +192,61 @@ fn installation() -> Result<PathBuf, String> {
 		}
 		Ok(app.to_owned())
 	} else if cfg!(windows) {
-		let root = exe
-			.parent()
-			.ok_or("Cannot locate the installed application folder.")?;
-		if exe.file_name().is_none_or(|name| name != "leech.exe")
-			|| !root.join("THIRD_PARTY_NOTICES.md").is_file()
-			|| !root.join("licenses").is_dir()
-		{
-			return Err("Run Leech from an extracted release package to install updates; source builds cannot replace themselves.".into());
-		}
-		Ok(root.to_owned())
+		// ponytail: the installer's default folder only; read its InstallLocation registry value
+		// if build copies on machines with a custom install folder ever need this.
+		let installed = std::env::var_os("LOCALAPPDATA")
+			.map(|folder| PathBuf::from(folder).join("Programs").join("Leech"));
+		windows_installation(&exe, installed)
 	} else {
 		Err("Use your package manager to update Leech on Linux.".into())
 	}
+}
+
+/// The folder a Windows update replaces: this copy's when it is a release package. A build or
+/// demo copy cannot replace itself, so its update goes to the installed Leech instead, which the
+/// helper starts once this copy exits.
+fn windows_installation(exe: &Path, installed: Option<PathBuf>) -> Result<PathBuf, String> {
+	let package = |folder: &Path| {
+		folder.join("leech.exe").is_file()
+			&& folder.join("THIRD_PARTY_NOTICES.md").is_file()
+			&& folder.join("licenses").is_dir()
+	};
+	let root = exe
+		.parent()
+		.ok_or("Cannot locate the installed application folder.")?;
+	if exe.file_name().is_some_and(|name| name == "leech.exe") && package(root) {
+		return Ok(root.to_owned());
+	}
+	installed.filter(|folder| package(folder)).ok_or_else(|| {
+		"This copy of Leech cannot update itself. Install Leech from its release page; that copy updates in the app.".into()
+	})
+}
+
+#[test]
+fn a_build_copy_updates_the_installed_leech() {
+	let base = std::env::temp_dir().join(format!("leech-installation-{}", std::process::id()));
+	let build = base.join("build");
+	let installed = base.join("installed");
+	for folder in [&build, &installed] {
+		fs::create_dir_all(folder).unwrap();
+		fs::write(folder.join("leech.exe"), b"").unwrap();
+	}
+	let exe = build.join("leech.exe");
+	assert!(windows_installation(&exe, Some(installed.clone())).is_err());
+	fs::write(installed.join("THIRD_PARTY_NOTICES.md"), b"").unwrap();
+	fs::create_dir(installed.join("licenses")).unwrap();
+	assert_eq!(
+		windows_installation(&exe, Some(installed.clone())),
+		Ok(installed.clone())
+	);
+	assert!(windows_installation(&exe, None).is_err());
+	// A release package keeps updating itself.
+	let packaged = installed.join("leech.exe");
+	assert_eq!(
+		windows_installation(&packaged, Some(build.clone())),
+		Ok(installed.clone())
+	);
+	fs::remove_dir_all(&base).unwrap();
 }
 
 pub(super) fn create_stage() -> Result<Staged, String> {
