@@ -1636,6 +1636,18 @@ main-restoring-screen-leech = Leech
 main-restoring-screen-use-a-different-account = Use a different account
 # Context: restoring_screen
 main-restoring-screen-welcome-back = Welcome back
+# Context: splash
+main-splash-starting = Starting Leech
+# Context: splash
+main-splash-updating = Updating Leech
+# Context: splash
+main-splash-loading = Loading
+# Context: splash
+main-splash-downloading = Downloading { $version }
+# Context: splash
+main-splash-installing = Installing { $version }
+# Context: splash
+main-splash-restarting = Restarting
 # Context: sign_in_accounts
 main-sign-in-accounts-saved-accounts = Saved accounts
 # Context: sign_in_consent
@@ -4082,7 +4094,27 @@ updates-update-settings-could-not-load-or-save-update-preferences-changes-may-no
 # Context: update_settings
 updates-update-settings-download-update = Download update
 # Context: update_settings
-updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Download updates in the background. Restart when you are ready. Leech still checks at startup and periodically when this is off.
+updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Updates install while Leech starts. One released while Leech is open waits for the next launch.
+# Context: performance_statistics
+updates-performance-statistics = Performance statistics
+# Context: performance_statistics
+updates-performance-statistics-description = Keep startup time, frame times, memory use and stream quality on this computer. Copied diagnostics include them.
+# Context: performance_statistics
+updates-performance-notice-title = Performance statistics
+# Context: performance_statistics
+updates-performance-notice-body = Starting with Leech 0.1.9, Leech keeps performance statistics on this computer, to find what makes it slow:
+# Context: performance_statistics
+updates-performance-notice-speed = Startup time, frame times and memory use
+# Context: performance_statistics
+updates-performance-notice-streams = Stream and call quality: frame rate, encode time, bitrate, packet loss and latency
+# Context: performance_statistics
+updates-performance-notice-system = The Leech version, system, graphics card and display refresh rate
+# Context: performance_statistics
+updates-performance-notice-never = Never messages, names, servers, channels, account details, audio or video. Turn this off any time in Settings → Updates.
+# Context: performance_statistics
+updates-performance-notice-got-it = Got it
+# Context: performance_statistics
+updates-performance-notice-turn-off = Turn off
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = Early builds with the newest changes. Nightly releases can be less reliable.
 # Context: update_settings

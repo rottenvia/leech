@@ -1625,6 +1625,18 @@ main-restoring-screen-leech = Serin
 main-restoring-screen-use-a-different-account = Farklı bir hesap kullanın
 # Context: restoring_screen
 main-restoring-screen-welcome-back = tekrar hoşgeldiniz
+# Context: splash
+main-splash-starting = Leech başlatılıyor
+# Context: splash
+main-splash-updating = Leech güncelleniyor
+# Context: splash
+main-splash-loading = Yükleniyor
+# Context: splash
+main-splash-downloading = { $version } indiriliyor
+# Context: splash
+main-splash-installing = { $version } yükleniyor
+# Context: splash
+main-splash-restarting = Yeniden başlatılıyor
 # Context: sign_in_accounts
 main-sign-in-accounts-saved-accounts = Kayıtlı hesaplar
 # Context: sign_in_consent
@@ -3940,7 +3952,27 @@ updates-update-settings-could-not-load-or-save-update-preferences-changes-may-no
 # Context: update_settings
 updates-update-settings-download-update = Güncellemeyi indir
 # Context: update_settings
-updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Güncellemeleri arka planda indirin. Hazır olduğunuzda yeniden başlayın. Leech hala başlangıçta ve bu kapalı olduğunda periyodik olarak kontrol ediyor.
+updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Güncellemeler Leech başlarken yüklenir. Leech açıkken yayımlanan bir güncelleme sonraki başlatmayı bekler.
+# Context: performance_statistics
+updates-performance-statistics = Performans istatistikleri
+# Context: performance_statistics
+updates-performance-statistics-description = Başlatma süresini, kare sürelerini, bellek kullanımını ve yayın kalitesini bu bilgisayarda tut. Kopyalanan tanılama bilgileri bunları içerir.
+# Context: performance_statistics
+updates-performance-notice-title = Performans istatistikleri
+# Context: performance_statistics
+updates-performance-notice-body = Leech 0.1.9 sürümünden itibaren, onu neyin yavaşlattığını bulmak için performans istatistiklerini bu bilgisayarda tutar:
+# Context: performance_statistics
+updates-performance-notice-speed = Başlatma süresi, kare süreleri ve bellek kullanımı
+# Context: performance_statistics
+updates-performance-notice-streams = Yayın ve arama kalitesi: kare hızı, kodlama süresi, bit hızı, paket kaybı ve gecikme
+# Context: performance_statistics
+updates-performance-notice-system = Leech sürümü, sistem, ekran kartı ve ekran yenileme hızı
+# Context: performance_statistics
+updates-performance-notice-never = Asla mesajlar, adlar, sunucular, kanallar, hesap bilgileri, ses veya görüntü değil. Ayarlar → Güncellemeler bölümünden istediğin zaman kapatabilirsin.
+# Context: performance_statistics
+updates-performance-notice-got-it = Anladım
+# Context: performance_statistics
+updates-performance-notice-turn-off = Kapat
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = En yeni değişikliklerle erken sürümler. Gecelik sürümler daha az güvenilir olabilir.
 # Context: update_settings

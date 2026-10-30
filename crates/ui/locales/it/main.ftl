@@ -1624,6 +1624,18 @@ main-restoring-screen-leech = Sereno
 main-restoring-screen-use-a-different-account = Utilizza un account diverso
 # Context: restoring_screen
 main-restoring-screen-welcome-back = Bentornato
+# Context: splash
+main-splash-starting = Avvio di Leech
+# Context: splash
+main-splash-updating = Aggiornamento di Leech
+# Context: splash
+main-splash-loading = Caricamento
+# Context: splash
+main-splash-downloading = Download di { $version }
+# Context: splash
+main-splash-installing = Installazione di { $version }
+# Context: splash
+main-splash-restarting = Riavvio
 # Context: sign_in_accounts
 main-sign-in-accounts-saved-accounts = Account salvati
 # Context: sign_in_consent
@@ -3946,7 +3958,27 @@ updates-update-settings-could-not-load-or-save-update-preferences-changes-may-no
 # Context: update_settings
 updates-update-settings-download-update = Scarica l'aggiornamento
 # Context: update_settings
-updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Scarica gli aggiornamenti in background. Ricomincia quando sei pronto. Leech controlla ancora all'avvio e periodicamente quando è disattivato.
+updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Gli aggiornamenti si installano all’avvio di Leech. Uno pubblicato con Leech aperto attende l’avvio successivo.
+# Context: performance_statistics
+updates-performance-statistics = Statistiche sulle prestazioni
+# Context: performance_statistics
+updates-performance-statistics-description = Conserva su questo computer tempo di avvio, tempi dei fotogrammi, uso della memoria e qualità dello stream. La diagnostica copiata le include.
+# Context: performance_statistics
+updates-performance-notice-title = Statistiche sulle prestazioni
+# Context: performance_statistics
+updates-performance-notice-body = Da Leech 0.1.9, Leech conserva statistiche sulle prestazioni su questo computer per capire cosa lo rallenta:
+# Context: performance_statistics
+updates-performance-notice-speed = Tempo di avvio, tempi dei fotogrammi e uso della memoria
+# Context: performance_statistics
+updates-performance-notice-streams = Qualità di stream e chiamate: frequenza dei fotogrammi, tempo di codifica, bitrate, perdita di pacchetti e latenza
+# Context: performance_statistics
+updates-performance-notice-system = La versione di Leech, il sistema, la scheda grafica e la frequenza dello schermo
+# Context: performance_statistics
+updates-performance-notice-never = Mai messaggi, nomi, server, canali, dati dell’account, audio o video. Puoi disattivarle quando vuoi in Impostazioni → Aggiornamenti.
+# Context: performance_statistics
+updates-performance-notice-got-it = Ho capito
+# Context: performance_statistics
+updates-performance-notice-turn-off = Disattiva
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = Prime build con le modifiche più recenti. I rilasci notturni possono essere meno affidabili.
 # Context: update_settings

@@ -1624,6 +1624,18 @@ main-restoring-screen-leech = Leech
 main-restoring-screen-use-a-different-account = Use uma conta diferente
 # Context: restoring_screen
 main-restoring-screen-welcome-back = bem vindo de volta
+# Context: splash
+main-splash-starting = Iniciando o Leech
+# Context: splash
+main-splash-updating = Atualizando o Leech
+# Context: splash
+main-splash-loading = Carregando
+# Context: splash
+main-splash-downloading = Baixando { $version }
+# Context: splash
+main-splash-installing = Instalando { $version }
+# Context: splash
+main-splash-restarting = Reiniciando
 # Context: sign_in_accounts
 main-sign-in-accounts-saved-accounts = Contas salvas
 # Context: sign_in_consent
@@ -3946,7 +3958,27 @@ updates-update-settings-could-not-load-or-save-update-preferences-changes-may-no
 # Context: update_settings
 updates-update-settings-download-update = Baixar atualização
 # Context: update_settings
-updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Baixe atualizações em segundo plano. Reinicie quando estiver pronto. Leech ainda verifica na inicialização e periodicamente quando está desligado.
+updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = As atualizações são instaladas quando o Leech inicia. Uma lançada com o Leech aberto espera a próxima inicialização.
+# Context: performance_statistics
+updates-performance-statistics = Estatísticas de desempenho
+# Context: performance_statistics
+updates-performance-statistics-description = Manter neste computador o tempo de inicialização, os tempos de quadro, o uso de memória e a qualidade da transmissão. Os diagnósticos copiados as incluem.
+# Context: performance_statistics
+updates-performance-notice-title = Estatísticas de desempenho
+# Context: performance_statistics
+updates-performance-notice-body = A partir do Leech 0.1.9, o Leech mantém estatísticas de desempenho neste computador para descobrir o que o deixa lento:
+# Context: performance_statistics
+updates-performance-notice-speed = Tempo de inicialização, tempos de quadro e uso de memória
+# Context: performance_statistics
+updates-performance-notice-streams = Qualidade de transmissões e chamadas: taxa de quadros, tempo de codificação, taxa de bits, perda de pacotes e latência
+# Context: performance_statistics
+updates-performance-notice-system = A versão do Leech, o sistema, a placa de vídeo e a taxa de atualização da tela
+# Context: performance_statistics
+updates-performance-notice-never = Nunca mensagens, nomes, servidores, canais, dados da conta, áudio ou vídeo. Desative quando quiser em Configurações → Atualizações.
+# Context: performance_statistics
+updates-performance-notice-got-it = Entendi
+# Context: performance_statistics
+updates-performance-notice-turn-off = Desativar
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = Compilações iniciais com as alterações mais recentes. Os lançamentos noturnos podem ser menos confiáveis.
 # Context: update_settings

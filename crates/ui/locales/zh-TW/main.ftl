@@ -1640,6 +1640,18 @@ main-restoring-screen-leech = Leech
 main-restoring-screen-use-a-different-account = 使用其他帳戶
 # Context: restoring_screen
 main-restoring-screen-welcome-back = 歡迎回來
+# Context: splash
+main-splash-starting = 正在啟動 Leech
+# Context: splash
+main-splash-updating = 正在更新 Leech
+# Context: splash
+main-splash-loading = 正在載入
+# Context: splash
+main-splash-downloading = 正在下載 { $version }
+# Context: splash
+main-splash-installing = 正在安裝 { $version }
+# Context: splash
+main-splash-restarting = 正在重新啟動
 # Context: sign_in_accounts
 main-sign-in-accounts-saved-accounts = 已儲存的帳戶
 # Context: sign_in_consent
@@ -3978,7 +3990,27 @@ updates-update-settings-could-not-load-or-save-update-preferences-changes-may-no
 # Context: update_settings
 updates-update-settings-download-update = 下載更新
 # Context: update_settings
-updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = 在背景下載更新，準備好再重啟。關閉時 Leech 仍會在啟動與定期檢查更新。
+updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = 更新會在 Leech 啟動時安裝。Leech 開啟期間發布的更新會等到下次啟動。
+# Context: performance_statistics
+updates-performance-statistics = 效能統計
+# Context: performance_statistics
+updates-performance-statistics-description = 在這台電腦上保存啟動時間、影格時間、記憶體使用量和直播品質。複製的診斷資訊會包含這些資料。
+# Context: performance_statistics
+updates-performance-notice-title = 效能統計
+# Context: performance_statistics
+updates-performance-notice-body = 從 Leech 0.1.9 起，Leech 會在這台電腦上保存效能統計，用來找出變慢的原因：
+# Context: performance_statistics
+updates-performance-notice-speed = 啟動時間、影格時間和記憶體使用量
+# Context: performance_statistics
+updates-performance-notice-streams = 直播和通話品質：影格率、編碼時間、位元率、封包遺失和延遲
+# Context: performance_statistics
+updates-performance-notice-system = Leech 版本、系統、顯示卡和螢幕更新率
+# Context: performance_statistics
+updates-performance-notice-never = 絕不包含訊息、名稱、伺服器、頻道、帳號資訊、音訊或影片。可隨時在 設定 → 更新 中關閉。
+# Context: performance_statistics
+updates-performance-notice-got-it = 知道了
+# Context: performance_statistics
+updates-performance-notice-turn-off = 關閉
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = 含最新改動的早期版本。Nightly 可能較不穩定。
 # Context: update_settings

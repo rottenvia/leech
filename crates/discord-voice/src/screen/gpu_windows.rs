@@ -7,7 +7,12 @@
 #![allow(unsafe_code)]
 
 use crate::video_encode::hardware::Surface;
-use std::{ffi::c_void, mem::ManuallyDrop, sync::Arc};
+use std::{
+	ffi::c_void,
+	mem::ManuallyDrop,
+	sync::Arc,
+	time::{Duration, Instant},
+};
 use windows::{
 	Win32::{
 		Foundation::RECT,
@@ -382,50 +387,67 @@ impl Converter {
 		Ok(Some(surface))
 	}
 
-	/// A preview image bounded to 640 by 360 pixels, read back from the GPU. It is the copy
-	/// queued by the previous call: waiting for this one would stall capture behind whatever
-	/// a game has queued on the GPU. `None` while that copy is still in flight.
-	pub(crate) fn preview(&mut self, source: &ID3D11Texture2D) -> Option<image::RgbaImage> {
-		let preview = self.preview.as_ref()?;
-		let mut image = None;
-		// SAFETY: The staging texture is mapped for reading and unmapped before it is written
-		// again; rows are read within the mapped pitch.
-		unsafe {
-			if preview.queued {
-				let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-				if self
-					.immediate
-					.Map(
-						&preview.staging,
-						0,
-						D3D11_MAP_READ,
-						D3D11_MAP_FLAG_DO_NOT_WAIT.0 as u32,
-						Some(&mut mapped),
-					)
-					.is_err()
-				{
-					return None;
-				}
-				let (width, height) = (preview.size.0 as usize, preview.size.1 as usize);
-				let pitch = mapped.RowPitch as usize;
-				let pixels = std::slice::from_raw_parts(mapped.pData.cast::<u8>(), pitch * height);
-				let mut pixels_rgba = Vec::with_capacity(width * height * 4);
-				for row in pixels.chunks_exact(pitch) {
-					for bgra in row[..width * 4].as_chunks::<4>().0 {
-						pixels_rgba.extend_from_slice(&[bgra[2], bgra[1], bgra[0], 255]);
-					}
-				}
-				self.immediate.Unmap(&preview.staging, 0);
-				image = image::RgbaImage::from_raw(preview.size.0, preview.size.1, pixels_rgba);
-			}
+	/// Queues a preview copy of `source`, bounded to 640 by 360 pixels, for
+	/// [`Self::read_preview`]. A copy still unread is replaced.
+	pub(crate) fn queue_preview(&mut self, source: &ID3D11Texture2D) {
+		let Some(preview) = self.preview.as_ref() else {
+			return;
+		};
+		// SAFETY: All objects belong to this converter's device and capture thread.
+		let queued = unsafe {
 			let queued = self.blt(&preview.scaler, source, &preview.target).is_ok();
 			if queued {
 				self.immediate
 					.CopyResource(&preview.staging, &preview.texture);
 			}
-			if let Some(preview) = self.preview.as_mut() {
-				preview.queued = queued;
+			queued
+		};
+		if let Some(preview) = self.preview.as_mut() {
+			preview.queued = queued;
+		}
+	}
+
+	/// The queued preview copy once the GPU has made it, waiting at most `wait` for it. A
+	/// game loading the GPU would stall capture behind its own work, so callers wait only
+	/// while frames are sparse; `None` while the copy is still in flight.
+	pub(crate) fn read_preview(&mut self, wait: Duration) -> Option<image::RgbaImage> {
+		let preview = self.preview.as_ref().filter(|preview| preview.queued)?;
+		let deadline = Instant::now() + wait;
+		let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+		// SAFETY: The staging texture is mapped for reading and unmapped before it is written
+		// again; rows are read within the mapped pitch.
+		let image = unsafe {
+			loop {
+				let map = self.immediate.Map(
+					&preview.staging,
+					0,
+					D3D11_MAP_READ,
+					D3D11_MAP_FLAG_DO_NOT_WAIT.0 as u32,
+					Some(&mut mapped),
+				);
+				if map.is_ok() {
+					break;
+				}
+				if Instant::now() >= deadline {
+					return None;
+				}
+				self.immediate.Flush();
+				std::thread::sleep(Duration::from_millis(1));
 			}
+			let (width, height) = (preview.size.0 as usize, preview.size.1 as usize);
+			let pitch = mapped.RowPitch as usize;
+			let pixels = std::slice::from_raw_parts(mapped.pData.cast::<u8>(), pitch * height);
+			let mut pixels_rgba = Vec::with_capacity(width * height * 4);
+			for row in pixels.chunks_exact(pitch) {
+				for bgra in row[..width * 4].as_chunks::<4>().0 {
+					pixels_rgba.extend_from_slice(&[bgra[2], bgra[1], bgra[0], 255]);
+				}
+			}
+			self.immediate.Unmap(&preview.staging, 0);
+			image::RgbaImage::from_raw(preview.size.0, preview.size.1, pixels_rgba)
+		};
+		if let Some(preview) = self.preview.as_mut() {
+			preview.queued = false;
 		}
 		image
 	}
@@ -665,14 +687,11 @@ mod tests {
 			&[128, 128]
 		);
 
-		// The first call only queues the copy; a later one returns it once the GPU is done.
-		assert!(converter.preview(&texture).is_none());
-		let preview = (0..200)
-			.find_map(|_| {
-				std::thread::sleep(std::time::Duration::from_millis(5));
-				converter.preview(&texture)
-			})
-			.unwrap();
+		// Nothing to read before a copy is queued; a queued copy is read once.
+		assert!(converter.read_preview(Duration::from_millis(5)).is_none());
+		converter.queue_preview(&texture);
+		let preview = converter.read_preview(Duration::from_secs(1)).unwrap();
+		assert!(converter.read_preview(Duration::ZERO).is_none());
 		assert_eq!(preview.dimensions(), (480, 360));
 		let [r, g, b, a] = preview.get_pixel(470, 5).0;
 		assert!(r.abs_diff(40) < 8 && g < 12 && b > 240 && a == 255);
@@ -993,7 +1012,8 @@ mod tests {
 			let texture = &textures[frame % textures.len()];
 			if frame % 6 == 0 {
 				let preview = std::time::Instant::now();
-				let _ = converter.preview(texture);
+				let _ = converter.read_preview(Duration::ZERO);
+				converter.queue_preview(texture);
 				previews.push(preview.elapsed());
 			}
 			let encoded = if memory {

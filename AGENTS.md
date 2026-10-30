@@ -10,7 +10,9 @@ backend, web wrapper, or separate voice service.
 - Store saved tokens only in the OS credential store; redact active secrets in memory.
 - Authentication and user-solved invite verification may use only the temporary webviews and
   handoff limits described in the relevant auth docs.
-- No credential extraction, challenge bypass, telemetry, unbounded logs, backend or account system.
+- No credential extraction, challenge bypass, uploaded telemetry, unbounded logs, backend or
+  account system. Bounded local performance statistics (`logs/performance.jsonl`, opt-out) are
+  the owner's decision from 0.1.9.
 - Use synthetic/offline data by default. Live tests need the owner’s explicit developer-session
   gate and control of the private conversation. Never ask for credentials. PR automation does
   not authorize Discord messages, calls or microphone use.

@@ -35,6 +35,7 @@ mod notification_runtime;
 mod notification_sounds;
 #[cfg(feature = "demo")]
 mod onboarding_demo;
+mod perf_stats;
 mod pointer;
 #[cfg(feature = "demo")]
 mod polls_demo;
@@ -50,6 +51,7 @@ mod screen;
 mod server_settings_demo;
 #[cfg(feature = "demo")]
 mod slash_demo;
+mod splash;
 mod spotify;
 mod startup;
 mod sticker_upload;
@@ -488,6 +490,12 @@ fn main() -> eframe::Result {
 	#[cfg(feature = "demo")]
 	let transparency_available =
 		transparency_available || demo && std::env::args().any(|arg| arg == "--demo-transparency");
+	let restore_ms = preferences.as_ref().map_or(0, |value| value.restore_ms);
+	// Windows opens as the compact splash unless it starts in the tray. Fixtures open straight
+	// into the app, except `--demo-splash[=update|grow]`.
+	let splash = cfg!(target_os = "windows")
+		&& !start_minimized
+		&& (!demo || std::env::args().any(|arg| arg.starts_with("--demo-splash")));
 	#[cfg(target_os = "windows")]
 	let icon = include_bytes!("../../../packaging/windows/leech.png").as_slice();
 	#[cfg(target_os = "linux")]
@@ -496,12 +504,20 @@ fn main() -> eframe::Result {
 		viewport: {
 			let builder = egui::ViewportBuilder::default()
 				.with_transparent(transparency_available)
-				.with_inner_size(window_geometry.map_or([1120.0, 760.0], |geometry| {
-					geometry.size.map(|value| value as f32)
-				}))
-				.with_min_inner_size(app_settings::MIN_WINDOW_SIZE.map(|size| size as f32))
 				.with_active(!start_minimized)
 				.with_app_id("io.github.rottenvia.leech");
+			let builder = if splash {
+				builder
+					.with_inner_size(splash::SIZE)
+					.with_min_inner_size(splash::SIZE)
+					.with_resizable(false)
+			} else {
+				builder
+					.with_inner_size(window_geometry.map_or([1120.0, 760.0], |geometry| {
+						geometry.size.map(|value| value as f32)
+					}))
+					.with_min_inner_size(app_settings::MIN_WINDOW_SIZE.map(|size| size as f32))
+			};
 			#[cfg(any(target_os = "windows", target_os = "linux"))]
 			let builder = builder
 				.with_icon(eframe::icon_data::from_png_bytes(icon).expect("bundled app icon"));
@@ -565,6 +581,7 @@ fn main() -> eframe::Result {
 		},
 		persist_window: false,
 		persistence_path: None,
+		centered: splash,
 		..Default::default()
 	};
 	eframe::run_native(
@@ -580,7 +597,9 @@ fn main() -> eframe::Result {
 				move || wake.request_repaint(),
 			);
 			desktop.instance = instance;
-			if let Some(geometry) = window_geometry {
+			if splash {
+				desktop.splash = Some((splash::Splash::new(restore_ms), window_geometry));
+			} else if let Some(geometry) = window_geometry {
 				app_settings::restore_window_geometry(&desktop.window, geometry);
 			}
 			if start_minimized {
@@ -1054,6 +1073,11 @@ struct Desktop {
 	registered_games: registered_games::Registered,
 	tray_setting: toggle_setting::Settings,
 	startup: startup::Startup,
+	/// The compact launch window and the saved geometry it grows into.
+	splash: Option<(splash::Splash, Option<local_store::WindowGeometry>)>,
+	perf_stats: perf_stats::Stats,
+	/// Whether the window had focus last frame; coming back checks for updates.
+	focused: bool,
 	tray: Option<platform::tray::Tray>,
 	hotkeys: platform::hotkeys::Hotkeys,
 	/// Linux desktop light/dark preference; winit reports it everywhere else.
@@ -1804,6 +1828,14 @@ impl Desktop {
 		}
 		messaging.minimize_to_tray = tray_setting.enabled;
 		app_settings.apply(&mut messaging);
+		// Only people who used Leech before see the performance statistics notice; a new
+		// installation has neither a saved window nor a measured restore.
+		let used_before =
+			app_settings.current.window_geometry.is_some() || app_settings.current.restore_ms != 0;
+		#[cfg(feature = "demo")]
+		let used_before =
+			used_before || demo && std::env::args().any(|arg| arg == "--demo-performance-notice");
+		messaging.performance_notice_pending &= used_before;
 		#[cfg(feature = "demo")]
 		if demo {
 			messaging.transparency_blur = transparency_available;
@@ -2436,6 +2468,14 @@ impl Desktop {
 			},
 			tray_setting,
 			startup,
+			splash: None,
+			focused: false,
+			perf_stats: perf_stats::Stats::new(
+				local_store::data_dir()
+					.ok()
+					.filter(|_| !demo)
+					.map(|root| root.join("logs")),
+			),
 			tray: None,
 			tray_window,
 			#[cfg(target_os = "macos")]
@@ -4630,6 +4670,107 @@ impl Desktop {
 			.is_some()
 			.then(|| ui::i18n::translate("main-restoring-connecting-to-discord"))
 	}
+	/// The compact launch window, until the app can grow into its saved size. True while it
+	/// covers the frame.
+	fn show_splash(&mut self, ui: &mut egui::Ui) -> bool {
+		let Some((splash, _)) = &self.splash else {
+			return false;
+		};
+		let elapsed = splash.elapsed();
+		let stage = self.restoring();
+		if stage.is_some() {
+			// Times the restore for the next launch's estimate, as the restore screen does.
+			self.restore_started
+				.get_or_insert_with(std::time::Instant::now);
+		}
+		let updates = &self.messaging.updates;
+		let version = updates.installing.clone();
+		// The first update check may hold the splash, so a waiting update installs here.
+		let checking = !cfg!(debug_assertions)
+			&& !self.fixture_only
+			&& !self.state.demo
+			&& (updates.busy || !self.app_settings.loaded)
+			&& elapsed < splash::UPDATE_WAIT;
+		let done = !checking
+			&& (self.state.user.is_some() || stage.is_none() || elapsed >= splash::LONGEST);
+		#[allow(unused_mut)]
+		let mut look = match &version {
+			Some(version) => splash::Look::Updating {
+				version,
+				progress: updates.progress,
+				installing: updates.busy && updates.progress.is_none(),
+			},
+			None => splash::Look::Starting {
+				stage: stage.as_deref(),
+				done,
+			},
+		};
+		#[cfg(feature = "demo")]
+		let connecting = ui::i18n::translate("main-restoring-connecting-to-discord");
+		#[cfg(feature = "demo")]
+		if let Some(flag) = std::env::args()
+			.find_map(|arg| arg.strip_prefix("--demo-splash").map(str::to_owned))
+			.filter(|_| self.state.demo)
+		{
+			// Synthetic looks: a held restore, an update looping through its stages, or a
+			// restore that finishes and grows the window.
+			let seconds = elapsed.as_secs_f32();
+			look = match flag.as_str() {
+				"=update" => {
+					let cycle = seconds % 9.0;
+					splash::Look::Updating {
+						version: "99.0.0",
+						progress: (cycle < 6.0).then_some(cycle / 6.0),
+						installing: (6.0..7.5).contains(&cycle),
+					}
+				}
+				"=grow" => splash::Look::Starting {
+					stage: Some(&connecting),
+					done: seconds > 2.5,
+				},
+				_ => splash::Look::Starting {
+					stage: Some(&connecting),
+					done: false,
+				},
+			};
+		}
+		let Some((splash, geometry)) = &mut self.splash else {
+			return false;
+		};
+		let geometry = *geometry;
+		let finished = egui::CentralPanel::default()
+			.frame(egui::Frame::NONE)
+			.show(ui, |ui| splash.show(ui, &look))
+			.inner;
+		// An update installing from the splash quits through here.
+		self.tray_window.ui(ui.ctx());
+		if finished {
+			self.splash = None;
+			self.grow_window(geometry);
+		}
+		true
+	}
+	/// Grows the splash into the app window: the saved size and place, or the default size
+	/// centred where the splash was.
+	fn grow_window(&self, geometry: Option<local_store::WindowGeometry>) {
+		let window = &self.window;
+		window.set_resizable(true);
+		let size = geometry.map_or([1120, 760], |geometry| geometry.size);
+		let position = geometry.and_then(|geometry| geometry.position).or_else(|| {
+			let at = window.outer_position().ok()?;
+			let splash = window.outer_size();
+			let grown = winit::dpi::LogicalSize::new(size[0], size[1])
+				.to_physical::<u32>(window.scale_factor());
+			Some([
+				at.x + (splash.width as i32 - grown.width as i32) / 2,
+				at.y + (splash.height as i32 - grown.height as i32) / 2,
+			])
+		});
+		app_settings::restore_window_geometry(
+			window,
+			local_store::WindowGeometry { size, position },
+		);
+	}
 	/// Restore screen for returning accounts: no sign-in controls, just the stage,
 	/// an indeterminate bar and a way out to the welcome screen.
 	fn restoring_screen(&mut self, ui: &mut egui::Ui, stage: &str) {
@@ -6420,7 +6561,10 @@ impl Desktop {
 	}
 	fn refresh_monitor(&mut self) -> Option<Duration> {
 		let monitor = self.window.current_monitor()?;
-		app_settings::update_window_minimum(&self.window, &monitor);
+		// The splash keeps its own size; growing it applies the minimum.
+		if self.splash.is_none() {
+			app_settings::update_window_minimum(&self.window, &monitor);
+		}
 		let millihertz = monitor.refresh_rate_millihertz()?;
 		(1_000..=1_000_000)
 			.contains(&millihertz)
@@ -6447,6 +6591,7 @@ impl eframe::App for Desktop {
 		if !self.fixture_only
 			&& !self.state.demo
 			&& self.app_settings.loaded
+			&& self.splash.is_none()
 			&& let Some(viewport) = raw_input.viewports.get(&raw_input.viewport_id)
 			&& viewport.minimized != Some(true)
 			&& viewport.maximized != Some(true)
@@ -6504,6 +6649,10 @@ impl eframe::App for Desktop {
 		}
 	}
 	fn on_exit(&mut self) {
+		if self.messaging.performance_stats {
+			self.perf_stats
+				.write(&self.messaging.gpu_adapter, self.monitor_period, true);
+		}
 		if self.updater.finish_restart().is_err() {
 			eprintln!(
 				"Could not hand off the prepared update. The installed app was not replaced."
@@ -6525,6 +6674,7 @@ impl eframe::App for Desktop {
 			}
 		};
 		self.frame_metrics.begin(ctx, search_focused);
+		self.perf_stats.begin();
 		self.startup.sync(
 			ctx,
 			&self.runtime,
@@ -6555,6 +6705,12 @@ impl eframe::App for Desktop {
 				self.state.set_call_mute(muted, deafened);
 			}
 		}
+		self.messaging.updates.starting = self.splash.is_some();
+		let focused = ctx.input(|input| input.focused);
+		if focused && !self.focused {
+			self.updater.nudge();
+		}
+		self.focused = focused;
 		if self.updater.sync(
 			ctx,
 			&self.runtime,
@@ -6770,6 +6926,9 @@ impl eframe::App for Desktop {
 		}
 	}
 	fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+		if self.show_splash(ui) {
+			return;
+		}
 		let ctx = ui.ctx().clone();
 		// An open picture-in-picture window keeps passes running while this one is minimized,
 		// including restore frames that still have the minimized window's tiny size. Only that
@@ -7182,6 +7341,7 @@ impl eframe::App for Desktop {
 			if let Some(started) = self.restore_started.take() {
 				// The next restore's estimate leans on the last few.
 				let took = started.elapsed().as_millis().clamp(400, 30_000) as u32;
+				self.perf_stats.startup(took);
 				let last = self.messaging.restore_ms;
 				self.messaging.restore_ms = if last == 0 {
 					took
@@ -7864,6 +8024,13 @@ impl eframe::App for Desktop {
 		ui::design::window_resize(&ctx);
 		self.frame_metrics.reflows = self.messaging.timeline_reflows();
 		self.frame_metrics.finish();
+		if let Some(summary) = self.perf_stats.finish(
+			self.messaging.performance_stats,
+			&self.messaging.gpu_adapter,
+			self.monitor_period,
+		) {
+			self.messaging.updates.performance = summary;
+		}
 	}
 }
 

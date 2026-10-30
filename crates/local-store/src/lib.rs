@@ -61,6 +61,11 @@ pub struct AppPreferences {
 	pub call_hide_non_video: bool,
 	/// Recent saved-login restore time in milliseconds, for the restore screen's estimate.
 	pub restore_ms: u32,
+	/// Keep performance statistics on this computer, in `logs/performance.jsonl`.
+	pub performance_stats: bool,
+	/// The one-time notice about performance statistics was shown, or skipped on a new
+	/// installation.
+	pub performance_notice: bool,
 	pub transparency_blur: bool,
 	pub transparency: u8,
 	pub blur: u8,
@@ -111,6 +116,8 @@ impl Default for AppPreferences {
 			call_hide_own_camera: false,
 			call_hide_non_video: false,
 			restore_ms: 0,
+			performance_stats: true,
+			performance_notice: false,
 			transparency_blur: false,
 			transparency: 15,
 			blur: 50,
@@ -2173,6 +2180,8 @@ mod tests {
 			voice_input: Some("synthetic microphone".into()),
 			output_percent: 75,
 			gpu_preference: model::GpuPreference::PowerSaving,
+			performance_stats: false,
+			performance_notice: true,
 			..Default::default()
 		};
 		store.save_app_preferences(&value).unwrap();

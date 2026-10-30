@@ -21,7 +21,9 @@ mod install;
 const RELEASES: &str = "https://api.github.com/repos/rottenvia/leech/releases";
 const MAX_METADATA: usize = 2 * 1024 * 1024;
 const MAX_DOWNLOAD: u64 = 512 * 1024 * 1024;
-const CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
+/// Checks are conditional requests: an unchanged release list costs one empty 304 response
+/// and no GitHub quota, so a new release shows within minutes.
+const CHECK_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const LOG_RELEASES: usize = 30;
 const LOG_NOTES: usize = 16 * 1024;
 const LOG_ITEMS: usize = 60;
@@ -57,7 +59,8 @@ struct Staged {
 	installation: PathBuf,
 }
 enum Outcome {
-	Checked(Option<Package>, Vec<ui::updates::LogEntry>),
+	Checked(Option<Package>, Vec<ui::updates::LogEntry>, Option<String>),
+	Unchanged,
 	Downloaded(Staged),
 	Prepared(install::Prepared),
 	Cleaned,
@@ -73,6 +76,8 @@ pub struct Updater {
 	channel: Option<bool>,
 	next_check: Instant,
 	last_check: Option<Instant>,
+	/// The release list's ETag from the last full check on this channel.
+	etag: Option<String>,
 	job: Option<Job>,
 	package: Option<Package>,
 	staged: Option<Staged>,
@@ -82,6 +87,8 @@ pub struct Updater {
 	helper: Option<install::Prepared>,
 	close_requested: bool,
 	auto_download: bool,
+	/// Installing the checked package from the launch splash, through to the restart.
+	installing: bool,
 	demo_available: bool,
 	demo_ready: bool,
 	log: Option<Vec<ui::updates::LogEntry>>,
@@ -93,6 +100,7 @@ impl Updater {
 			channel: None,
 			next_check: Instant::now(),
 			last_check: None,
+			etag: None,
 			job: None,
 			package: None,
 			staged: None,
@@ -102,6 +110,7 @@ impl Updater {
 			helper: None,
 			close_requested: false,
 			auto_download: false,
+			installing: false,
 			demo_available: false,
 			demo_ready: false,
 			log: None,
@@ -118,7 +127,7 @@ impl Updater {
 	) -> bool {
 		let check = std::mem::take(&mut view.check_requested);
 		let download = std::mem::take(&mut view.download_requested);
-		let restart = std::mem::take(&mut view.restart_requested);
+		let mut restart = std::mem::take(&mut view.restart_requested);
 		if self.demo {
 			if self.channel != Some(view.nightly) {
 				self.demo_available = false;
@@ -177,10 +186,12 @@ impl Updater {
 			self.channel = Some(view.nightly);
 			self.package = None;
 			self.auto_download = false;
+			self.installing = false;
 			self.cancel_restart();
 			self.discard_stage();
 			self.next_check = Instant::now();
 			self.last_check = None;
+			self.etag = None;
 			self.status = "Updates have not been checked on this channel yet.".into();
 			view.log.clear();
 		}
@@ -201,41 +212,24 @@ impl Updater {
 						}
 					} else {
 						match result {
-							Ok(Outcome::Checked(package, log)) => {
+							Ok(Outcome::Checked(package, log, etag)) => {
 								self.log = Some(log);
-								self.status = package.as_ref().map_or_else(
-									|| "Leech is up to date on this channel.".into(),
-									|p| {
-										if install::flatpak_session() {
-											format!(
-												"Leech {} is available. Update with `flatpak update` or your Software center.",
-												p.version,
-											)
-										} else if install::nix_session() {
-											format!(
-												"Leech {} is available. Update it through Nix.",
-												p.version,
-											)
-										} else if let Some(cmd) =
-											install::linux_package_manager_update_command()
-										{
-											format!(
-												"Leech {} is available. Run `{cmd}` to update.",
-												p.version,
-											)
-										} else {
-											format!("Leech {} is available.", p.version)
-										}
-									},
-								);
+								self.etag = etag;
+								self.status = checked_status(package.as_ref());
 								self.package = package;
-								self.auto_download = true;
+								// Mid-session, a new release only shows the prompt; it
+								// installs at the next launch.
+								self.auto_download = view.starting;
+							}
+							Ok(Outcome::Unchanged) => {
+								self.status = checked_status(self.package.as_ref());
 							}
 							Ok(Outcome::Downloaded(stage)) => {
 								self.staged = Some(stage);
 								self.status =
 									"Update downloaded and verified. Restart when you are ready."
 										.into();
+								restart |= self.installing;
 							}
 							Ok(Outcome::Cleaned) => {}
 							Ok(Outcome::Prepared(helper)) => {
@@ -247,6 +241,7 @@ impl Updater {
 							}
 							Err(error) => {
 								self.auto_download = false;
+								self.installing = false;
 								self.status = error;
 								self.next_check = Instant::now() + CHECK_INTERVAL;
 							}
@@ -296,11 +291,12 @@ impl Updater {
 				});
 				self.status = "Preparing to restart…".into();
 			} else if supported
-				&& (download || (view.auto_update && self.auto_download))
+				&& (download || (view.auto_update && self.auto_download && view.starting))
 				&& self.package.is_some()
 				&& self.staged.is_none()
 			{
 				let package = self.package.as_ref().expect("checked package").clone();
+				self.installing = !download;
 				let total = package
 					.archive
 					.as_ref()
@@ -322,10 +318,9 @@ impl Updater {
 					self.last_check = Some(Instant::now());
 					self.next_check = Instant::now() + CHECK_INTERVAL;
 					let nightly = view.nightly;
-					self.start(runtime, ctx, 0, move |cancel, _| async move {
-						check_release(nightly, cancel)
-							.await
-							.map(|(package, log)| Outcome::Checked(package, log))
+					let etag = self.etag.clone();
+					self.start(runtime, ctx, 0, move |cancel, _| {
+						check_release(nightly, etag, cancel)
 					});
 					self.status = "Checking for updates…".into();
 				}
@@ -339,6 +334,10 @@ impl Updater {
 			|| self.staged.is_some()
 			|| self.job.as_ref().is_some_and(|job| job.total > 0);
 		view.ready = self.staged.is_some() && self.job.is_none();
+		view.installing = self
+			.installing
+			.then(|| self.package.as_ref().map(|package| package.version.clone()))
+			.flatten();
 		view.status.clone_from(&self.status);
 		if let Some(log) = self.log.take() {
 			view.log = log;
@@ -388,6 +387,16 @@ impl Updater {
 	fn discard_stage(&mut self) {
 		if let Some(stage) = self.staged.take() {
 			self.cleanup_pending = Some(stage);
+		}
+	}
+
+	/// Checks soon after Leech comes back into use, unless it checked in the last two minutes.
+	pub fn nudge(&mut self) {
+		if self
+			.last_check
+			.is_none_or(|last| last.elapsed() >= Duration::from_secs(120))
+		{
+			self.next_check = self.next_check.min(Instant::now());
 		}
 	}
 
@@ -441,6 +450,23 @@ impl Drop for Updater {
 	}
 }
 
+fn checked_status(package: Option<&Package>) -> String {
+	let Some(package) = package else {
+		return "Leech is up to date on this channel.".into();
+	};
+	let version = &package.version;
+	if install::flatpak_session() {
+		format!(
+			"Leech {version} is available. Update with `flatpak update` or your Software center."
+		)
+	} else if install::nix_session() {
+		format!("Leech {version} is available. Update it through Nix.")
+	} else if let Some(cmd) = install::linux_package_manager_update_command() {
+		format!("Leech {version} is available. Run `{cmd}` to update.")
+	} else {
+		format!("Leech {version} is available.")
+	}
+}
 fn client() -> Result<reqwest::Client, String> {
 	reqwest::Client::builder()
 		.https_only(true)
@@ -474,18 +500,29 @@ fn trusted_url(url: &url::Url) -> bool {
 			)
 		)
 }
-async fn response(client: &reqwest::Client, url: &str) -> Result<reqwest::Response, String> {
+/// The response to a GET of `url`. With an `etag`, an unchanged resource answers 304 with no
+/// body, which GitHub does not count against its request limit.
+async fn response(
+	client: &reqwest::Client,
+	url: &str,
+	etag: Option<&str>,
+) -> Result<reqwest::Response, String> {
 	if !url::Url::parse(url).is_ok_and(|url| trusted_url(&url)) {
 		return Err("The release contains an untrusted download address.".into());
 	}
-	let response = client
+	let mut request = client
 		.get(url)
-		.header(reqwest::header::ACCEPT, "application/vnd.github+json")
+		.header(reqwest::header::ACCEPT, "application/vnd.github+json");
+	if let Some(etag) = etag {
+		request = request.header(reqwest::header::IF_NONE_MATCH, etag);
+	}
+	let response = request
 		.send()
 		.await
 		.map_err(|_| "Could not reach GitHub. Check your connection and try again.".to_owned())?;
 	match response.status().as_u16() {
 		200 => Ok(response),
+		304 if etag.is_some() => Ok(response),
 		403 | 429 => Err("GitHub's update limit was reached. Try again later.".into()),
 		404 => Err("No published release is available on this channel yet.".into()),
 		_ => Err("GitHub could not provide the update. Try again later.".into()),
@@ -497,7 +534,13 @@ async fn bounded_body(
 	limit: usize,
 	cancel: &AtomicBool,
 ) -> Result<Vec<u8>, String> {
-	let mut response = response(client, url).await?;
+	read_bounded(response(client, url, None).await?, limit, cancel).await
+}
+async fn read_bounded(
+	mut response: reqwest::Response,
+	limit: usize,
+	cancel: &AtomicBool,
+) -> Result<Vec<u8>, String> {
 	if response
 		.content_length()
 		.is_some_and(|length| length > limit as u64)
@@ -713,17 +756,30 @@ fn select_release(
 		zsync,
 	}))
 }
+/// The newest release on the channel, or `Outcome::Unchanged` while the release list still
+/// matches `etag`.
 async fn check_release(
 	nightly: bool,
+	etag: Option<String>,
 	cancel: Arc<AtomicBool>,
-) -> Result<(Option<Package>, Vec<ui::updates::LogEntry>), String> {
+) -> Result<Outcome, String> {
 	let client = client()?;
 	let endpoint = if nightly {
 		format!("{RELEASES}?per_page=100")
 	} else {
 		format!("{RELEASES}/latest")
 	};
-	let body = bounded_body(&client, &endpoint, MAX_METADATA, &cancel).await?;
+	let response = response(&client, &endpoint, etag.as_deref()).await?;
+	if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+		return Ok(Outcome::Unchanged);
+	}
+	let etag = response
+		.headers()
+		.get(reqwest::header::ETAG)
+		.and_then(|etag| etag.to_str().ok())
+		.filter(|etag| etag.len() <= 256)
+		.map(str::to_owned);
+	let body = read_bounded(response, MAX_METADATA, &cancel).await?;
 	let releases = if nightly {
 		serde_json::from_slice::<Vec<Release>>(&body)
 	} else {
@@ -733,7 +789,7 @@ async fn check_release(
 	let current = semver::Version::parse(env!("CARGO_PKG_VERSION"))
 		.map_err(|_| "This build has an invalid version.".to_owned())?;
 	let log = release_log(&releases, nightly, &current);
-	select_release(releases, nightly, &current).map(|package| (package, log))
+	select_release(releases, nightly, &current).map(|package| Outcome::Checked(package, log, etag))
 }
 fn demo_log() -> Vec<ui::updates::LogEntry> {
 	[
@@ -877,7 +933,7 @@ async fn download_full(
 	progress: &AtomicU64,
 ) -> Result<(), String> {
 	use tokio::io::AsyncWriteExt;
-	let mut response = response(client, &archive.browser_download_url).await?;
+	let mut response = response(client, &archive.browser_download_url, None).await?;
 	if response
 		.content_length()
 		.is_some_and(|size| size != archive.size)

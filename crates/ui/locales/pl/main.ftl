@@ -1624,6 +1624,18 @@ main-restoring-screen-leech = Serena
 main-restoring-screen-use-a-different-account = Użyj innego konta
 # Context: restoring_screen
 main-restoring-screen-welcome-back = Witamy z powrotem
+# Context: splash
+main-splash-starting = Uruchamianie Leech
+# Context: splash
+main-splash-updating = Aktualizowanie Leech
+# Context: splash
+main-splash-loading = Ładowanie
+# Context: splash
+main-splash-downloading = Pobieranie { $version }
+# Context: splash
+main-splash-installing = Instalowanie { $version }
+# Context: splash
+main-splash-restarting = Ponowne uruchamianie
 # Context: sign_in_accounts
 main-sign-in-accounts-saved-accounts = Zapisane konta
 # Context: sign_in_consent
@@ -3949,7 +3961,27 @@ updates-update-settings-could-not-load-or-save-update-preferences-changes-may-no
 # Context: update_settings
 updates-update-settings-download-update = Pobierz aktualizację
 # Context: update_settings
-updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Pobierz aktualizacje w tle. Uruchom ponownie, gdy będziesz gotowy. Leech nadal sprawdza przy uruchomieniu i okresowo, gdy jest wyłączony.
+updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Aktualizacje instalują się przy uruchamianiu Leech. Ta wydana, gdy Leech jest otwarty, czeka na następne uruchomienie.
+# Context: performance_statistics
+updates-performance-statistics = Statystyki wydajności
+# Context: performance_statistics
+updates-performance-statistics-description = Przechowuj na tym komputerze czas uruchamiania, czasy klatek, użycie pamięci i jakość streamu. Skopiowana diagnostyka je zawiera.
+# Context: performance_statistics
+updates-performance-notice-title = Statystyki wydajności
+# Context: performance_statistics
+updates-performance-notice-body = Od wersji 0.1.9 Leech przechowuje na tym komputerze statystyki wydajności, by znaleźć, co go spowalnia:
+# Context: performance_statistics
+updates-performance-notice-speed = Czas uruchamiania, czasy klatek i użycie pamięci
+# Context: performance_statistics
+updates-performance-notice-streams = Jakość streamów i rozmów: liczba klatek, czas kodowania, przepływność, utrata pakietów i opóźnienie
+# Context: performance_statistics
+updates-performance-notice-system = Wersja Leech, system, karta graficzna i częstotliwość odświeżania ekranu
+# Context: performance_statistics
+updates-performance-notice-never = Nigdy wiadomości, nazwy, serwery, kanały, dane konta, dźwięk ani obraz. Wyłączysz to w każdej chwili w Ustawienia → Aktualizacje.
+# Context: performance_statistics
+updates-performance-notice-got-it = Rozumiem
+# Context: performance_statistics
+updates-performance-notice-turn-off = Wyłącz
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = Wczesne kompilacje z najnowszymi zmianami. Wydania nocne mogą być mniej wiarygodne.
 # Context: update_settings

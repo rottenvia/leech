@@ -1,5 +1,5 @@
-//! glibc allocator settings for a long-running client that decodes media on many threads.
-//! Other platforms and C libraries keep their defaults.
+//! glibc allocator settings for a long-running client that decodes media on many threads,
+//! and this process's memory use. Other platforms and C libraries keep their defaults.
 
 /// Applied once at startup, before worker threads exist. Each GStreamer streaming thread
 /// otherwise gets its own arena, and glibc's dynamic mmap threshold moves multi-megabyte
@@ -21,6 +21,35 @@ pub fn tune_allocator() {
 			mallopt(M_ARENA_MAX, 4);
 		}
 	}
+}
+
+/// This process's private working set in bytes: the "Memory" column of Task Manager.
+/// `None` where it is not measured.
+#[allow(unsafe_code)]
+pub fn private_working_set() -> Option<u64> {
+	#[cfg(windows)]
+	{
+		use windows::Win32::System::ProcessStatus::{
+			GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX2,
+		};
+		use windows::Win32::System::Threading::GetCurrentProcess;
+		let mut counters = PROCESS_MEMORY_COUNTERS_EX2 {
+			cb: size_of::<PROCESS_MEMORY_COUNTERS_EX2>() as u32,
+			..Default::default()
+		};
+		// SAFETY: The pseudo handle needs no closing, and `cb` gives the struct's real size.
+		unsafe {
+			GetProcessMemoryInfo(
+				GetCurrentProcess(),
+				(&raw mut counters).cast::<PROCESS_MEMORY_COUNTERS>(),
+				counters.cb,
+			)
+		}
+		.ok()
+		.map(|()| counters.PrivateWorkingSetSize as u64)
+	}
+	#[cfg(not(windows))]
+	None
 }
 
 /// Returns freed decoder memory to the system once playback or a poster batch ends.
@@ -63,5 +92,15 @@ mod tests {
 		drop(map);
 		std::fs::remove_file(&path).unwrap();
 		assert!(super::map_file(&path).is_err());
+	}
+
+	#[test]
+	#[cfg(windows)]
+	fn the_private_working_set_is_measured() {
+		let bytes = super::private_working_set().unwrap();
+		assert!(
+			bytes > 1024 * 1024 && bytes < 64 * 1024 * 1024 * 1024,
+			"{bytes}"
+		);
 	}
 }

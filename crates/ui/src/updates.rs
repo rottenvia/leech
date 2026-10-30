@@ -25,6 +25,13 @@ pub struct Updates {
 	pub check_requested: bool,
 	pub download_requested: bool,
 	pub restart_requested: bool,
+	/// Set while the launch splash shows: an update found then installs right away, while
+	/// one found later only shows the update prompt.
+	pub starting: bool,
+	/// The version installing from the launch splash.
+	pub installing: Option<String>,
+	/// This session's performance statistics in one line, for issue diagnostics.
+	pub performance: String,
 	pub copied_diagnostics: Option<f64>,
 	pub copied_command: Option<f64>,
 	/// Ready flag the sidebar banner was dismissed at, so a later stage prompts again.
@@ -48,6 +55,9 @@ impl Default for Updates {
 			check_requested: false,
 			download_requested: false,
 			restart_requested: false,
+			starting: false,
+			installing: None,
+			performance: String::new(),
 			copied_diagnostics: None,
 			copied_command: None,
 			banner_dismissed: None,
@@ -265,8 +275,14 @@ impl MessagingUi {
 			)
 		};
 
+		let performance = if self.performance_stats && !self.updates.performance.is_empty() {
+			format!("\n- **Performance:** {}", self.updates.performance)
+		} else {
+			String::new()
+		};
+
 		format!(
-			"- **Leech Version:** {} ({channel})\n- **Operating System:** {os} ({arch}){session_type}{package_type}{graphics}\n- **Display Scale:** {scale:.2}\n- **Theme:** {theme_mode} ({theme_variant})\n- **Update Channel:** {update_channel}\n- **Auto Update:** {}",
+			"- **Leech Version:** {} ({channel})\n- **Operating System:** {os} ({arch}){session_type}{package_type}{graphics}\n- **Display Scale:** {scale:.2}\n- **Theme:** {theme_mode} ({theme_variant})\n- **Update Channel:** {update_channel}\n- **Auto Update:** {}{performance}",
 			self.build.version,
 			if self.updates.auto_update {
 				"Enabled"
@@ -536,8 +552,93 @@ impl MessagingUi {
 			{
 				self.copy_diagnostic_info(ui.ctx());
 			}
+				design::card_divider(ui);
+				design::switch(
+					ui,
+					"updates-performance-statistics",
+					Some("updates-performance-statistics-description"),
+					&mut self.performance_stats,
+				);
 			},
 		);
+	}
+
+	/// Tells people who used Leech before 0.1.9, once, that it now keeps performance
+	/// statistics, and what they hold. New installations never see it.
+	pub(super) fn performance_notice(&mut self, ctx: &egui::Context) {
+		if !self.performance_notice_pending {
+			return;
+		}
+		let response = crate::dialog::Dialog::new(
+			"performance-notice",
+			crate::i18n::translate("updates-performance-notice-title"),
+		)
+		.icon(icons::Icon::Leech)
+		.width(420.0)
+		.show(ctx, |d| {
+			d.content(|ui| {
+				let colors = design::palette(ui);
+				ui.spacing_mut().item_spacing.y = 8.0;
+				ui.label(
+					egui::RichText::new(crate::i18n::translate("updates-performance-notice-body"))
+						.size(13.5)
+						.color(colors.text),
+				);
+				for key in [
+					"updates-performance-notice-speed",
+					"updates-performance-notice-streams",
+					"updates-performance-notice-system",
+				] {
+					ui.horizontal_top(|ui| {
+						ui.spacing_mut().item_spacing.x = 8.0;
+						let (dot, _) =
+							ui.allocate_exact_size(egui::vec2(6.0, 18.0), egui::Sense::hover());
+						ui.painter().circle_filled(dot.center(), 2.5, colors.accent);
+						ui.add(
+							egui::Label::new(
+								egui::RichText::new(crate::i18n::translate(key))
+									.size(13.5)
+									.color(colors.text),
+							)
+							.wrap(),
+						);
+					});
+				}
+				ui.label(
+					egui::RichText::new(crate::i18n::translate("updates-performance-notice-never"))
+						.size(12.5)
+						.color(colors.muted),
+				);
+			});
+			let mut choice = None;
+			d.footer(|ui| {
+				if crate::dialog::action(
+					ui,
+					"updates-performance-notice-got-it",
+					crate::dialog::Action::Primary,
+				)
+				.clicked()
+				{
+					choice = Some(true);
+				}
+				if crate::dialog::action(
+					ui,
+					"updates-performance-notice-turn-off",
+					crate::dialog::Action::Neutral,
+				)
+				.clicked()
+				{
+					choice = Some(false);
+				}
+			});
+			choice
+		});
+		if let Some(keep) = response.inner {
+			self.performance_stats = keep;
+			self.performance_notice_pending = false;
+		} else if response.close {
+			self.performance_notice_pending = false;
+		}
 	}
 }
 

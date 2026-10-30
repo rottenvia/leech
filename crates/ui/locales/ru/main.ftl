@@ -1625,6 +1625,18 @@ main-restoring-screen-leech = Leech
 main-restoring-screen-use-a-different-account = Использовать другую учетную запись
 # Context: restoring_screen
 main-restoring-screen-welcome-back = С возвращением
+# Context: splash
+main-splash-starting = Запуск Leech
+# Context: splash
+main-splash-updating = Обновление Leech
+# Context: splash
+main-splash-loading = Загрузка
+# Context: splash
+main-splash-downloading = Загрузка { $version }
+# Context: splash
+main-splash-installing = Установка { $version }
+# Context: splash
+main-splash-restarting = Перезапуск
 # Context: sign_in_accounts
 main-sign-in-accounts-saved-accounts = Сохраненные аккаунты
 # Context: sign_in_consent
@@ -4070,7 +4082,27 @@ updates-update-settings-could-not-load-or-save-update-preferences-changes-may-no
 # Context: update_settings
 updates-update-settings-download-update = Скачать обновление
 # Context: update_settings
-updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Загрузка обновлений в фоновом режиме. Перезапустите, когда будете готовы. Leech по-прежнему проверяет при запуске и периодически, когда это выключено.
+updates-update-settings-download-updates-in-the-background-restart-when-you-are-ready = Обновления устанавливаются при запуске Leech. Вышедшее, пока Leech открыт, ждёт следующего запуска.
+# Context: performance_statistics
+updates-performance-statistics = Статистика производительности
+# Context: performance_statistics
+updates-performance-statistics-description = Хранить на этом компьютере время запуска, время кадров, расход памяти и качество трансляции. Скопированная диагностика включает их.
+# Context: performance_statistics
+updates-performance-notice-title = Статистика производительности
+# Context: performance_statistics
+updates-performance-notice-body = Начиная с версии 0.1.9, Leech хранит статистику производительности на этом компьютере, чтобы находить причины тормозов:
+# Context: performance_statistics
+updates-performance-notice-speed = Время запуска, время кадров и расход памяти
+# Context: performance_statistics
+updates-performance-notice-streams = Качество трансляций и звонков: частота кадров, время кодирования, битрейт, потери пакетов и задержка
+# Context: performance_statistics
+updates-performance-notice-system = Версия Leech, система, видеокарта и частота обновления экрана
+# Context: performance_statistics
+updates-performance-notice-never = Никогда не сообщения, имена, серверы, каналы, данные аккаунта, звук или видео. Отключить можно в любой момент в Настройки → Обновления.
+# Context: performance_statistics
+updates-performance-notice-got-it = Понятно
+# Context: performance_statistics
+updates-performance-notice-turn-off = Отключить
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = Ранние сборки с новейшими изменениями. Ночные выпуски могут быть менее надежными.
 # Context: update_settings

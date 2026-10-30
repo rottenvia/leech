@@ -454,6 +454,10 @@ pub struct MessagingUi {
 	/// How long restoring a saved login took lately, in milliseconds; the restore screen's
 	/// bar and time left follow it. Zero until one has been measured.
 	pub restore_ms: u32,
+	/// Keep performance statistics on this computer.
+	pub performance_stats: bool,
+	/// The one-time performance statistics notice is still to be shown.
+	pub performance_notice_pending: bool,
 	/// The conversation shown and when the switch to it began, for the content fade.
 	conversation_fade: Option<(Option<Id>, f64)>,
 	/// Session-only visibility of the selected guild voice channel's chat.
@@ -5701,6 +5705,7 @@ impl MessagingUi {
 		}
 		self.verification.show(&ctx, state);
 		self.onboarding.show(&ctx, state, &mut commands);
+		self.performance_notice(&ctx);
 		self.scroll.clear_if_unbound(&ctx);
 		self.scroll.paint(&ctx);
 		// Clear the composer and the call bar so a notice never sits on a control.
