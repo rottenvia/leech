@@ -1369,12 +1369,7 @@ impl MessagingUi {
 									galley,
 									colors.accent,
 								);
-								if response
-									.on_hover_text(crate::i18n::translate_if_key(
-										&self.updates.status,
-									))
-									.clicked()
-								{
+								if response.on_hover_text(self.updates.status.text()).clicked() {
 									self.open_update_settings();
 								}
 							} else {

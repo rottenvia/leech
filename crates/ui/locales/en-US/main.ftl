@@ -4115,6 +4115,58 @@ updates-performance-notice-never = Never messages, names, servers, channels, acc
 updates-performance-notice-got-it = Got it
 # Context: performance_statistics
 updates-performance-notice-turn-off = Turn off
+# Context: updater_status
+updates-status-not-checked = Updates have not been checked yet.
+# Context: updater_status
+updates-status-not-checked-channel = Updates have not been checked on this channel yet.
+# Context: updater_status
+updates-status-checking = Checking for updates…
+# Context: updater_status
+updates-status-up-to-date = Leech is up to date on this channel.
+# Context: updater_status
+updates-status-available = Leech { $version } is available.
+# Context: updater_status
+updates-status-available-flatpak = Leech { $version } is available. Update with `flatpak update` or your Software center.
+# Context: updater_status
+updates-status-available-nix = Leech { $version } is available. Update it through Nix.
+# Context: updater_status
+updates-status-available-command = Leech { $version } is available. Run `{ $command }` to update.
+# Context: updater_status
+updates-status-downloading = Downloading Leech { $version }…
+# Context: updater_status
+updates-status-downloaded = Update downloaded and verified. Restart when you are ready.
+# Context: updater_status
+updates-status-ready = Update ready. Close Leech to install and restart.
+# Context: updater_status
+updates-status-preparing = Preparing to restart…
+# Context: updater_status
+updates-status-wait = Please wait one minute between update checks.
+# Context: updater_status
+updates-status-worker-stopped = The update worker stopped. Please try again.
+# Context: updater_status
+updates-status-failed = Update failed: { $error }
+# Context: updater_status
+updates-status-no-preferences = Load update preferences or choose your update settings to enable checking.
+# Context: updater_status
+updates-status-preview-available = Synthetic preview: Leech 99.0.0 is available. No network request was made.
+# Context: updater_status
+updates-status-preview-ready = Synthetic preview: update ready to restart. No files were downloaded.
+# Context: updater_status
+updates-status-preview-restarted = Synthetic preview: restart simulated. No installation was changed.
+# Context: updater_status
+updates-error-offline = Could not reach GitHub. Check your connection and try again.
+# Context: updater_status
+updates-error-rate-limited = GitHub's update limit was reached. Try again later.
+# Context: updater_status
+updates-error-no-release = No published release is available on this channel yet.
+# Context: updater_status
+updates-error-github = GitHub could not provide the update. Try again later.
+# Context: updater_status
+updates-error-interrupted = The update download was interrupted.
+# Context: updater_status
+updates-error-disk = Could not write the update. Check available disk space.
+# Context: updater_status
+updates-error-not-writable = The installation folder is not writable. Move Leech to a writable folder and try again.
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = Early builds with the newest changes. Nightly releases can be less reliable.
 # Context: update_settings

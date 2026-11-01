@@ -2028,6 +2028,15 @@ impl Desktop {
 		}
 		#[cfg(feature = "demo")]
 		if demo
+			&& let Some(code) = std::env::args()
+				.find_map(|arg| arg.strip_prefix("--demo-language=").map(str::to_owned))
+		{
+			// `--demo-language=ru` etc.: one catalog, without touching saved settings.
+			messaging.language = ui::i18n::Language::from_preference(Some(&code));
+			ui::i18n::set_current(messaging.language);
+		}
+		#[cfg(feature = "demo")]
+		if demo
 			&& let Some(tab) = std::env::args().find_map(|arg| {
 				arg.strip_prefix("--demo-theme-maker")
 					.map(|rest| rest.trim_start_matches('=').to_owned())

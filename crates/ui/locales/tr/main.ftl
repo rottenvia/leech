@@ -3973,6 +3973,58 @@ updates-performance-notice-never = Asla mesajlar, adlar, sunucular, kanallar, he
 updates-performance-notice-got-it = Anladım
 # Context: performance_statistics
 updates-performance-notice-turn-off = Kapat
+# Context: updater_status
+updates-status-not-checked = Güncellemeler henüz kontrol edilmedi.
+# Context: updater_status
+updates-status-not-checked-channel = Bu kanalda güncellemeler henüz kontrol edilmedi.
+# Context: updater_status
+updates-status-checking = Güncellemeler kontrol ediliyor…
+# Context: updater_status
+updates-status-up-to-date = Leech bu kanalda güncel.
+# Context: updater_status
+updates-status-available = Leech { $version } kullanılabilir.
+# Context: updater_status
+updates-status-available-flatpak = Leech { $version } kullanılabilir. `flatpak update` ile ya da yazılım merkezinden güncelleyin.
+# Context: updater_status
+updates-status-available-nix = Leech { $version } kullanılabilir. Nix üzerinden güncelleyin.
+# Context: updater_status
+updates-status-available-command = Leech { $version } kullanılabilir. Güncellemek için `{ $command }` komutunu çalıştırın.
+# Context: updater_status
+updates-status-downloading = Leech { $version } indiriliyor…
+# Context: updater_status
+updates-status-downloaded = Güncelleme indirildi ve doğrulandı. Hazır olduğunuzda yeniden başlatın.
+# Context: updater_status
+updates-status-ready = Güncelleme hazır. Yükleyip yeniden başlatmak için Leech'i kapatın.
+# Context: updater_status
+updates-status-preparing = Yeniden başlatmaya hazırlanılıyor…
+# Context: updater_status
+updates-status-wait = Güncelleme kontrolleri arasında bir dakika bekleyin.
+# Context: updater_status
+updates-status-worker-stopped = Güncelleme işlemi durdu. Lütfen yeniden deneyin.
+# Context: updater_status
+updates-status-failed = Güncelleme başarısız: { $error }
+# Context: updater_status
+updates-status-no-preferences = Kontrolü etkinleştirmek için güncelleme tercihlerini yükleyin ya da ayarlarınızı seçin.
+# Context: updater_status
+updates-status-preview-available = Sentetik önizleme: Leech 99.0.0 kullanılabilir. Hiçbir ağ isteği yapılmadı.
+# Context: updater_status
+updates-status-preview-ready = Sentetik önizleme: güncelleme yeniden başlatmaya hazır. Hiçbir dosya indirilmedi.
+# Context: updater_status
+updates-status-preview-restarted = Sentetik önizleme: yeniden başlatma canlandırıldı. Hiçbir kurulum değiştirilmedi.
+# Context: updater_status
+updates-error-offline = GitHub'a ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.
+# Context: updater_status
+updates-error-rate-limited = GitHub güncelleme sınırına ulaşıldı. Daha sonra yeniden deneyin.
+# Context: updater_status
+updates-error-no-release = Bu kanalda henüz yayınlanmış bir sürüm yok.
+# Context: updater_status
+updates-error-github = GitHub güncellemeyi sağlayamadı. Daha sonra yeniden deneyin.
+# Context: updater_status
+updates-error-interrupted = Güncellemenin indirilmesi yarıda kesildi.
+# Context: updater_status
+updates-error-disk = Güncelleme yazılamadı. Boş disk alanını kontrol edin.
+# Context: updater_status
+updates-error-not-writable = Kurulum klasörüne yazılamıyor. Leech'i yazılabilir bir klasöre taşıyıp yeniden deneyin.
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = En yeni değişikliklerle erken sürümler. Gecelik sürümler daha az güvenilir olabilir.
 # Context: update_settings

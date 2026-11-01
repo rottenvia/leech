@@ -12,6 +12,7 @@ use std::{
 	time::{Duration, Instant},
 };
 use tokio::runtime::Runtime;
+use ui::updates::Status;
 
 #[path = "updater_delta.rs"]
 mod delta;
@@ -82,7 +83,7 @@ pub struct Updater {
 	package: Option<Package>,
 	staged: Option<Staged>,
 	cleanup_pending: Option<Staged>,
-	status: String,
+	status: Status,
 	armed: bool,
 	helper: Option<install::Prepared>,
 	close_requested: bool,
@@ -105,7 +106,7 @@ impl Updater {
 			package: None,
 			staged: None,
 			cleanup_pending: None,
-			status: "Updates have not been checked yet.".into(),
+			status: Status::new("updates-status-not-checked"),
 			armed: false,
 			helper: None,
 			close_requested: false,
@@ -137,18 +138,14 @@ impl Updater {
 			if check {
 				self.demo_available = true;
 				view.log = demo_log();
-				self.status =
-					"Synthetic preview: Leech 99.0.0 is available. No network request was made."
-						.into();
+				self.status = Status::new("updates-status-preview-available");
 			}
 			if download && self.demo_available {
 				self.demo_ready = true;
-				self.status =
-					"Synthetic preview: update ready to restart. No files were downloaded.".into();
+				self.status = Status::new("updates-status-preview-ready");
 			}
 			if restart && self.demo_ready {
-				self.status =
-					"Synthetic preview: restart simulated. No installation was changed.".into();
+				self.status = Status::new("updates-status-preview-restarted");
 			}
 			view.status.clone_from(&self.status);
 			view.available = self.demo_available;
@@ -171,12 +168,11 @@ impl Updater {
 			view.available = false;
 			view.ready = false;
 			view.progress = None;
-			view.status = if cfg!(debug_assertions) {
-				"Update checks are disabled in debug builds."
+			view.status = Status::new(if cfg!(debug_assertions) {
+				"updates-update-settings-update-checks-are-disabled-in-debug-builds"
 			} else {
-				"Load update preferences or choose your update settings to enable checking."
-			}
-			.into();
+				"updates-status-no-preferences"
+			});
 			return false;
 		}
 		if self.channel != Some(view.nightly) {
@@ -192,7 +188,7 @@ impl Updater {
 			self.next_check = Instant::now();
 			self.last_check = None;
 			self.etag = None;
-			self.status = "Updates have not been checked on this channel yet.".into();
+			self.status = Status::new("updates-status-not-checked-channel");
 			view.log.clear();
 		}
 		if let Some(job) = &self.job {
@@ -226,9 +222,7 @@ impl Updater {
 							}
 							Ok(Outcome::Downloaded(stage)) => {
 								self.staged = Some(stage);
-								self.status =
-									"Update downloaded and verified. Restart when you are ready."
-										.into();
+								self.status = Status::new("updates-status-downloaded");
 								restart |= self.installing;
 							}
 							Ok(Outcome::Cleaned) => {}
@@ -236,13 +230,13 @@ impl Updater {
 								self.helper = Some(helper);
 								self.armed = true;
 								self.close_requested = true;
-								self.status =
-									"Update ready. Close Leech to install and restart.".into();
+								self.status = Status::new("updates-status-ready");
 							}
 							Err(error) => {
 								self.auto_download = false;
 								self.installing = false;
-								self.status = error;
+								self.status =
+									Status::new("updates-status-failed").with("error", error);
 								self.next_check = Instant::now() + CHECK_INTERVAL;
 							}
 						}
@@ -250,7 +244,7 @@ impl Updater {
 				}
 				Err(mpsc::TryRecvError::Disconnected) => {
 					self.job = None;
-					self.status = "The update worker stopped. Please try again.".into();
+					self.status = Status::new("updates-status-worker-stopped");
 				}
 				Err(mpsc::TryRecvError::Empty) => {}
 			}
@@ -289,7 +283,7 @@ impl Updater {
 					.map_err(|_| "Could not prepare the update restart.".to_owned())??;
 					Ok(Outcome::Prepared(helper))
 				});
-				self.status = "Preparing to restart…".into();
+				self.status = Status::new("updates-status-preparing");
 			} else if supported
 				&& (download || (view.auto_update && self.auto_download && view.starting))
 				&& self.package.is_some()
@@ -303,7 +297,8 @@ impl Updater {
 					.expect("a supported platform's checked package has a downloadable archive")
 					.size;
 				self.auto_download = false;
-				self.status = format!("Downloading Leech {}…", package.version);
+				self.status = Status::new("updates-status-downloading")
+					.with("version", package.version.clone());
 				self.start(runtime, ctx, total, move |cancel, progress| {
 					download_package(package, cancel, progress)
 				});
@@ -313,7 +308,7 @@ impl Updater {
 						.last_check
 						.is_some_and(|last| last.elapsed() < Duration::from_secs(60))
 				{
-					self.status = "Please wait one minute between update checks.".into();
+					self.status = Status::new("updates-status-wait");
 				} else {
 					self.last_check = Some(Instant::now());
 					self.next_check = Instant::now() + CHECK_INTERVAL;
@@ -322,7 +317,7 @@ impl Updater {
 					self.start(runtime, ctx, 0, move |cancel, _| {
 						check_release(nightly, etag, cancel)
 					});
-					self.status = "Checking for updates…".into();
+					self.status = Status::new("updates-status-checking");
 				}
 			}
 		}
@@ -365,9 +360,7 @@ impl Updater {
 		let worker_progress = Arc::clone(&progress);
 		let ctx = ctx.clone();
 		runtime.spawn(async move {
-			let result = work(worker_cancel, worker_progress)
-				.await
-				.map_err(|error| format!("Update failed: {error}"));
+			let result = work(worker_cancel, worker_progress).await;
 			if let Err(mpsc::SendError(result)) = sender.send(result) {
 				tokio::task::spawn_blocking(move || match result {
 					Ok(Outcome::Downloaded(stage)) => install::cleanup(&stage.directory),
@@ -450,22 +443,20 @@ impl Drop for Updater {
 	}
 }
 
-fn checked_status(package: Option<&Package>) -> String {
+fn checked_status(package: Option<&Package>) -> Status {
 	let Some(package) = package else {
-		return "Leech is up to date on this channel.".into();
+		return Status::new("updates-status-up-to-date");
 	};
-	let version = &package.version;
-	if install::flatpak_session() {
-		format!(
-			"Leech {version} is available. Update with `flatpak update` or your Software center."
-		)
+	let status = if install::flatpak_session() {
+		Status::new("updates-status-available-flatpak")
 	} else if install::nix_session() {
-		format!("Leech {version} is available. Update it through Nix.")
-	} else if let Some(cmd) = install::linux_package_manager_update_command() {
-		format!("Leech {version} is available. Run `{cmd}` to update.")
+		Status::new("updates-status-available-nix")
+	} else if let Some(command) = install::linux_package_manager_update_command() {
+		Status::new("updates-status-available-command").with("command", command)
 	} else {
-		format!("Leech {version} is available.")
-	}
+		Status::new("updates-status-available")
+	};
+	status.with("version", package.version.clone())
 }
 fn client() -> Result<reqwest::Client, String> {
 	reqwest::Client::builder()
@@ -519,13 +510,13 @@ async fn response(
 	let response = request
 		.send()
 		.await
-		.map_err(|_| "Could not reach GitHub. Check your connection and try again.".to_owned())?;
+		.map_err(|_| "updates-error-offline".to_owned())?;
 	match response.status().as_u16() {
 		200 => Ok(response),
 		304 if etag.is_some() => Ok(response),
-		403 | 429 => Err("GitHub's update limit was reached. Try again later.".into()),
-		404 => Err("No published release is available on this channel yet.".into()),
-		_ => Err("GitHub could not provide the update. Try again later.".into()),
+		403 | 429 => Err("updates-error-rate-limited".into()),
+		404 => Err("updates-error-no-release".into()),
+		_ => Err("updates-error-github".into()),
 	}
 }
 async fn bounded_body(
@@ -551,7 +542,7 @@ async fn read_bounded(
 	while let Some(chunk) = response
 		.chunk()
 		.await
-		.map_err(|_| "The update response was interrupted.".to_owned())?
+		.map_err(|_| "updates-error-interrupted".to_owned())?
 	{
 		if cancel.load(Ordering::Relaxed) {
 			return Err("Update cancelled.".into());
@@ -699,7 +690,7 @@ fn select_release(
 		})
 		.max_by(|a, b| a.0.cmp(&b.0));
 	let Some((version, release)) = candidate else {
-		return Err("No published release is available on this channel yet.".into());
+		return Err("updates-error-no-release".into());
 	};
 	// Channel changes never silently downgrade an installed build.
 	if version <= *current {
@@ -951,7 +942,7 @@ async fn download_full(
 	while let Some(chunk) = response
 		.chunk()
 		.await
-		.map_err(|_| "The update download was interrupted.".to_owned())?
+		.map_err(|_| "updates-error-interrupted".to_owned())?
 	{
 		if cancel.load(Ordering::Relaxed) {
 			return Err("Update cancelled.".into());
@@ -964,7 +955,7 @@ async fn download_full(
 		}
 		file.write_all(&chunk)
 			.await
-			.map_err(|_| "Could not write the update. Check available disk space.".to_owned())?;
+			.map_err(|_| "updates-error-disk".to_owned())?;
 		hasher.update(&chunk);
 		progress.store(received, Ordering::Relaxed);
 	}

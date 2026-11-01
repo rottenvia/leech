@@ -3982,6 +3982,58 @@ updates-performance-notice-never = Nigdy wiadomości, nazwy, serwery, kanały, d
 updates-performance-notice-got-it = Rozumiem
 # Context: performance_statistics
 updates-performance-notice-turn-off = Wyłącz
+# Context: updater_status
+updates-status-not-checked = Aktualizacje nie zostały jeszcze sprawdzone.
+# Context: updater_status
+updates-status-not-checked-channel = Aktualizacje na tym kanale nie zostały jeszcze sprawdzone.
+# Context: updater_status
+updates-status-checking = Sprawdzanie aktualizacji…
+# Context: updater_status
+updates-status-up-to-date = Leech jest aktualny na tym kanale.
+# Context: updater_status
+updates-status-available = Dostępny jest Leech { $version }.
+# Context: updater_status
+updates-status-available-flatpak = Dostępny jest Leech { $version }. Zaktualizuj przez `flatpak update` lub centrum oprogramowania.
+# Context: updater_status
+updates-status-available-nix = Dostępny jest Leech { $version }. Zaktualizuj go przez Nix.
+# Context: updater_status
+updates-status-available-command = Dostępny jest Leech { $version }. Uruchom `{ $command }`, aby zaktualizować.
+# Context: updater_status
+updates-status-downloading = Pobieranie Leech { $version }…
+# Context: updater_status
+updates-status-downloaded = Aktualizacja pobrana i zweryfikowana. Uruchom ponownie, gdy zechcesz.
+# Context: updater_status
+updates-status-ready = Aktualizacja gotowa. Zamknij Leech, aby ją zainstalować i uruchomić ponownie.
+# Context: updater_status
+updates-status-preparing = Przygotowywanie ponownego uruchomienia…
+# Context: updater_status
+updates-status-wait = Odczekaj minutę między sprawdzeniami aktualizacji.
+# Context: updater_status
+updates-status-worker-stopped = Proces aktualizacji się zatrzymał. Spróbuj ponownie.
+# Context: updater_status
+updates-status-failed = Aktualizacja nie powiodła się: { $error }
+# Context: updater_status
+updates-status-no-preferences = Wczytaj preferencje aktualizacji lub wybierz ustawienia, aby włączyć sprawdzanie.
+# Context: updater_status
+updates-status-preview-available = Syntetyczny podgląd: dostępny jest Leech 99.0.0. Nie wysłano żadnego żądania sieciowego.
+# Context: updater_status
+updates-status-preview-ready = Syntetyczny podgląd: aktualizacja gotowa do ponownego uruchomienia. Nie pobrano żadnych plików.
+# Context: updater_status
+updates-status-preview-restarted = Syntetyczny podgląd: ponowne uruchomienie zasymulowane. Instalacja nie została zmieniona.
+# Context: updater_status
+updates-error-offline = Nie można połączyć się z GitHubem. Sprawdź połączenie i spróbuj ponownie.
+# Context: updater_status
+updates-error-rate-limited = Osiągnięto limit aktualizacji GitHuba. Spróbuj później.
+# Context: updater_status
+updates-error-no-release = Na tym kanale nie opublikowano jeszcze żadnej wersji.
+# Context: updater_status
+updates-error-github = GitHub nie mógł dostarczyć aktualizacji. Spróbuj później.
+# Context: updater_status
+updates-error-interrupted = Pobieranie aktualizacji zostało przerwane.
+# Context: updater_status
+updates-error-disk = Nie można zapisać aktualizacji. Sprawdź wolne miejsce na dysku.
+# Context: updater_status
+updates-error-not-writable = Folder instalacji nie pozwala na zapis. Przenieś Leech do folderu z prawem zapisu i spróbuj ponownie.
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = Wczesne kompilacje z najnowszymi zmianami. Wydania nocne mogą być mniej wiarygodne.
 # Context: update_settings

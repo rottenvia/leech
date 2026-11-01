@@ -3973,6 +3973,58 @@ updates-performance-notice-never = メッセージ、名前、サーバー、チ
 updates-performance-notice-got-it = OK
 # Context: performance_statistics
 updates-performance-notice-turn-off = オフにする
+# Context: updater_status
+updates-status-not-checked = まだアップデートを確認していません。
+# Context: updater_status
+updates-status-not-checked-channel = このチャンネルではまだアップデートを確認していません。
+# Context: updater_status
+updates-status-checking = アップデートを確認しています…
+# Context: updater_status
+updates-status-up-to-date = このチャンネルの Leech は最新です。
+# Context: updater_status
+updates-status-available = Leech { $version } を利用できます。
+# Context: updater_status
+updates-status-available-flatpak = Leech { $version } を利用できます。`flatpak update` またはソフトウェアセンターで更新してください。
+# Context: updater_status
+updates-status-available-nix = Leech { $version } を利用できます。Nix で更新してください。
+# Context: updater_status
+updates-status-available-command = Leech { $version } を利用できます。`{ $command }` を実行して更新してください。
+# Context: updater_status
+updates-status-downloading = Leech { $version } をダウンロードしています…
+# Context: updater_status
+updates-status-downloaded = アップデートをダウンロードして検証しました。準備ができたら再起動してください。
+# Context: updater_status
+updates-status-ready = アップデートの準備ができました。Leech を閉じるとインストールして再起動します。
+# Context: updater_status
+updates-status-preparing = 再起動を準備しています…
+# Context: updater_status
+updates-status-wait = アップデートの確認は 1 分あけてから行ってください。
+# Context: updater_status
+updates-status-worker-stopped = アップデート処理が停止しました。もう一度お試しください。
+# Context: updater_status
+updates-status-failed = アップデートに失敗しました: { $error }
+# Context: updater_status
+updates-status-no-preferences = 確認を有効にするには、アップデート設定を読み込むか設定を選んでください。
+# Context: updater_status
+updates-status-preview-available = 合成プレビュー: Leech 99.0.0 を利用できます。ネットワーク要求は行っていません。
+# Context: updater_status
+updates-status-preview-ready = 合成プレビュー: 再起動の準備ができました。ファイルはダウンロードしていません。
+# Context: updater_status
+updates-status-preview-restarted = 合成プレビュー: 再起動をシミュレートしました。インストールは変更していません。
+# Context: updater_status
+updates-error-offline = GitHub に接続できませんでした。接続を確認してもう一度お試しください。
+# Context: updater_status
+updates-error-rate-limited = GitHub のアップデート上限に達しました。しばらくしてからお試しください。
+# Context: updater_status
+updates-error-no-release = このチャンネルにはまだ公開されたリリースがありません。
+# Context: updater_status
+updates-error-github = GitHub からアップデートを取得できませんでした。しばらくしてからお試しください。
+# Context: updater_status
+updates-error-interrupted = アップデートのダウンロードが中断されました。
+# Context: updater_status
+updates-error-disk = アップデートを書き込めませんでした。ディスクの空き容量を確認してください。
+# Context: updater_status
+updates-error-not-writable = インストール先フォルダーに書き込めません。Leech を書き込み可能なフォルダーに移動してもう一度お試しください。
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = 最新の変更を加えた初期のビルド。夜間リリースは信頼性が低くなる可能性があります。
 # Context: update_settings

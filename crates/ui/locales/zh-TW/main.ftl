@@ -4011,6 +4011,58 @@ updates-performance-notice-never = 絕不包含訊息、名稱、伺服器、頻
 updates-performance-notice-got-it = 知道了
 # Context: performance_statistics
 updates-performance-notice-turn-off = 關閉
+# Context: updater_status
+updates-status-not-checked = 尚未檢查更新。
+# Context: updater_status
+updates-status-not-checked-channel = 尚未在此通道檢查更新。
+# Context: updater_status
+updates-status-checking = 正在檢查更新…
+# Context: updater_status
+updates-status-up-to-date = Leech 在此通道已是最新版本。
+# Context: updater_status
+updates-status-available = Leech { $version } 已可使用。
+# Context: updater_status
+updates-status-available-flatpak = Leech { $version } 已可使用。請使用 `flatpak update` 或軟體中心更新。
+# Context: updater_status
+updates-status-available-nix = Leech { $version } 已可使用。請透過 Nix 更新。
+# Context: updater_status
+updates-status-available-command = Leech { $version } 已可使用。執行 `{ $command }` 以更新。
+# Context: updater_status
+updates-status-downloading = 正在下載 Leech { $version }…
+# Context: updater_status
+updates-status-downloaded = 更新已下載並驗證。準備好後重新啟動即可。
+# Context: updater_status
+updates-status-ready = 更新已就緒。關閉 Leech 即可安裝並重新啟動。
+# Context: updater_status
+updates-status-preparing = 正在準備重新啟動…
+# Context: updater_status
+updates-status-wait = 兩次檢查更新之間請等待一分鐘。
+# Context: updater_status
+updates-status-worker-stopped = 更新程序已停止。請再試一次。
+# Context: updater_status
+updates-status-failed = 更新失敗：{ $error }
+# Context: updater_status
+updates-status-no-preferences = 請載入更新偏好設定或選擇更新設定以啟用檢查。
+# Context: updater_status
+updates-status-preview-available = 合成預覽：Leech 99.0.0 已可使用。未發出任何網路要求。
+# Context: updater_status
+updates-status-preview-ready = 合成預覽：更新已準備好重新啟動。未下載任何檔案。
+# Context: updater_status
+updates-status-preview-restarted = 合成預覽：已模擬重新啟動。未變更任何安裝。
+# Context: updater_status
+updates-error-offline = 無法連線至 GitHub。請檢查網路連線後再試一次。
+# Context: updater_status
+updates-error-rate-limited = 已達 GitHub 更新請求上限。請稍後再試。
+# Context: updater_status
+updates-error-no-release = 此通道尚無已發布的版本。
+# Context: updater_status
+updates-error-github = GitHub 無法提供此更新。請稍後再試。
+# Context: updater_status
+updates-error-interrupted = 更新下載已中斷。
+# Context: updater_status
+updates-error-disk = 無法寫入更新。請檢查可用的磁碟空間。
+# Context: updater_status
+updates-error-not-writable = 安裝資料夾無法寫入。請將 Leech 移至可寫入的資料夾後再試一次。
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = 含最新改動的早期版本。Nightly 可能較不穩定。
 # Context: update_settings

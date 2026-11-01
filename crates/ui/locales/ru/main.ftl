@@ -4103,6 +4103,58 @@ updates-performance-notice-never = Никогда не сообщения, им�
 updates-performance-notice-got-it = Понятно
 # Context: performance_statistics
 updates-performance-notice-turn-off = Отключить
+# Context: updater_status
+updates-status-not-checked = Обновления ещё не проверялись.
+# Context: updater_status
+updates-status-not-checked-channel = Обновления на этом канале ещё не проверялись.
+# Context: updater_status
+updates-status-checking = Проверка обновлений…
+# Context: updater_status
+updates-status-up-to-date = У вас последняя версия Leech на этом канале.
+# Context: updater_status
+updates-status-available = Доступна версия Leech { $version }.
+# Context: updater_status
+updates-status-available-flatpak = Доступна версия Leech { $version }. Обновите через `flatpak update` или центр приложений.
+# Context: updater_status
+updates-status-available-nix = Доступна версия Leech { $version }. Обновите её через Nix.
+# Context: updater_status
+updates-status-available-command = Доступна версия Leech { $version }. Для обновления выполните `{ $command }`.
+# Context: updater_status
+updates-status-downloading = Загрузка Leech { $version }…
+# Context: updater_status
+updates-status-downloaded = Обновление загружено и проверено. Перезапустите, когда будете готовы.
+# Context: updater_status
+updates-status-ready = Обновление готово. Закройте Leech, чтобы установить его и перезапустить.
+# Context: updater_status
+updates-status-preparing = Подготовка к перезапуску…
+# Context: updater_status
+updates-status-wait = Подождите минуту между проверками обновлений.
+# Context: updater_status
+updates-status-worker-stopped = Процесс обновления остановился. Попробуйте ещё раз.
+# Context: updater_status
+updates-status-failed = Не удалось обновить: { $error }
+# Context: updater_status
+updates-status-no-preferences = Загрузите настройки обновлений или выберите их, чтобы включить проверку.
+# Context: updater_status
+updates-status-preview-available = Синтетический предпросмотр: доступна версия Leech 99.0.0. Сетевой запрос не выполнялся.
+# Context: updater_status
+updates-status-preview-ready = Синтетический предпросмотр: обновление готово к перезапуску. Файлы не загружались.
+# Context: updater_status
+updates-status-preview-restarted = Синтетический предпросмотр: перезапуск смоделирован. Установка не изменялась.
+# Context: updater_status
+updates-error-offline = Не удалось связаться с GitHub. Проверьте подключение и попробуйте ещё раз.
+# Context: updater_status
+updates-error-rate-limited = Достигнут лимит запросов к GitHub. Попробуйте позже.
+# Context: updater_status
+updates-error-no-release = На этом канале пока нет опубликованных версий.
+# Context: updater_status
+updates-error-github = GitHub не смог отдать обновление. Попробуйте позже.
+# Context: updater_status
+updates-error-interrupted = Загрузка обновления прервалась.
+# Context: updater_status
+updates-error-disk = Не удалось записать обновление. Проверьте свободное место на диске.
+# Context: updater_status
+updates-error-not-writable = Папка установки недоступна для записи. Переместите Leech в папку с правом записи и попробуйте ещё раз.
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = Ранние сборки с новейшими изменениями. Ночные выпуски могут быть менее надежными.
 # Context: update_settings
