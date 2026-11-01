@@ -1,6 +1,43 @@
 //! Device update preferences and host-owned status. No transport or filesystem work lives here.
 use crate::{MessagingUi, design, icons};
 
+/// What the updater said last: a catalog key and its arguments, worded when drawn so it
+/// follows the interface language. An argument that is itself a key (a known error) is
+/// translated too; versions and rare error details show as given.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Status {
+	key: &'static str,
+	args: Vec<(&'static str, String)>,
+}
+
+impl Status {
+	pub const fn new(key: &'static str) -> Self {
+		Self {
+			key,
+			args: Vec::new(),
+		}
+	}
+
+	#[must_use]
+	pub fn with(mut self, name: &'static str, value: impl Into<String>) -> Self {
+		self.args.push((name, value.into()));
+		self
+	}
+
+	pub fn text(&self) -> String {
+		let values: Vec<(&'static str, String)> = self
+			.args
+			.iter()
+			.map(|(name, value)| (*name, crate::i18n::translate_if_key(value)))
+			.collect();
+		let values: Vec<(&'static str, &str)> = values
+			.iter()
+			.map(|(name, value)| (*name, value.as_str()))
+			.collect();
+		crate::i18n::translate_args(self.key, &values)
+	}
+}
+
 /// One release in the update log, already reduced to plain text by the host.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LogEntry {
@@ -14,7 +51,7 @@ pub struct LogEntry {
 pub struct Updates {
 	pub auto_update: bool,
 	pub nightly: bool,
-	pub status: String,
+	pub status: Status,
 	pub busy: bool,
 	pub available: bool,
 	pub ready: bool,
@@ -44,7 +81,7 @@ impl Default for Updates {
 		Self {
 			auto_update: true,
 			nightly: false,
-			status: "Updates have not been checked yet.".into(),
+			status: Status::new("updates-status-not-checked"),
 			busy: false,
 			available: false,
 			ready: false,
@@ -102,7 +139,7 @@ impl MessagingUi {
 			)
 		};
 		let label = crate::i18n::translate_if_key(label);
-		let status = self.updates.status.clone();
+		let status = self.updates.status.text();
 		// Reserve the row and interact with it *before* the dismiss button below is added, so
 		// that button (registered after, "updates-shows-update-banner-on-top") keeps first claim on an overlapping click.
 		let (rect, response) =
@@ -146,10 +183,7 @@ impl MessagingUi {
 		});
 		response
 			.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), &label));
-		let open = !dismiss
-			&& response
-				.on_hover_text(crate::i18n::translate_if_key(&status))
-				.clicked();
+		let open = !dismiss && response.on_hover_text(status).clicked();
 		if dismiss {
 			self.updates.banner_dismissed = Some(ready);
 		}
@@ -385,7 +419,7 @@ impl MessagingUi {
 						);
 						ui.add(
 							egui::Label::new(
-								egui::RichText::new(&self.updates.status)
+								egui::RichText::new(self.updates.status.text())
 									.size(13.0)
 									.color(colors.muted),
 							)
@@ -691,7 +725,75 @@ impl MessagingUi {
 
 #[cfg(test)]
 mod tests {
+	use super::Status;
 	use crate::{MessagingUi, State};
+
+	#[test]
+	fn updater_statuses_are_worded_in_every_catalog() {
+		let keys = [
+			"not-checked",
+			"not-checked-channel",
+			"checking",
+			"up-to-date",
+			"available",
+			"available-flatpak",
+			"available-nix",
+			"available-command",
+			"downloading",
+			"downloaded",
+			"ready",
+			"preparing",
+			"wait",
+			"worker-stopped",
+			"no-preferences",
+			"preview-available",
+			"preview-ready",
+			"preview-restarted",
+		];
+		let errors = [
+			"offline",
+			"rate-limited",
+			"no-release",
+			"github",
+			"interrupted",
+			"disk",
+			"not-writable",
+		];
+		for language in crate::i18n::Language::ALL {
+			crate::i18n::set_current(language);
+			let statuses = keys
+				.iter()
+				.map(|key| {
+					Status::new(format!("updates-status-{key}").leak())
+						.with("version", "1.2.3")
+						.with("command", "apt upgrade")
+				})
+				.chain(errors.iter().map(|error| {
+					Status::new("updates-status-failed")
+						.with("error", format!("updates-error-{error}"))
+				}));
+			for status in statuses {
+				let text = status.text();
+				assert!(
+					!text.contains("Unknown localization key") && !text.contains("updates-"),
+					"{language:?}: {text}"
+				);
+			}
+			let up_to_date = Status::new("updates-status-up-to-date").text();
+			assert!(
+				language.resolved() == crate::i18n::Language::English
+					|| up_to_date != "Leech is up to date on this channel.",
+				"{language:?} is untranslated"
+			);
+		}
+		crate::i18n::set_current(crate::i18n::Language::English);
+		assert_eq!(
+			Status::new("updates-status-failed")
+				.with("error", "Cannot inspect update storage.")
+				.text(),
+			"Update failed: \u{2068}Cannot inspect update storage.\u{2069}"
+		);
+	}
 
 	/// Rectangles of the banner's text and icon shapes, in paint order.
 	fn scan(

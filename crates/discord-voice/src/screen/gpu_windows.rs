@@ -310,13 +310,20 @@ impl Converter {
 				.cast::<ID3D10Multithread>()
 				.map_err(|_| FAILED)?
 				.SetMultithreadProtected(true);
-			// A game keeping the GPU busy must not delay the capture's small conversions: raise
-			// this device's scheduling priority, as OBS does. Windows may refuse; that is harmless.
+			// A game keeping the GPU busy must not delay the capture's small conversions or the
+			// encoder's reads of them: raise this device's priority and the process's GPU
+			// scheduling class, as OBS does. Only REALTIME needs administrator rights; Windows
+			// may still refuse, which is harmless.
+			// ponytail: the class stays high after the share ends; Leech's own drawing is light.
 			let priority = device
 				.cast::<IDXGIDevice>()
 				.and_then(|dxgi| dxgi.SetGPUThreadPriority(7));
+			let class = windows::Wdk::Graphics::Direct3D::D3DKMTSetProcessSchedulingPriorityClass(
+				windows::Win32::System::Threading::GetCurrentProcess(),
+				windows::Wdk::Graphics::Direct3D::D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH,
+			);
 			crate::stream_log::event(format_args!(
-				"capture: {}x{} picture to {}x{} NV12 on the GPU, priority {}",
+				"capture: {}x{} picture to {}x{} NV12 on the GPU, priority {}, process class {}",
 				input.0,
 				input.1,
 				output.0,
@@ -324,6 +331,11 @@ impl Converter {
 				match priority {
 					Ok(()) => "raised".to_owned(),
 					Err(error) => format!("refused ({:#x})", error.code().0),
+				},
+				if class.is_ok() {
+					"high".to_owned()
+				} else {
+					format!("refused ({:#x})", class.0)
 				}
 			));
 			let video: ID3D11VideoDevice = device.cast().map_err(|_| FAILED)?;
@@ -909,16 +921,43 @@ mod tests {
 		}
 	}
 
+	/// The game-like load alone, in its own process like a real game, for
+	/// `LEECH_BENCH_GPU_LOAD_SECONDS` (20 by default) at `LEECH_BENCH_GPU_LOAD` iterations.
+	#[test]
+	#[ignore]
+	fn gpu_load_alone() {
+		let iterations = std::env::var("LEECH_BENCH_GPU_LOAD")
+			.ok()
+			.and_then(|value| value.parse().ok())
+			.unwrap_or(30);
+		let seconds = std::env::var("LEECH_BENCH_GPU_LOAD_SECONDS")
+			.ok()
+			.and_then(|value| value.parse().ok())
+			.unwrap_or(20);
+		let load = GpuLoad::start(iterations);
+		std::thread::sleep(std::time::Duration::from_secs(seconds));
+		eprintln!(
+			"game load: {:.0} fps",
+			f64::from(load.finish()) / seconds as f64
+		);
+	}
+
 	/// Streams synthetic 1440p pictures through the GPU path at 60 fps and reports the time
 	/// from capture to encoded frame, optionally while a game-like load keeps the GPU busy.
 	/// `cargo test -p discord-voice compare_gpu_stream_pipeline -- --ignored --nocapture`, with
-	/// `LEECH_BENCH_GPU_LOAD=<shader iterations>` for the load (a few hundred saturates a GPU).
+	/// `LEECH_BENCH_GPU_LOAD=<shader iterations>` for the load (a few hundred saturates a GPU);
+	/// [`gpu_load_alone`] runs it in another process instead. `LEECH_BENCH_DEFAULT_TIMER=1`
+	/// keeps Windows' 15.6 ms timer tick, as when a busy system does not honour the 1 ms one.
 	#[test]
 	#[ignore]
 	fn compare_gpu_stream_pipeline() {
 		const INPUT: (u32, u32) = (2560, 1440);
 		const OUTPUT: (u32, u32) = (1920, 1080);
 		const FRAMES: usize = 600;
+		// The share's encoder thread runs with the 1 ms timer and MMCSS; so does this one.
+		let _resolution = std::env::var_os("LEECH_BENCH_DEFAULT_TIMER")
+			.is_none()
+			.then(crate::timer::Resolution::acquire);
 		let (device, immediate) = windows_capture::d3d11::create_d3d_device().unwrap();
 		let (device, immediate): (ID3D11Device, ID3D11DeviceContext) =
 			unsafe { (rebind(&device).unwrap(), rebind(&immediate).unwrap()) };

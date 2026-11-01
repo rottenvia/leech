@@ -6,9 +6,11 @@ use crate::screen::i420_to_nv12;
 use std::{
 	marker::PhantomData,
 	rc::Rc,
+	sync::mpsc,
 	time::{Duration, Instant},
 };
 use windows::{
+	Win32::Foundation::E_NOTIMPL,
 	Win32::{
 		Foundation::LUID,
 		Graphics::{
@@ -22,7 +24,7 @@ use windows::{
 		},
 		System::Variant::VARIANT,
 	},
-	core::Interface,
+	core::{IUnknown, Interface, Ref, implement},
 };
 
 const UNAVAILABLE: &str = "Windows hardware video encoding is unavailable";
@@ -61,6 +63,10 @@ pub(crate) struct Encoder {
 	name: String,
 	transform: IMFTransform,
 	events: IMFMediaEventGenerator,
+	/// Receives the transform's events from [`EventSink`]; `waiting` while one is requested.
+	sink: IMFAsyncCallback,
+	received: mpsc::Receiver<windows::core::Result<u32>>,
+	waiting: bool,
 	codec: ICodecAPI,
 	_activate: Activated,
 	_manager: Option<IMFDXGIDeviceManager>,
@@ -75,6 +81,32 @@ pub(crate) struct Encoder {
 }
 
 struct Activated(IMFActivate);
+
+/// Hands the transform's next event to the encoder thread the moment it arrives. Waiting is
+/// then a blocking receive instead of a poll: its 1 ms sleeps grew to whole 15.6 ms timer
+/// ticks when the system was busy, twice per picture, which held a share under a game to a
+/// few frames a second.
+#[implement(IMFAsyncCallback)]
+struct EventSink(mpsc::SyncSender<windows::core::Result<u32>>);
+
+impl IMFAsyncCallback_Impl for EventSink_Impl {
+	fn GetParameters(&self, _: *mut u32, _: *mut u32) -> windows::core::Result<()> {
+		Err(E_NOTIMPL.into())
+	}
+
+	fn Invoke(&self, result: Ref<'_, IMFAsyncResult>) -> windows::core::Result<()> {
+		// SAFETY: The request's state is the transform's event generator (see `wait_until`).
+		let kind = result.ok().and_then(|result| unsafe {
+			let events: IMFMediaEventGenerator = result.GetState()?.cast()?;
+			let event = events.EndGetEvent(result)?;
+			event.GetStatus()?.ok()?;
+			event.GetType()
+		});
+		// At most one request is outstanding, so this never finds the channel full.
+		let _ = self.0.try_send(kind);
+		Ok(())
+	}
+}
 
 impl Drop for Activated {
 	fn drop(&mut self) {
@@ -246,6 +278,7 @@ impl Encoder {
 				output_buffer_size(&info, max_buffer_bytes)?;
 			}
 			let events = transform.cast().map_err(|_| UNAVAILABLE)?;
+			let (send, received) = mpsc::sync_channel(1);
 			let name = friendly_name(&activate.0);
 			transform
 				.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)
@@ -257,6 +290,9 @@ impl Encoder {
 				name,
 				transform,
 				events,
+				sink: EventSink(send).into(),
+				received,
+				waiting: false,
 				codec,
 				_activate: activate,
 				_manager: manager,
@@ -408,27 +444,27 @@ impl Encoder {
 		// encoder silent for a whole second is treated as failed and reopened.
 		let deadline = Instant::now() + Duration::from_secs(1);
 		while !ready(self) {
-			// SAFETY: Event polling stays on the worker that owns this MFT.
-			let event = unsafe { self.events.GetEvent(MF_EVENT_FLAG_NO_WAIT) };
-			match event {
-				Ok(event) => unsafe {
-					if event.GetStatus().map_err(|_| FAILED)?.is_err() {
-						return Err(FAILED);
-					}
-					match event.GetType().map_err(|_| FAILED)? as i32 {
-						kind if kind == METransformNeedInput.0 => self.need_input += 1,
-						kind if kind == METransformHaveOutput.0 => self.have_output += 1,
-						kind if kind == MEError.0 => return Err(FAILED),
-						_ => {}
-					}
-				},
-				Err(error) if error.code() == MF_E_NO_EVENTS_AVAILABLE => {
-					if Instant::now() >= deadline {
-						return Err(FAILED);
-					}
-					std::thread::sleep(Duration::from_millis(1));
+			if !self.waiting {
+				// SAFETY: One request at a time, from the worker that owns this MFT.
+				unsafe {
+					self.events.BeginGetEvent(
+						&self.sink,
+						&self.events.cast::<IUnknown>().map_err(|_| FAILED)?,
+					)
 				}
-				Err(_) => return Err(FAILED),
+				.map_err(|_| FAILED)?;
+				self.waiting = true;
+			}
+			let kind = self
+				.received
+				.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+				.map_err(|_| FAILED)?;
+			self.waiting = false;
+			match kind.map_err(|_| FAILED)? as i32 {
+				kind if kind == METransformNeedInput.0 => self.need_input += 1,
+				kind if kind == METransformHaveOutput.0 => self.have_output += 1,
+				kind if kind == MEError.0 => return Err(FAILED),
+				_ => {}
 			}
 		}
 		Ok(())
@@ -507,6 +543,11 @@ impl Drop for Encoder {
 			let _ = self
 				.transform
 				.ProcessMessage(MFT_MESSAGE_NOTIFY_END_STREAMING, 0);
+			// Ends a still pending event request, which holds the transform until answered.
+			let _ = self
+				.transform
+				.cast::<IMFShutdown>()
+				.and_then(|transform| transform.Shutdown());
 		}
 	}
 }

@@ -268,7 +268,7 @@ pub(super) fn create_stage() -> Result<Staged, String> {
 		.create(true)
 		.truncate(false)
 		.open(&lock_path)
-		.map_err(|_| "The installation folder is not writable.".to_owned())?;
+		.map_err(|_| "updates-error-not-writable".to_owned())?;
 	lock.try_lock()
 		.map_err(|_| "Another Leech instance is preparing update storage.".to_owned())?;
 	// One bounded staging directory per installation; discard leftovers only after their owner exits.
@@ -341,7 +341,9 @@ pub(super) fn create_stage() -> Result<Staged, String> {
 		use std::os::unix::fs::DirBuilderExt;
 		builder.mode(0o700);
 	}
-	builder.create(&directory).map_err(|_| "The installation folder is not writable. Move Leech to a writable folder and try again.".to_owned())?;
+	builder
+		.create(&directory)
+		.map_err(|_| "updates-error-not-writable".to_owned())?;
 	fs::write(directory.join("owner"), b"leech-updater-v1")
 		.map_err(|_| "Cannot mark update storage ownership.".to_owned())?;
 	Ok(Staged {

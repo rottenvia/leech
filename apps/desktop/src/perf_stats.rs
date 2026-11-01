@@ -77,8 +77,9 @@ impl Stats {
 		}
 	}
 
-	/// Sends the lines not sent yet in the background, at launch and then hourly, while
-	/// `allowed`. A failed send is retried at the next one.
+	/// Sends the lines not sent yet in the background, at launch, soon after a finished
+	/// stream is written and otherwise hourly, while `allowed`. A failed send is retried at
+	/// the next one.
 	pub fn send(&mut self, runtime: &tokio::runtime::Runtime, allowed: bool) {
 		let Some(directory) = self
 			.directory
@@ -192,6 +193,12 @@ impl Stats {
 			.into_iter()
 			.map(|stream| serde_json::json!({ "at": at, "stream": stream }))
 			.collect();
+		if !streams.is_empty() {
+			// A finished stream goes out soon instead of with the hourly send, once the
+			// writer below has appended it.
+			let soon = Instant::now() + Duration::from_secs(10);
+			self.next_send = Some(self.next_send.map_or(soon, |next| next.min(soon)));
+		}
 		self.buckets = Default::default();
 		self.max_micros = 0;
 		// Off the UI thread: the disk may be slow or asleep.

@@ -3992,6 +3992,58 @@ updates-performance-notice-never = Nikdy zprávy, jména, servery, kanály, úda
 updates-performance-notice-got-it = Rozumím
 # Context: performance_statistics
 updates-performance-notice-turn-off = Vypnout
+# Context: updater_status
+updates-status-not-checked = Aktualizace zatím nebyly zkontrolovány.
+# Context: updater_status
+updates-status-not-checked-channel = Aktualizace na tomto kanálu zatím nebyly zkontrolovány.
+# Context: updater_status
+updates-status-checking = Hledání aktualizací…
+# Context: updater_status
+updates-status-up-to-date = Leech je na tomto kanálu aktuální.
+# Context: updater_status
+updates-status-available = Je k dispozici Leech { $version }.
+# Context: updater_status
+updates-status-available-flatpak = Je k dispozici Leech { $version }. Aktualizujte příkazem `flatpak update` nebo ve správci softwaru.
+# Context: updater_status
+updates-status-available-nix = Je k dispozici Leech { $version }. Aktualizujte ho přes Nix.
+# Context: updater_status
+updates-status-available-command = Je k dispozici Leech { $version }. Aktualizujte příkazem `{ $command }`.
+# Context: updater_status
+updates-status-downloading = Stahování Leech { $version }…
+# Context: updater_status
+updates-status-downloaded = Aktualizace je stažená a ověřená. Restartujte, až budete připraveni.
+# Context: updater_status
+updates-status-ready = Aktualizace je připravena. Zavřete Leech, aby se nainstalovala a restartovala.
+# Context: updater_status
+updates-status-preparing = Příprava restartu…
+# Context: updater_status
+updates-status-wait = Mezi kontrolami aktualizací počkejte minutu.
+# Context: updater_status
+updates-status-worker-stopped = Proces aktualizace se zastavil. Zkuste to znovu.
+# Context: updater_status
+updates-status-failed = Aktualizace selhala: { $error }
+# Context: updater_status
+updates-status-no-preferences = Načtěte předvolby aktualizací nebo zvolte nastavení, abyste zapnuli kontrolu.
+# Context: updater_status
+updates-status-preview-available = Syntetický náhled: je k dispozici Leech 99.0.0. Neproběhl žádný síťový požadavek.
+# Context: updater_status
+updates-status-preview-ready = Syntetický náhled: aktualizace je připravena k restartu. Nebyly staženy žádné soubory.
+# Context: updater_status
+updates-status-preview-restarted = Syntetický náhled: restart byl simulován. Instalace se nezměnila.
+# Context: updater_status
+updates-error-offline = Nelze se spojit s GitHubem. Zkontrolujte připojení a zkuste to znovu.
+# Context: updater_status
+updates-error-rate-limited = Byl dosažen limit aktualizací GitHubu. Zkuste to později.
+# Context: updater_status
+updates-error-no-release = Na tomto kanálu zatím není zveřejněna žádná verze.
+# Context: updater_status
+updates-error-github = GitHub nemohl aktualizaci poskytnout. Zkuste to později.
+# Context: updater_status
+updates-error-interrupted = Stahování aktualizace bylo přerušeno.
+# Context: updater_status
+updates-error-disk = Aktualizaci nelze zapsat. Zkontrolujte volné místo na disku.
+# Context: updater_status
+updates-error-not-writable = Do složky instalace nelze zapisovat. Přesuňte Leech do zapisovatelné složky a zkuste to znovu.
 # Context: update_settings
 updates-update-settings-early-builds-with-the-newest-changes-nightly-releases-can-be = Brzy staví s nejnovějšími změnami. Noční vydání může být méně spolehlivé.
 # Context: update_settings

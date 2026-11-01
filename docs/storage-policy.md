@@ -22,7 +22,8 @@ know. The per-second `stream.log` is never sent: each finished share or watched 
 seconds or more is summed up instead, in one `{"at", "stream"}` line of `performance.jsonl`
 (its size, frame rate and Mbps asked for, the encoder, average and slow-second frame rates,
 encode and send times, bitrate, loss, round trip, repairs and GPU and CPU use), written with
-the next summary or at close, even if Leech drew no frame meanwhile. Nothing is sent before everyone
+the next summary or at close, even if Leech drew no frame meanwhile, and sent about ten seconds
+later instead of with the hourly send. Nothing is sent before everyone
 has been told once, in a notice listing what is kept and what is sent; it counts as shown once
 it is on screen, answered or not, recorded by an empty `logs/performance.notice`. While the
 receiver address in `perf_stats.rs` is empty, nothing is sent and no notice is due.

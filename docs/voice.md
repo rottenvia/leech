@@ -637,7 +637,17 @@ A game that saturates the CPU used to starve normal-priority threads, freezing v
 the stream together. Media loops now join the MMCSS `Audio` task and audio callbacks
 `Pro Audio` (priority 13 and 15 instead of 0 on Windows 11), and the capture device asks for
 the highest GPU scheduling priority, as OBS does. Windows caps MMCSS threads' share, so
-the game keeps most of the machine. Behavior under a real game load is not yet measured.
+the game keeps most of the machine.
+
+Shares of games still fell to 12-34 encoded frames per second of 60 (owner's statistics,
+2026-10-31), with 18 ms average encodes. The hardware encoder's events were polled with
+1 ms sleeps, twice per picture, and a busy system stretched each sleep to a 15.6 ms timer
+tick. Since 0.1.12 the encoder thread blocks on Media Foundation's event callback
+(`BeginGetEvent`) instead, and a share raises the process's GPU scheduling class to HIGH
+(REALTIME needs administrator rights). Measured on one RTX 3060 desktop with CS2 running,
+1440p to 1080p60, 600 frames per run, two runs each: the polling encoder once fell to
+22 fps (p50 15.5 ms, 283 late frames), while the event-driven one held 59-60 fps (p50
+3.5-4.7 ms, worst 44-86 ms). A real viewer's frame rate under a game is not yet measured.
 
 ### Camera capture and delivery
 
