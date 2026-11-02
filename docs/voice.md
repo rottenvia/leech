@@ -568,8 +568,11 @@ excluding Leech and its child processes across outputs. This requires Windows bu
 (Windows 11 or Windows Server 2022; ordinary Windows 10 22H2 is older). Leech tries float
 with native conversion first, then the plain float and 16-bit PCM setups of Microsoft's
 sample, after system audio failed to start on a tester's Windows 11 23H2 PC. If none starts, or the
-worker stops later, the share continues as video only and a warning names the failing
-WASAPI step and HRESULT. There is no whole-output fallback. Neither adapter records to disk.
+worker stops later, the share continues as video only, a warning names the failing
+WASAPI step and HRESULT, and `stream.log` records it. There is no whole-output fallback.
+Neither adapter records to disk. Activation runs on the Windows thread pool, so it failed
+with `RPC_E_CHANGED_MODE` once CPAL's device-change callbacks had left a pool thread in a
+single-threaded apartment; `vendor/cpal` patches those callbacks (see its `SEREIN-PATCH.md`).
 
 Native contracts: [PulseAudio per-stream monitoring](https://www.freedesktop.org/wiki/Software/PulseAudio/Documentation/Developer/Clients/WritingVolumeControlUIs/)
 and [Microsoft process-loopback capture](https://learn.microsoft.com/en-us/samples/microsoft/windows-classic-samples/applicationloopbackaudio-sample/).

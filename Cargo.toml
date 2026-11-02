@@ -6,7 +6,7 @@ default-members = ["apps/desktop"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.13"
+version = "0.1.14"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT OR Apache-2.0"
@@ -203,6 +203,8 @@ gpu-allocator = { path = "vendor/gpu-allocator" }
 hpke-rs = { path = "vendor/hpke-rs" }
 # Native DAVE does not need OpenMLS browser timers; see vendor/davey/SEREIN-PATCH.md.
 davey = { path = "vendor/davey" }
+# Endpoint notifications must not leave Windows pool threads in an STA; see vendor/cpal/SEREIN-PATCH.md.
+cpal = { path = "vendor/cpal" }
 
 # Linux login uses GTK4/WebKit6; exclude obsolete GTK3 declarations from the lockfile.
 wry = { path = "vendor/wry" }

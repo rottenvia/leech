@@ -679,6 +679,7 @@ impl Capture {
 				Ok(audio) => capture.audio = Some(audio),
 				// ponytail: leaks one short string per share whose audio failed to start.
 				Err(error) => {
+					crate::stream_log::event(format_args!("audio: could not start ({error})"));
 					capture.audio_warning = Some(Box::leak(
 						format!("Sharing without system audio: it could not start ({error})")
 							.into_boxed_str(),
@@ -693,6 +694,7 @@ impl Capture {
 	pub(crate) fn audio_lost(&mut self) -> Option<&'static str> {
 		if self.audio.as_ref().is_some_and(audio::Audio::failed) {
 			self.audio = None;
+			crate::stream_log::event("audio: stopped");
 			return Some("System audio stopped; sharing continues without it");
 		}
 		self.audio_warning.take()
