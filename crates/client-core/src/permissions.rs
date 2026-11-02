@@ -1011,6 +1011,10 @@ impl State {
 			self.status = "This message cannot be deleted with the current access";
 			return None;
 		}
+		if self.own_deletions.len() >= crate::OWN_DELETIONS {
+			self.own_deletions.pop_front();
+		}
+		self.own_deletions.push_back(message);
 		Some(Command::Delete { channel, message })
 	}
 	pub(crate) fn permission_access(&self) -> Option<(Option<bool>, Option<bool>)> {

@@ -89,11 +89,11 @@ impl DiscordApi {
 				return Err(Failure::Protocol);
 			}
 			return self
-				.request_with_captcha(
+				.request_from(
+					"Add Friend",
 					Method::POST,
 					"/users/@me/relationships",
 					Some(json!({"username":username,"discriminator":null})),
-					crate::MAX_WIRE,
 					captcha,
 					challenge,
 				)
@@ -152,16 +152,9 @@ impl DiscordApi {
 				};
 				let path = format!("/users/@me/relationships/{user}");
 				if *accept {
-					self.request_with_captcha(
-						method,
-						&path,
-						body,
-						crate::MAX_WIRE,
-						captcha,
-						challenge,
-					)
-					.await
-					.map(|_| ())
+					self.request_from("Friends", method, &path, body, captcha, challenge)
+						.await
+						.map(|_| ())
 				} else {
 					self.request(method, &path, body).await.map(|_| ())
 				}
@@ -174,21 +167,14 @@ impl DiscordApi {
 				};
 				let path = format!("/users/@me/relationships/{user}");
 				if *friend {
-					self.request_with_captcha(
-						method,
-						&path,
-						body,
-						crate::MAX_WIRE,
-						captcha,
-						challenge,
-					)
-					.await
-					.map(|_| ())
-					.map_err(|failure| {
-						failure.protocol_at(
-							"Friend request rejected · check the recipient's privacy settings",
-						)
-					})
+					self.request_from("User Profile", method, &path, body, captcha, challenge)
+						.await
+						.map(|_| ())
+						.map_err(|failure| {
+							failure.protocol_at(
+								"Friend request rejected · check the recipient's privacy settings",
+							)
+						})
 				} else {
 					self.request(method, &path, body).await.map(|_| ())
 				}
@@ -549,6 +535,13 @@ mod tests {
 			),
 		];
 		for (action, route, payload, status, body, expected) in cases {
+			// The official client names where a friendship write started.
+			let location = match &action {
+				Action::AddFriend { .. } => Some("Add Friend"),
+				Action::ResolveFriend { accept: true, .. } => Some("Friends"),
+				Action::ProfileFriend { friend: true, .. } => Some("User Profile"),
+				_ => None,
+			};
 			let server = async {
 				let (mut socket, _) = listener.accept().await.unwrap();
 				let mut bytes = Vec::new();
@@ -573,6 +566,16 @@ mod tests {
 						}
 						assert!(headers.starts_with(&format!("{route} HTTP/1.1\r\n")));
 						assert!(headers.contains("SYNTHETIC_USER_ACTION_TOKEN"));
+						let context = headers.lines().find_map(|h| {
+							h.to_ascii_lowercase()
+								.starts_with("x-context-properties: ")
+								.then(|| h["x-context-properties: ".len()..].to_owned())
+						});
+						assert_eq!(
+							context,
+							location.map(client_core::fingerprint::context_properties),
+							"{route}"
+						);
 						assert_eq!(
 							if len == 0 {
 								None

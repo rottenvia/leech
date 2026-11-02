@@ -13,6 +13,8 @@ pub(super) struct Friends {
 	tab: Tab,
 	query: String,
 	username: String,
+	/// A request from the Add Friend field is in flight.
+	sending: bool,
 	outgoing: bool,
 	list_key: Option<ListKey>,
 	list_query: String,
@@ -181,6 +183,14 @@ impl MessagingUi {
 			}
 			if send && let Some(command) = state.add_friend(&self.friends.username) {
 				commands.push(command);
+				self.friends.sending = true;
+			}
+			// Like Discord, a sent request empties the field for the next name.
+			if self.friends.sending && !state.user_action_pending() {
+				self.friends.sending = false;
+				if state.friend_request_sent(&self.friends.username) {
+					self.friends.username.clear();
+				}
 			}
 			if state.demo {
 				design::hint(
@@ -1080,6 +1090,47 @@ mod tests {
 			!friends.sync_list(state),
 			"unchanged paint rebuilt the list"
 		);
+	}
+
+	#[test]
+	fn a_sent_friend_request_clears_the_field_and_a_refused_one_keeps_it() {
+		for result in [Ok(()), Err(client_core::auth::Failure::Protocol)] {
+			let ctx = egui::Context::default();
+			let mut state = test_support::friends_demo_state();
+			let mut view = MessagingUi::default();
+			view.friends.tab = Tab::Add;
+			view.friends.username = " @New_Pal ".into();
+			let frame = |view: &mut MessagingUi, state: &mut State| {
+				let mut commands = vec![];
+				ctx.run_ui(Default::default(), |ui| {
+					view.add_friend_page(ui, state, &mut commands)
+				})
+				.drop_without_applying_deltas();
+				commands
+			};
+			assert!(frame(&mut view, &mut state).is_empty());
+			// What the Send button does.
+			let Some(Command::UserAction {
+				action, request, ..
+			}) = state.add_friend(&view.friends.username)
+			else {
+				panic!("the request starts");
+			};
+			view.friends.sending = true;
+			frame(&mut view, &mut state);
+			assert_eq!(view.friends.username, " @New_Pal ", "kept while sending");
+			apply(
+				&mut state,
+				Event::UserAction(Relationship::Written {
+					action,
+					request,
+					result,
+				}),
+			);
+			frame(&mut view, &mut state);
+			assert_eq!(view.friends.username.is_empty(), result.is_ok());
+			assert!(!view.friends.sending);
+		}
 	}
 
 	#[test]

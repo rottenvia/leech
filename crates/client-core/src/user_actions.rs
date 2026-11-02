@@ -219,7 +219,8 @@ pub struct Actions {
 	// Friendship is required only for the existing friend-only navigation callers.
 	dm_origin: Option<(Option<Id>, u64, bool)>,
 	opened_dm: Option<(Id, Id)>,
-	status: Option<&'static str>,
+	/// One-shot error toast text, also used for message deletes that the service refused.
+	pub(crate) status: Option<&'static str>,
 }
 impl Actions {
 	pub(crate) fn reset(&mut self) {
@@ -488,6 +489,11 @@ impl State {
 			return None;
 		}
 		self.request_user_action(Action::AddFriend { username })
+	}
+	/// Whether the service accepted the last friend request for `typed`, as entered.
+	pub fn friend_request_sent(&self, typed: &str) -> bool {
+		let username = typed.trim().trim_start_matches('@').to_ascii_lowercase();
+		self.user_actions.last_requested.as_deref() == Some(username.as_str())
 	}
 	pub fn add_profile_friend(&mut self, user: Id) -> Option<Command> {
 		if !self.profile_friend_action_allowed(user)

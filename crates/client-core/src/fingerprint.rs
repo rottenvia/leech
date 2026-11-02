@@ -93,6 +93,13 @@ pub fn super_properties() -> String {
 	base64(properties().as_bytes())
 }
 
+/// `X-Context-Properties` header value naming the UI `location` of a write, e.g. "Add Friend".
+/// Locations are fixed client labels without quotes or backslashes.
+pub fn context_properties(location: &'static str) -> String {
+	debug_assert!(!location.contains(['"', '\\']));
+	base64(format!(r#"{{"location":"{location}"}}"#).as_bytes())
+}
+
 fn base64(input: &[u8]) -> String {
 	const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 	let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
@@ -152,6 +159,19 @@ mod tests {
 			assert_eq!(base64(b"foo"), "Zm9v");
 			assert_eq!(base64(b"foobar"), "Zm9vYmFy");
 		}
+		// The values discord.py-self sends for these locations.
+		assert_eq!(
+			context_properties("Add Friend"),
+			"eyJsb2NhdGlvbiI6IkFkZCBGcmllbmQifQ=="
+		);
+		assert_eq!(
+			context_properties("Friends"),
+			"eyJsb2NhdGlvbiI6IkZyaWVuZHMifQ=="
+		);
+		assert_eq!(
+			context_properties("User Profile"),
+			"eyJsb2NhdGlvbiI6IlVzZXIgUHJvZmlsZSJ9"
+		);
 	}
 	#[test]
 	fn nonce_is_a_decimal_snowflake() {

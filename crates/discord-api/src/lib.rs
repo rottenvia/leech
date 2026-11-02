@@ -282,6 +282,7 @@ impl DiscordApi {
 			max_bytes,
 			None,
 			None,
+			None,
 		)
 		.await
 	}
@@ -297,6 +298,7 @@ impl DiscordApi {
 			path,
 			Some(RequestContent::Multipart { content_type, body }),
 			max_bytes,
+			None,
 			None,
 			None,
 		)
@@ -319,9 +321,34 @@ impl DiscordApi {
 			max_bytes,
 			retry,
 			challenge,
+			None,
 		)
 		.await
 	}
+	/// Like [`Self::request_with_captcha`], naming the UI `location` that started the write in
+	/// `X-Context-Properties`, as the official client does for friend requests.
+	#[allow(clippy::too_many_arguments)]
+	async fn request_from(
+		&self,
+		location: &'static str,
+		method: Method,
+		path: &str,
+		body: Option<serde_json::Value>,
+		retry: Option<&client_core::captcha::Retry>,
+		challenge: Option<&mut Option<client_core::captcha::Challenge>>,
+	) -> Result<Vec<u8>, Failure> {
+		self.request_with_content(
+			method,
+			path,
+			body.map(RequestContent::Json),
+			MAX_WIRE,
+			retry,
+			challenge,
+			Some(location),
+		)
+		.await
+	}
+	#[allow(clippy::too_many_arguments)]
 	async fn request_with_content(
 		&self,
 		method: Method,
@@ -330,6 +357,7 @@ impl DiscordApi {
 		max_bytes: usize,
 		retry: Option<&client_core::captcha::Retry>,
 		mut challenge: Option<&mut Option<client_core::captcha::Challenge>>,
+		location: Option<&'static str>,
 	) -> Result<Vec<u8>, Failure> {
 		// Only typed adapter methods construct paths. Never accept a URL or route from UI/content.
 		if !path.starts_with('/')
@@ -386,6 +414,12 @@ impl DiscordApi {
 					request = request.header(name, value);
 				}
 			}
+		}
+		if let Some(location) = location {
+			request = request.header(
+				"x-context-properties",
+				client_core::fingerprint::context_properties(location),
+			);
 		}
 		if let Some(body) = body {
 			request = match body {
@@ -1436,8 +1470,13 @@ impl DiscordApi {
 						channel,
 						id: message,
 					},
-					Err(Failure::Forbidden) => Event::Unavailable(channel),
-					Err(f) => Event::Failure(f),
+					// A refused delete says nothing about channel access, so the conversation stays.
+					Err(failure) if failure.ends_session() => Event::Failure(failure),
+					Err(failure) => Event::DeleteFailed {
+						channel,
+						message,
+						failure,
+					},
 				}
 			}
 			Command::Pin {
@@ -2287,13 +2326,21 @@ mod tests {
 						id: Id(100)
 					}
 				));
+				// A refused delete keeps the conversation; neither failure ends the session.
 				assert!(matches!(
 					api.execute(command()).await,
-					Event::Unavailable(Id(20))
+					Event::DeleteFailed {
+						channel: Id(20),
+						message: Id(100),
+						failure: Failure::Forbidden
+					}
 				));
 				assert!(matches!(
 					api.execute(command()).await,
-					Event::Failure(Failure::Ambiguous)
+					Event::DeleteFailed {
+						failure: Failure::Ambiguous,
+						..
+					}
 				));
 				server.await.unwrap();
 			})

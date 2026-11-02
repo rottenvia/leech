@@ -346,8 +346,8 @@ Forum tags remain unavailable. All three inspector/toolbox observers stay passiv
 Actions are invoked by a message context-menu item, composer tool or panel
 button. A plugin may also declare one `activation` action that runs in the worker
 on enable/account load. An enabled plugin with granted `deleted_messages` capability
-keeps already loaded deleted messages in the session window. Without that opt-in,
-deleted payloads are released. Deleted text is red by default. Hover and a
+keeps already loaded deleted messages in the session window. Messages the owner
+deletes from Leech are never kept. Without that opt-in, deleted payloads are released. Deleted text is red by default. Hover and a
 local context menu can toggle that highlight or remove the retained row. They
 never call Discord. Live service actions stay unavailable. Tombstone
 reconciliation and disk-cache removal remain unchanged. Disabling the plugin, logout, lost channel

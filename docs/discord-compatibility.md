@@ -953,7 +953,7 @@ Server identity tags (September 19): Discord's documented [User object](https://
 | Nonce correlation | Message nonce; message resource | Documented finite deduplication; user applicability unverified | Correlate confirmations only; no automatic ambiguous resend or indefinite idempotency claim |
 | Native message formatting | Existing message content; [pulldown-cmark source](https://github.com/pulldown-cmark/pulldown-cmark) and [egui LayoutJob](https://docs.rs/egui/0.36.2/egui/text/struct.LayoutJob.html) | Local rendering; no additional service capability | Bounded emphasis/code/quotes/lists/strike, inert HTML, explicit HTTP(S) link confirmation, up to 32 inline text spoilers with separate media reveal; CommonMark differs from Discord Markdown; no automatic previews |
 | Read markers | Normal session; [discord.py-self HTTP](https://github.com/dolfies/discord.py-self/blob/master/discord/http.py) and [dispatch implementation](https://github.com/dolfies/discord.py-self/blob/master/discord/state.py) | Unofficial and unstable | Explicit per-message acknowledgement, optional manual mark-unread (`ack_message(manual=True)` plus the previous snowflake), guild `POST /guilds/{id}/ack`, bounded READY read state, MESSAGE_ACK and PASSIVE_UPDATE_V2; synthetic checks only, actual cross-device behavior unverified |
-| Relationships | Normal session or restricted Social SDK scopes; OAuth scope table and Abaddon | Unofficial / restricted | Unsupported |
+| Relationships | Normal session; [discord.py-self HTTP](https://github.com/dolfies/discord.py-self/blob/master/discord/http.py); restricted Social SDK scopes otherwise | Unofficial | Friends, requests, blocking and ignoring through normal-user routes (see Friend requests); live-unverified |
 | Reactions | Normal session; [message reaction resource](https://docs.discord.com/developers/resources/message#reaction-object) and [Gateway reaction events](https://docs.discord.com/developers/events/gateway-events#message-reaction-add), rechecked September 10 | Documented routes/shapes; normal-user acceptance live-unverified | Native counts, eight-emoji picker, existing Unicode/custom emoji toggles, normal own-reaction PUT/DELETE and bounded message readback. Synthetic HTTP/Gateway/keyboard tests pass; no live validation |
 | Upload / preview / save | Normal session + separate credential-free media transfer; [attachment reference](https://docs.discord.com/developers/resources/message#attachment-object) and [normal-user staged upload](https://github.com/dolfies/discord.py-self/blob/2ba64a9a997e151a9c259984e0a179b1fdf4aff4/discord/abc.py#L1551) | Documented attachment metadata; staged upload unofficial; service delivery/conversion live-unverified | Up to ten explicitly selected files totaling 500,000,000 bytes, streamed upload/cancel and message confirmation; Discord enforces the account's lower entitlement limit. Static previews, native viewer, image/video attachment context menus with native clipboard copy, and explicit image/file Save As (1 byte through 100 MiB). Upload limits below; preview/save limits |
 | Conversation search | Normal session; [discord.py-self search flow](https://github.com/dolfies/discord.py-self/blob/master/discord/abc.py), [HTTP routes](https://github.com/dolfies/discord.py-self/blob/master/discord/http.py), [response types](https://github.com/dolfies/discord.py-self/blob/master/discord/types/message.py) checked September 10 | Unofficial and unstable | Search current conversation, numbered result pages, snapshot snippets, history revalidation on Open message; indexing/permission failures are visible. Live-unverified |
@@ -1375,6 +1375,9 @@ user or the current effective channel permissions include MANAGE_MESSAGES. Other
 messages are excluded; edit remains author-only. Permission overwrites and thread-parent
 inheritance use the existing permission resolver. The confirmation rechecks access; the server
 remains authoritative and HTTP rejection/uncertainty does not synthesize successful deletion.
+A refused or uncertain delete keeps the message and shows an error toast; a 403 no longer
+removes the conversation, because refusing one delete says nothing about channel access
+(November 2, 2026).
 
 The [official message resource](https://docs.discord.com/developers/resources/message#delete-message)
 documents deleting others' guild messages with MANAGE_MESSAGES and lists deletable message types.
@@ -1806,7 +1809,10 @@ Sending accepts modern unique usernames; personalized greeting notes are not sup
 The relationship adapter uses unofficial normal-user routes: POST
 `/users/@me/relationships` with username and null discriminator, PUT
 `/users/@me/relationships/{id}` with an empty object to accept, and DELETE to decline
-or cancel. These shapes and incoming/outgoing types 3/4 are corroborated by the
+or cancel. Like the official client, sends and accepts name where they started in
+`X-Context-Properties` (base64 `{"location":"Add Friend"}`, `"Friends"` for Pending, and
+`"User Profile"` for profile cards); discord.py-self calls this header essential for friend
+requests. These shapes and incoming/outgoing types 3/4 are corroborated by the
 [discord.py-self HTTP implementation](https://github.com/dolfies/discord.py-self/blob/master/discord/http.py)
 and [relationship enum](https://github.com/dolfies/discord.py-self/blob/master/discord/enums.py),
 not official support or proof of live interoperability.

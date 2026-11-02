@@ -197,7 +197,13 @@ impl State {
 				.find(|w| w.identity.id == channel)
 				&& ids
 					.iter()
-					.try_for_each(|id| window.timeline.delete(*id))
+					.try_for_each(|id| {
+						window.timeline.delete(*id)?;
+						if self.own_deletions.contains(id) {
+							window.timeline.discard_preserved(*id);
+						}
+						Ok::<_, &str>(())
+					})
 					.is_err()
 			{
 				self.resident.remove(channel);
@@ -351,6 +357,64 @@ mod tests {
 			},
 		);
 		assert_eq!(state.freshness, Freshness::Fresh);
+	}
+	#[test]
+	fn own_deletions_disappear_while_other_deletions_stay_preserved() {
+		let delete = |state: &mut State, channel, id| {
+			apply(
+				state,
+				Event::Delete {
+					channel: Id(channel),
+					id: Id(id),
+				},
+			);
+		};
+		let mut state = state();
+		state.set_preserve_deleted_messages(true);
+		load(&mut state, 2);
+		load(&mut state, 1);
+		// Confirmed by the service, then echoed by the gateway.
+		assert!(matches!(
+			state.prepare_delete(Id(1), Id(1001)),
+			Some(Command::Delete { .. })
+		));
+		delete(&mut state, 1, 1001);
+		delete(&mut state, 1, 1001);
+		assert!(state.timeline.get_display(Id(1001)).is_none());
+		// Someone else deleting a message keeps it readable.
+		delete(&mut state, 1, 1002);
+		assert!(state.timeline.get_display(Id(1002)).is_some());
+		// A refused delete keeps the message, says why, and forgets the request.
+		assert!(state.prepare_delete(Id(1), Id(1003)).is_some());
+		apply(
+			&mut state,
+			Event::DeleteFailed {
+				channel: Id(1),
+				message: Id(1003),
+				failure: auth::Failure::Forbidden,
+			},
+		);
+		assert!(state.timeline.get(Id(1003)).is_some());
+		assert!(state.channel(Id(1)).is_some(), "the conversation stays");
+		assert_eq!(
+			state.take_user_action_status(),
+			Some("Discord did not allow deleting this message")
+		);
+		delete(&mut state, 1, 1003);
+		assert!(state.timeline.get_display(Id(1003)).is_some());
+		// The owner may switch away before the service answers.
+		assert!(state.prepare_delete(Id(1), Id(1004)).is_some());
+		load(&mut state, 3);
+		delete(&mut state, 1, 1004);
+		assert!(state.own_deletions.is_empty());
+		state.select(Id(1));
+		assert!(state.timeline.get_display(Id(1004)).is_none());
+		assert!(state.timeline.get_display(Id(1002)).is_some());
+		// The record stays bounded however many answers never arrive.
+		for id in 1005..1050 {
+			state.prepare_delete(Id(1), Id(id));
+		}
+		assert_eq!(state.own_deletions.len(), crate::OWN_DELETIONS);
 	}
 	fn patch(channel: u64) -> MessagePatch {
 		MessagePatch {
