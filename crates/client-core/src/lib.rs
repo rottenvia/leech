@@ -57,6 +57,8 @@ use trail::Place;
 
 pub const MAX_DRAFT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_CONTENT: usize = 2000;
+/// Own delete requests remembered until the service confirms or refuses them.
+pub const OWN_DELETIONS: usize = 32;
 /// Nitro and Nitro Classic accounts may send longer messages.
 pub const MAX_PREMIUM_CONTENT: usize = 4000;
 /// Discord accepts at most ten attachments per message.
@@ -605,6 +607,12 @@ pub enum Event {
 		channel: Id,
 		id: Id,
 	},
+	/// The service refused or lost this client's own delete request; the message stays.
+	DeleteFailed {
+		channel: Id,
+		message: Id,
+		failure: auth::Failure,
+	},
 	DeleteBulk {
 		channel: Id,
 		ids: Vec<Id>,
@@ -765,6 +773,10 @@ pub struct State {
 	pub last_viewed_threads: Vec<Id>,
 	pub timeline: Timeline,
 	pub preserve_deleted_messages: bool,
+	/// Messages this client asked to delete, which disappear even while deleted messages are
+	/// preserved. At most [`OWN_DELETIONS`] IDs.
+	#[doc(hidden)]
+	pub own_deletions: std::collections::VecDeque<Id>,
 	pub resident: resident::Windows,
 	pub freshness: Freshness,
 	pub status: &'static str,
@@ -971,6 +983,7 @@ impl Default for State {
 			last_viewed_threads: Vec::new(),
 			timeline: Timeline::default(),
 			preserve_deleted_messages: false,
+			own_deletions: Default::default(),
 			resident: resident::Windows::default(),
 			freshness: Freshness::Stale,
 			status: "Disconnected",
@@ -3464,15 +3477,38 @@ impl State {
 					self.read_state.activity.observe_latest(channel.id, id);
 					channel.last_message = None;
 				}
+				let own = self.own_deletions.contains(&id);
+				self.own_deletions.retain(|deleted| *deleted != id);
 				if self.selected == Some(channel) {
 					self.deleted_navigation_target(channel, id);
 					if self.reply_target() == Some(id) {
 						self.reply = None;
 					}
-					self.timeline.delete(id)
+					let result = self.timeline.delete(id);
+					// The protector keeps what others delete, never the owner's own deletion.
+					if own {
+						self.timeline.discard_preserved(id);
+					}
+					result
 				} else {
 					Ok(())
 				}
+			}
+			Event::DeleteFailed {
+				message, failure, ..
+			} => {
+				self.own_deletions.retain(|deleted| *deleted != message);
+				self.user_actions.status = Some(match failure {
+					auth::Failure::Forbidden => "Discord did not allow deleting this message",
+					auth::Failure::RateLimited => {
+						"Rate limited · wait, then delete the message again"
+					}
+					auth::Failure::Ambiguous | auth::Failure::Network => {
+						"The delete may not have reached Discord · check the message and retry"
+					}
+					_ => "The message could not be deleted",
+				});
+				Ok(())
 			}
 			Event::Edited {
 				channel,
