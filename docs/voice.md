@@ -649,6 +649,15 @@ tick. Since 0.1.12 the encoder thread blocks on Media Foundation's event callbac
 22 fps (p50 15.5 ms, 283 late frames), while the event-driven one held 59-60 fps (p50
 3.5-4.7 ms, worst 44-86 ms). A real viewer's frame rate under a game is not yet measured.
 
+A fullscreen window (a game or a video) is shared through DXGI desktop duplication. Its
+capture loop waited in `AcquireNextFrame` for up to 100 ms, holding the device the encoder
+reads pictures through, so fullscreen shares encoded 4-8 fps at 100-190 ms a picture with
+the GPU idle (owner's log, 2026-11-02). Since 0.1.13 it never waits there: it looks with no
+timeout and sleeps until pacing admits the next picture, like OBS's duplicator. The live
+`duplication_delivers_converted_pictures` test, encoding on another thread as a share does,
+went from a 34-35 ms median (worst 200-290 ms) to 1.4 ms (worst 4-20 ms) over 60 pictures
+of a playing video on an RTX 3060.
+
 ### Camera capture and delivery
 
 The voice build can send a native camera after an explicit camera-on click in a

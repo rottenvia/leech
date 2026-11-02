@@ -365,10 +365,12 @@ impl Duplication {
 		})
 	}
 
-	/// Waits up to `timeout` for a new picture of the display and delivers it.
-	fn pump(&mut self, timeout: Duration) -> Result<(), DuplicationError> {
+	/// Delivers a new picture of the display, if there is one, without waiting for it. A
+	/// waiting AcquireNextFrame holds the device the encoder reads pictures through: a
+	/// fullscreen video then encoded at 4-8 fps, 100-190 ms a picture, with the GPU idle.
+	fn pump(&mut self) -> Result<(), DuplicationError> {
 		let Self { api, sink, .. } = self;
-		let mut frame = match api.acquire_next_frame(timeout.as_millis().min(1000) as u32) {
+		let mut frame = match api.acquire_next_frame(0) {
 			Ok(frame) => frame,
 			Err(DuplicationError::Timeout) => return Ok(()),
 			Err(error) => return Err(error),
@@ -391,6 +393,16 @@ impl Duplication {
 			crate::stream_log::event(format_args!("capture: {error}"));
 		}
 		Ok(())
+	}
+
+	/// How long to sleep before looking again: until pacing admits the next picture, and
+	/// at least 1 ms. Pictures arriving meanwhile wait in the duplication as one.
+	fn idle(&self) -> Duration {
+		self.sink
+			.0
+			.next_frame
+			.saturating_duration_since(Instant::now() + Duration::from_millis(2))
+			.max(Duration::from_millis(1))
 	}
 }
 
@@ -568,8 +580,8 @@ fn watch(
 			std::thread::sleep(wait.min(Duration::from_millis(50)));
 			continue;
 		};
-		match active.pump(wait.min(Duration::from_millis(100))) {
-			Ok(()) => {}
+		match active.pump() {
+			Ok(()) => std::thread::sleep(active.idle().min(wait)),
 			// A display mode change, such as a game entering exclusive fullscreen, ends the
 			// session; reopen it at once.
 			Err(DuplicationError::AccessLost) => {
@@ -815,15 +827,18 @@ mod tests {
 	}
 
 	/// Live check on this machine's primary display: duplication delivers GPU pictures through
-	/// the same converter as window capture. Reads the screen into memory only.
+	/// the same converter as window capture, and the encoder reading them on another thread,
+	/// as in a share, is not held up by the duplication. Reads the screen into memory only;
+	/// a changing screen (a playing video) gives the most pictures.
 	#[test]
 	#[ignore = "needs a desktop session and a GPU"]
 	fn duplication_delivers_converted_pictures() {
 		let (frames, received) = std::sync::mpsc::sync_channel(1);
 		let pending = Arc::new(AtomicBool::new(false));
+		let stop = Arc::new(AtomicBool::new(false));
 		let flags = Flags {
 			frames,
-			stop: Arc::new(AtomicBool::new(false)),
+			stop: stop.clone(),
 			pending: pending.clone(),
 			next_frame: Instant::now(),
 			interval: Duration::from_millis(16),
@@ -836,14 +851,20 @@ mod tests {
 		let monitor = Monitor::primary()
 			.expect("primary display")
 			.as_raw_hmonitor() as isize;
-		let mut duplication = Duplication::open(monitor, flags).expect("duplication");
-		let deadline = Instant::now() + Duration::from_secs(3);
-		let (mut pictures, mut encoder, mut bytes) = (0, None, 0);
-		while Instant::now() < deadline && pictures < 3 {
-			duplication
-				.pump(Duration::from_millis(100))
-				.expect("duplicated picture");
-			if let Ok(frame) = received.try_recv() {
+		let halt = stop.clone();
+		let capture = std::thread::spawn(move || {
+			let _resolution = crate::timer::Resolution::acquire();
+			let mut duplication = Duplication::open(monitor, flags).expect("duplication");
+			while !halt.load(Ordering::Acquire) {
+				duplication.pump().expect("duplicated picture");
+				std::thread::sleep(duplication.idle());
+			}
+		});
+		let _resolution = crate::timer::Resolution::acquire();
+		let deadline = Instant::now() + Duration::from_secs(5);
+		let (mut pictures, mut encoder, mut bytes, mut times) = (0, None, 0, Vec::new());
+		while Instant::now() < deadline && pictures < 60 {
+			if let Ok(frame) = received.recv_timeout(Duration::from_millis(100)) {
 				let surface = frame.surface.expect("GPU picture");
 				assert_eq!((frame.width, frame.height), (1280, 720));
 				// The hardware encoder reads pictures of the duplication's own device.
@@ -862,16 +883,30 @@ mod tests {
 					)
 					.expect("hardware encoder on the duplication device")
 				});
+				pending.store(false, Ordering::Release);
+				let started = Instant::now();
 				bytes += encoder
 					.encode_surface(&surface, pictures == 0)
 					.expect("encode")
 					.0
 					.len();
-				pending.store(false, Ordering::Release);
+				if pictures > 0 {
+					times.push(started.elapsed());
+				}
 				pictures += 1;
 			}
 		}
-		assert!(pictures > 0, "no duplicated pictures in 3 s");
+		stop.store(true, Ordering::Release);
+		capture.join().expect("capture thread");
+		assert!(pictures > 0, "no duplicated pictures in 5 s");
 		assert!(bytes > 0, "the encoder produced nothing");
+		times.sort();
+		eprintln!("{pictures} pictures, encode times {times:?}");
+		if let Some(median) = times.get(times.len() / 2) {
+			assert!(
+				*median < Duration::from_millis(30),
+				"encoding waits for the duplication: median {median:?}"
+			);
+		}
 	}
 }
