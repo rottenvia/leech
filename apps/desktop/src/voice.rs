@@ -68,6 +68,8 @@ struct CallCues {
 	request: Option<u64>,
 	joined: bool,
 	peers: Option<[u64; voice::MAX_PARTICIPANTS]>,
+	/// Other participants sharing their screen at the last poll.
+	live: Option<[u64; voice::MAX_PARTICIPANTS]>,
 }
 impl CallCues {
 	fn poll(
@@ -85,6 +87,7 @@ impl CallCues {
 		let cue = joined.then_some(Sound::UserJoin);
 		if !gateway_connected {
 			self.peers = None;
+			self.live = None;
 			return cue;
 		}
 		let mut peers = [0; voice::MAX_PARTICIPANTS];
@@ -109,7 +112,30 @@ impl CallCues {
 					.then_some(Sound::UserJoin)
 			}
 		});
-		cue.or(membership_cue)
+		let mut live = [0; voice::MAX_PARTICIPANTS];
+		for (slot, participant) in live.iter_mut().zip(
+			participants
+				.iter()
+				.filter(|participant| participant.user != owner && participant.streaming),
+		) {
+			*slot = participant.user.0;
+		}
+		// Others hear a share start and end, as in Discord. A sharer who leaves the call is
+		// announced by the leave cue alone.
+		let stream_cue = self.live.replace(live).and_then(|previous| {
+			if live
+				.iter()
+				.any(|user| *user != 0 && !previous.contains(user))
+			{
+				Some(Sound::ScreenShareOn)
+			} else {
+				previous
+					.iter()
+					.any(|user| *user != 0 && !live.contains(user) && peers.contains(user))
+					.then_some(Sound::ShareStopped)
+			}
+		});
+		cue.or(membership_cue).or(stream_cue)
 	}
 }
 /// Remote cameras kept as textures at once; matches the transport's source limit.
@@ -1271,6 +1297,23 @@ pub fn debug_call_cues_check() {
 		cues.poll(true, true, owner.user, &[owner, muted_peer]),
 		None
 	);
+	// Another participant starting and ending a share is audible once each.
+	let mut live_peer = peer;
+	live_peer.streaming = true;
+	assert_eq!(
+		cues.poll(true, true, owner.user, &[owner, live_peer]),
+		Some(Sound::ScreenShareOn)
+	);
+	assert_eq!(cues.poll(true, true, owner.user, &[live_peer, owner]), None);
+	assert_eq!(
+		cues.poll(true, true, owner.user, &[owner, peer]),
+		Some(Sound::ShareStopped)
+	);
+	assert_eq!(
+		cues.poll(true, true, owner.user, &[owner, live_peer]),
+		Some(Sound::ScreenShareOn)
+	);
+	// A sharer leaving the call is a departure, not a share ending.
 	assert_eq!(
 		cues.poll(true, true, owner.user, &[owner]),
 		Some(Sound::UserLeave)
@@ -1282,7 +1325,7 @@ pub fn debug_call_cues_check() {
 		"a new explicitly started call has its own join cue"
 	);
 	println!(
-		"Call cue debug check passed: local/remote joins, departures, rekeying and reconnect suppression. No audio devices opened."
+		"Call cue debug check passed: local/remote joins, departures, shares, rekeying and reconnect suppression. No audio devices opened."
 	);
 }
 

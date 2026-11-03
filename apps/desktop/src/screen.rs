@@ -94,9 +94,13 @@ impl Screen {
 		// capture preview can show well before the stream transport settles.
 		ui.screen.live = share == ShareState::Live
 			|| (share == ShareState::Starting && ui.screen.preview.is_some());
-		if ui.screen.live && !self.was_live && ui.notification_options.allows(Sound::ScreenShareOn)
-		{
-			ui.notification_preview = Some(Sound::ScreenShareOn);
+		let cue = match (self.was_live, ui.screen.live) {
+			(false, true) => Some(Sound::ScreenShareOn),
+			(true, false) => Some(Sound::ShareStopped),
+			_ => None,
+		};
+		if let Some(cue) = cue.filter(|cue| ui.notification_options.allows(*cue)) {
+			ui.notification_preview = Some(cue);
 		}
 		self.was_live = ui.screen.live;
 		ui.screen.status = match share {

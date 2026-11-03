@@ -607,6 +607,8 @@ pub enum Event {
 		channel: Id,
 		id: Id,
 	},
+	/// The connection could not queue this write; it is reported like any refused command.
+	Rejected(Box<Command>),
 	/// The service refused or lost this client's own delete request; the message stays.
 	DeleteFailed {
 		channel: Id,
@@ -3494,6 +3496,10 @@ impl State {
 					Ok(())
 				}
 			}
+			Event::Rejected(command) => {
+				self.command_rejected(*command);
+				Ok(())
+			}
 			Event::DeleteFailed {
 				message, failure, ..
 			} => {
@@ -4035,6 +4041,8 @@ impl Event {
 					.as_ref()
 					.map_or(0, model::messaging_permissions::Snapshot::bytes),
 				Self::InviteChallenge { challenge, .. } => challenge.bytes(),
+				// ponytail: charged at the ordinary command bound; larger writes (icons) are rare.
+				Self::Rejected(_) => size_of::<Command>() + 16 * 1024,
 				Self::GroupAction(group_actions::Event::Written {
 					result: Ok(Some(patch)),
 					..
@@ -4412,7 +4420,8 @@ mod tests {
 		};
 		let nonce = nonce.clone();
 		state.selected = Some(Id(2));
-		state.command_rejected(command);
+		// The connection hands back a write its full lane refused.
+		apply(&mut state, Event::Rejected(Box::new(command)));
 		assert_eq!(state.pending[0].delivery, Delivery::Rejected);
 		assert_eq!(state.freshness, Freshness::Fresh);
 		apply(

@@ -57,6 +57,8 @@ pub enum Sound {
 	Joining,
 	/// The same tick when this device asks to go live; follows "Screen Share On".
 	Sharing,
+	/// The tick falling when a screen share in the call ends; follows "Screen Share On".
+	ShareStopped,
 }
 impl Device {
 	pub fn allows(self, sound: Sound) -> bool {
@@ -72,7 +74,7 @@ impl Device {
 				Sound::Deafen => self.deafen,
 				Sound::Undeafen => self.undeafen,
 				Sound::CameraOn => self.camera_on,
-				Sound::ScreenShareOn | Sound::Sharing => self.screen_share_on,
+				Sound::ScreenShareOn | Sound::Sharing | Sound::ShareStopped => self.screen_share_on,
 				Sound::UserJoin | Sound::Joining => self.user_join,
 				Sound::UserLeave => self.user_leave,
 			}

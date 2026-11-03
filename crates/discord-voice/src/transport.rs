@@ -728,7 +728,8 @@ async fn run_inner(
 								if camera.is_some(){json_send(&mut ws,video.announcement(ssrc,false)).await?;}
 								json_send(&mut ws,json!({"op":5,"d":{"speaking":0,"delay":0,"ssrc":ssrc}})).await?;
 								speaking=false;silence=0;
-								resuming=false;
+								// Each drop gets two tries again once a resume succeeds; long calls lose sockets now and then.
+								resuming=false;resume_attempts=0;
 							},
 							12=>{
 								let user=id(data,"user_id")?;

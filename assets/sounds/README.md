@@ -23,7 +23,7 @@ from the source sample rate; no re-encoding, metadata stripping or trimming is a
 
 The twelve files total 595,870 bytes; each distinct cue is bundled independently. No network fetch or user-file access occurs during playback.
 
-The joining tick played when this device starts joining a call is not a file: it is a 90 ms chirp synthesized at playback (`notification_sounds::joining`), original to Leech.
+The joining tick played when this device starts joining a call or going live is not a file: it is a 90 ms rising chirp synthesized at playback (`notification_sounds::chirp`), original to Leech. The same chirp falling marks a screen share ending in the call.
 
 Incoming and outgoing rings repeat every six and three seconds respectively,
 leaving enough time for each complete clip before its next playback.

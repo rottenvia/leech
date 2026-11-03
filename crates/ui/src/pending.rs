@@ -215,16 +215,27 @@ pub fn show(
 							avatars.sticker_image(ui, sticker, egui::Vec2::splat(edge), state.demo);
 						});
 					}
+					let mut gallery = None;
 					if !pending.attachments.is_empty() {
 						ui.scope(|ui| {
 							ui.set_max_width(ui.available_width().min(MAX_WIDTH));
 							// Discord fades the optimistic row until the server echoes it.
 							ui.set_opacity(if sending { 0.6 } else { 1.0 });
-							files(ui, pending, upload);
+							gallery = files(ui, pending, upload);
 						});
 					}
+					// Pictures alone carry their progress on the image; any file card keeps the strip.
+					let pictures_only = upload.is_some_and(|upload| {
+						upload.files.len() == pending.attachments.len()
+							&& upload.files.iter().all(|file| file.preview.is_some())
+					});
 					if sending && !artwork {
-						if !pending.attachments.is_empty() {
+						// The bar and the cancel button need room; a tiny picture keeps the strip.
+						if let Some(gallery) = gallery.filter(|gallery| {
+							pictures_only && gallery.width() >= 64.0 && gallery.height() >= 48.0
+						}) {
+							upload_overlay(ui, gallery, upload, cancel);
+						} else if !pending.attachments.is_empty() {
 							ui.add_space(2.0);
 							ui.scope(|ui| {
 								ui.set_max_width(ui.available_width().min(MAX_WIDTH));
@@ -260,8 +271,9 @@ pub fn show(
 		});
 }
 
-/// Image thumbnails in the confirmed-message grid, then one card per other file.
-fn files(ui: &mut egui::Ui, pending: &Pending, upload: Option<&Upload>) {
+/// Image thumbnails in the confirmed-message grid, then one card per other file. Returns the
+/// area the thumbnails cover.
+fn files(ui: &mut egui::Ui, pending: &Pending, upload: Option<&Upload>) -> Option<egui::Rect> {
 	let colors = design::palette(ui);
 	let file = |index: usize| upload.and_then(|upload| upload.files.get(index));
 	let images: Vec<(&str, &egui::TextureHandle)> = pending
@@ -274,6 +286,7 @@ fn files(ui: &mut egui::Ui, pending: &Pending, upload: Option<&Upload>) {
 				.map(|preview| (filename.as_str(), preview))
 		})
 		.collect();
+	let mut gallery: Option<egui::Rect> = None;
 	if !images.is_empty() {
 		let (columns, size) = attachments::image_layout(images.len(), ui.available_width());
 		ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
@@ -306,6 +319,7 @@ fn files(ui: &mut egui::Ui, pending: &Pending, upload: Option<&Upload>) {
 							.fit_to_exact_size(shown.size())
 							.corner_radius(8),
 					);
+					gallery = Some(gallery.map_or(rect, |area| area.union(rect)));
 				}
 			});
 		}
@@ -348,6 +362,59 @@ fn files(ui: &mut egui::Ui, pending: &Pending, upload: Option<&Upload>) {
 					});
 				});
 			});
+	}
+	gallery
+}
+
+/// Progress for an upload of pictures only: a thin bar along the bottom of the thumbnails and a
+/// cancel button in their corner, instead of a separate strip.
+fn upload_overlay(
+	ui: &mut egui::Ui,
+	gallery: egui::Rect,
+	upload: Option<&Upload>,
+	cancel: &mut bool,
+) {
+	let colors = design::palette(ui);
+	let fraction = match upload.and_then(|upload| upload.progress) {
+		Some((sent, total)) if total > 0 => (sent as f32 / total as f32).clamp(0.0, 1.0),
+		_ => 0.0,
+	};
+	let track = egui::Rect::from_min_max(
+		egui::pos2(gallery.left() + 8.0, gallery.bottom() - 12.0),
+		egui::pos2(gallery.right() - 8.0, gallery.bottom() - 8.0),
+	);
+	let painter = ui.painter();
+	painter.rect_filled(track, 2, egui::Color32::from_black_alpha(140));
+	if fraction > 0.0 {
+		let fill = egui::Rect::from_min_size(
+			track.min,
+			egui::vec2((track.width() * fraction).max(4.0), track.height()),
+		);
+		painter.rect_filled(fill, 2, colors.accent);
+	}
+	if upload.is_some() {
+		let button = egui::Rect::from_min_size(
+			egui::pos2(gallery.right() - 32.0, gallery.top() + 8.0),
+			egui::Vec2::splat(24.0),
+		);
+		ui.painter()
+			.circle_filled(button.center(), 12.0, egui::Color32::from_black_alpha(140));
+		if ui
+			.put(button, |ui: &mut egui::Ui| {
+				icons::button(
+					ui,
+					icons::Icon::Close,
+					24.0,
+					&crate::i18n::translate("pending-upload-strip-cancel-upload"),
+				)
+			})
+			.on_hover_text(crate::i18n::translate(
+				"pending-upload-strip-the-message-may-already-have-reached-discord-check-the-conversation",
+			))
+			.clicked()
+		{
+			*cancel = true;
+		}
 	}
 }
 
@@ -478,7 +545,7 @@ mod tests {
 					bytes: 60,
 					preview: Some(ctx.load_texture(
 						"synthetic-photo",
-						egui::ColorImage::filled([4, 3], egui::Color32::WHITE),
+						egui::ColorImage::filled([320, 180], egui::Color32::WHITE),
 						egui::TextureOptions::LINEAR,
 					)),
 				},
@@ -550,5 +617,139 @@ mod tests {
 				delivery != Delivery::Sending
 			);
 		}
+		// A screenshot alone carries its progress on the picture, with no strip beside it.
+		fn flat(shape: &egui::Shape, result: &mut Vec<egui::Shape>) {
+			match shape {
+				egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| flat(s, result)),
+				shape => result.push(shape.clone()),
+			}
+		}
+		pending.attachments = vec!["photo.png".into()];
+		upload.files.remove(0);
+		pending.delivery = Delivery::Sending;
+		upload.progress = Some((25, 100));
+		let shade = egui::Color32::from_black_alpha(140);
+		let mut profile = crate::profiles::ProfileSession::default();
+		let mut cancel = false;
+		let mut button = None;
+		for frame in 0..6 {
+			let pointer = button.map(|center: egui::Pos2| {
+				let pressed = |pressed| egui::Event::PointerButton {
+					pos: center,
+					button: egui::PointerButton::Primary,
+					pressed,
+					modifiers: egui::Modifiers::NONE,
+				};
+				match frame {
+					3 => vec![egui::Event::PointerMoved(center)],
+					4 => vec![pressed(true), pressed(false)],
+					_ => vec![],
+				}
+			});
+			let output = ctx.run_ui(
+				egui::RawInput {
+					screen_rect: Some(egui::Rect::from_min_size(
+						egui::Pos2::ZERO,
+						egui::vec2(260.0, 900.0),
+					)),
+					events: pointer.unwrap_or_default(),
+					..Default::default()
+				},
+				|ui| {
+					show(
+						ui,
+						&pending,
+						(true, 10, false),
+						&state,
+						(
+							&mut crate::avatars::Avatars::default(),
+							&mut None,
+							&mut profile,
+							&mut None,
+							&mut crate::markdown::FormatCache::default(),
+						),
+						Some(&upload),
+						(&mut None, &mut cancel),
+					);
+				},
+			);
+			let mut painted = String::new();
+			let mut shapes = Vec::new();
+			for shape in &output.shapes {
+				text(&shape.shape, &mut painted);
+				flat(&shape.shape, &mut shapes);
+			}
+			output.drop_without_applying_deltas();
+			assert!(!painted.contains("Uploading"), "{painted}");
+			assert!(!painted.contains("25%"), "{painted}");
+			let track = shapes.iter().find_map(|shape| match shape {
+				egui::Shape::Rect(rect) if rect.fill == shade && rect.rect.height() == 4.0 => {
+					Some(rect.rect)
+				}
+				_ => None,
+			});
+			let fill = shapes.iter().find_map(|shape| match shape {
+				egui::Shape::Rect(rect)
+					if rect.fill != shade
+						&& track.is_some_and(|track| track.min == rect.rect.min) =>
+				{
+					Some(rect.rect)
+				}
+				_ => None,
+			});
+			let (track, fill) = (track.expect("progress track"), fill.expect("progress fill"));
+			assert!((fill.width() - track.width() * 0.25).abs() < 0.5);
+			button = shapes.iter().find_map(|shape| match shape {
+				egui::Shape::Circle(circle) if circle.fill == shade && circle.radius == 12.0 => {
+					Some(circle.center)
+				}
+				_ => None,
+			});
+			let center = button.expect("cancel button");
+			// The button sits in the picture's top-right corner, above the bar.
+			assert!(center.x > track.right() - 24.0 && center.y < track.top());
+		}
+		assert!(cancel, "the corner button cancels the upload");
+		// A picture too small for the overlay keeps the strip.
+		upload.files[0].preview = Some(ctx.load_texture(
+			"tiny-photo",
+			egui::ColorImage::filled([4, 3], egui::Color32::WHITE),
+			egui::TextureOptions::LINEAR,
+		));
+		let mut painted = String::new();
+		for _ in 0..2 {
+			let output = ctx.run_ui(
+				egui::RawInput {
+					screen_rect: Some(egui::Rect::from_min_size(
+						egui::Pos2::ZERO,
+						egui::vec2(260.0, 900.0),
+					)),
+					..Default::default()
+				},
+				|ui| {
+					show(
+						ui,
+						&pending,
+						(true, 10, false),
+						&state,
+						(
+							&mut crate::avatars::Avatars::default(),
+							&mut None,
+							&mut profile,
+							&mut None,
+							&mut crate::markdown::FormatCache::default(),
+						),
+						Some(&upload),
+						(&mut None, &mut false),
+					);
+				},
+			);
+			painted.clear();
+			for shape in &output.shapes {
+				text(&shape.shape, &mut painted);
+			}
+			output.drop_without_applying_deltas();
+		}
+		assert!(painted.contains("Uploading photo.png"), "{painted}");
 	}
 }

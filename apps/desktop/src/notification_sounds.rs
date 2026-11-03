@@ -116,16 +116,16 @@ impl Drop for Sounds {
 	}
 }
 
-/// Leech's own joining tick, synthesized so no asset ships: a soft 90 ms chirp rising from
-/// 880 Hz, with a 1 ms attack so it never clicks.
-fn joining(rate: u32) -> Vec<[f32; 2]> {
+/// Leech's own tick, synthesized so no asset ships: a soft 90 ms sweep from `from` to `to` Hz,
+/// with a 1 ms attack so it never clicks.
+fn chirp(rate: u32, from: f32, to: f32) -> Vec<[f32; 2]> {
 	const SECS: f32 = 0.09;
 	let frames = (rate as f32 * SECS) as usize;
 	(0..frames)
 		.map(|frame| {
 			let t = frame as f32 / rate as f32;
-			// Phase of a linear sweep from 880 Hz to 1760 Hz.
-			let phase = std::f32::consts::TAU * (880.0 * t + 880.0 / (2.0 * SECS) * t * t);
+			// Phase of a linear sweep.
+			let phase = std::f32::consts::TAU * (from * t + (to - from) / (2.0 * SECS) * t * t);
 			let envelope = (t * 1000.0).min(1.0) * (-t * 40.0).exp();
 			let sample = phase.sin() * envelope * 0.32;
 			[sample, sample]
@@ -135,10 +135,14 @@ fn joining(rate: u32) -> Vec<[f32; 2]> {
 
 fn samples(sound: Sound, rate: u32, current: &impl Fn() -> bool) -> Result<Vec<[f32; 2]>, ()> {
 	let bytes: &[u8] = match sound {
-		Sound::Joining | Sound::Sharing if (8000..=192000).contains(&rate) => {
-			return Ok(joining(rate));
+		Sound::Joining | Sound::Sharing | Sound::ShareStopped
+			if !(8000..=192000).contains(&rate) =>
+		{
+			return Err(());
 		}
-		Sound::Joining | Sound::Sharing => return Err(()),
+		Sound::Joining | Sound::Sharing => return Ok(chirp(rate, 880.0, 1760.0)),
+		// The same tick falling, so the end of a share reads as the start undone.
+		Sound::ShareStopped => return Ok(chirp(rate, 1760.0, 880.0)),
 		Sound::Message => include_bytes!("../../../assets/sounds/discord/message.mp3"),
 		Sound::CurrentChannel => {
 			include_bytes!("../../../assets/sounds/discord/current-channel.mp3")

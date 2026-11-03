@@ -172,7 +172,7 @@ impl Connection {
                         if matches!(&event,Event::Disconnected|Event::Resync) {let _=voice_online.send(false);}
                         gateway_emit(event)
                     }).await.err().unwrap_or(Failure::Network).protocol_at("Gateway connection: unsupported handshake or event");
-                    gateway_api.stop();let _=terminal_send.send(Some(error));gateway_wake.request_repaint();
+                    gateway_api.stop();end(&terminal_send,error);gateway_wake.request_repaint();
                 }));
                 // Keep hangup/mute controls responsive while an HTTP message write is awaiting Discord.
                 let (write_send,mut write_receive)=mpsc::channel(COMMAND_SLOTS);
@@ -182,7 +182,7 @@ impl Connection {
                         let event=write_api.execute(command).await;
                         let failure=match &event {Event::Interaction(client_core::interactions::Event::Submitted{result:Err(f),..})=>Some(*f),Event::MessagingPermissions{result:Err(f),..}=>Some(*f),Event::ChannelAction(client_core::channel_actions::Event::Finished{result:Err(f),..})=>Some(*f),Event::ServerAdmin(client_core::server_admin::Event{result:Err(f),..})=>Some(*f),Event::ServerSettings(client_core::server_settings::Event{result:Err(f),..})=>Some(*f),Event::Onboarding(client_core::onboarding::Event::Loaded{result:Err(f),..}|client_core::onboarding::Event::Submitted{result:Err(f),..})=>Some(*f),Event::Failure(f)=>Some(*f),Event::ProfileEdited{result:Err(f),..} if *f != Failure::Capacity =>Some(*f),Event::Edited{result:Err(f),..}|Event::Pinned{result:Err(f),..}=>Some(*f),Event::GuildFolders(Err(f))=>Some(*f),Event::JoinInvite{result:Err(f),..}|Event::GuildCreated{result:Err(f),..}=>Some(*f),Event::SendResult{result:Err(f),..}=>Some(*f),Event::UserAction(client_core::user_actions::Event::Written{result:Err(f),..})=>Some(*f),Event::UserAction(client_core::user_actions::Event::DmOpened{result:Err(f),..})=>Some(*f),Event::ServerAction(client_core::server_actions::Event::Written{result:Err(f),..})=>Some(*f),Event::ServerAction(client_core::server_actions::Event::InviteSent{result:Err(f),..})=>Some(*f),Event::GroupAction(client_core::group_actions::Event::Written{result:Err(f),..})=>Some(*f),Event::Reactions(client_core::reactions::Event::Written{result:Err(f),..})=>Some(*f),Event::ReadState(client_core::read_state::Event::Result{result:Err(f),..})=>Some(*f),_=>None};
                         let error=write_emit(event).err().or(failure.filter(|f|f.ends_session()));
-                        if let Some(error)=error {write_api.stop();let _=write_finished.send(Some(error));write_wake.request_repaint();break;}
+                        if let Some(error)=error {write_api.stop();end(&write_finished,error);write_wake.request_repaint();break;}
                     }
                 }));
                 let mut history:Option<AbortTask>=None;
@@ -236,7 +236,7 @@ impl Connection {
                                 };
                                 let failure=match &event {Event::Interaction(client_core::interactions::Event::Submitted{result:Err(f),..}) | Event::SendResult{result:Err(f),..} if f.ends_session()=>Some(*f),_=>None};
                                 let error=emit(event).err().or(failure);
-                                if let Some(error)=error {api.stop();let _=finished.send(Some(error));}
+                                if let Some(error)=error {api.stop();end(&finished,error);}
                                 wake.request_repaint();
                             })));
                         }
@@ -251,7 +251,7 @@ impl Connection {
                                     let event=api.execute(command).await;
                                     let failure=match &event {Event::GifFavorites{result:Err(f),..} if f.ends_session() && *f!=Failure::Capacity=>Some(*f),_=>None};
                                     let error=emit(event).err().or(failure);
-                                    if let Some(error)=error {api.stop();let _=finished.send(Some(error));}
+                                    if let Some(error)=error {api.stop();end(&finished,error);}
                                     wake.request_repaint();
                                 })));
                                 continue;
@@ -263,7 +263,7 @@ impl Connection {
                                     let event=api.execute(command).await;
                                     let failure=match &event {Event::ApplicationCommands{result:Err(f),..} if f.ends_session() && *f!=Failure::Capacity=>Some(*f),_=>None};
                                     let error=emit(event).err().or(failure);
-                                    if let Some(error)=error {api.stop();let _=finished.send(Some(error));}
+                                    if let Some(error)=error {api.stop();end(&finished,error);}
                                     wake.request_repaint();
                                 })));
                                 continue;
@@ -276,7 +276,7 @@ impl Connection {
                                     let event=api.execute(command).await;
                                     let failure=match &event {Event::StickerPacks(Err(f))|Event::Sticker{result:Err(f),..} if f.ends_session() && *f!=Failure::Capacity=>Some(*f),_=>None};
                                     let error=emit(event).err().or(failure);
-                                    if let Some(error)=error {api.stop();let _=finished.send(Some(error));}
+                                    if let Some(error)=error {api.stop();end(&finished,error);}
                                     wake.request_repaint();
                                 })));
                                 continue;
@@ -288,7 +288,7 @@ impl Connection {
                                     let event=api.execute(command).await;
                                     let failure=match &event {Event::Gifs{result:Err(f),..} if f.ends_session() && *f!=Failure::Capacity=>Some(*f),_=>None};
                                     let error=emit(event).err().or(failure);
-                                    if let Some(error)=error {api.stop();let _=finished.send(Some(error));}
+                                    if let Some(error)=error {api.stop();end(&finished,error);}
                                     wake.request_repaint();
                                 })));
                                 continue;
@@ -300,7 +300,7 @@ impl Connection {
                                     let event=api.execute(command).await;
                                     let failure=match &event {Event::Search{result:Err(f),..}|Event::Archives{result:Err(f),..} if f.ends_session() && *f!=Failure::Capacity=>Some(*f),_=>None};
                                     let error=emit(event).err().or(failure);
-                                    if let Some(error)=error {api.stop();let _=finished.send(Some(error));}
+                                    if let Some(error)=error {api.stop();end(&finished,error);}
                                     wake.request_repaint();
                                 })));
                                 continue;
@@ -312,7 +312,7 @@ impl Connection {
                                     let event=api.execute(command).await;
                                     let failure=match &event {Event::Reactions(client_core::reactions::Event::Read{result:Err(f),..}) if f.ends_session()=>Some(*f),_=>None};
                                     let error=emit(event).err().or(failure);
-                                    if let Some(error)=error {api.stop();let _=finished.send(Some(error));}
+                                    if let Some(error)=error {api.stop();end(&finished,error);}
                                     wake.request_repaint();
                                 })));
                                 continue;
@@ -329,7 +329,7 @@ impl Connection {
 									rings.push(AbortTask(tokio::spawn(async move {
 										if let Err(failure)=api.ring_call(channel,recipient,stop).await {
 											let _=emit(Event::Voice(E::RingFailed{channel,message:failure.label()}));
-											if failure.ends_session() {api.stop();let _=finished.send(Some(failure));}
+											if failure.ends_session() {api.stop();end(&finished,failure);}
 										}
 										wake.request_repaint();
 									})));
@@ -348,7 +348,7 @@ impl Connection {
 											V::SetRegion{channel,region}=>api.set_call_region(channel,region.as_deref()).await.err().inspect(|failure|{let _=emit(Event::Voice(E::RegionFailed{channel,message:failure.label()}));}),
 											_=>match api.voice_regions().await {Ok(regions)=>{let _=emit(Event::Voice(E::Regions(Ok(regions))));None}Err(failure)=>{let _=emit(Event::Voice(E::Regions(Err(failure.label()))));Some(failure)}},
 										};
-										if let Some(failure)=failure.filter(|failure|failure.ends_session()) {api.stop();let _=finished.send(Some(failure));}
+										if let Some(failure)=failure.filter(|failure|failure.ends_session()) {api.stop();end(&finished,failure);}
 										wake.request_repaint();
 									})));
 									continue;
@@ -368,7 +368,7 @@ impl Connection {
                                 invite=Some(AbortTask(tokio::spawn(async move {
                                     let event=api.execute(command).await;
                                     let failure=match &event {Event::Invite{result:Err(f),..} if f.ends_session()=>Some(*f),_=>None};
-                                    if let Some(error)=emit(event).err().or(failure) {api.stop();let _=finished.send(Some(error));}
+                                    if let Some(error)=emit(event).err().or(failure) {api.stop();end(&finished,error);}
                                     wake.request_repaint();
                                 })));
                                 continue;
@@ -381,7 +381,7 @@ impl Connection {
 									let event=api.execute(command).await;
 									let failure=stream_preview_session_failure(&event);
 									let error=emit(event).err().or(failure);
-									if let Some(error)=error {api.stop();let _=finished.send(Some(error));}
+									if let Some(error)=error {api.stop();end(&finished,error);}
 									wake.request_repaint();
 								})));
 								continue;
@@ -396,7 +396,7 @@ impl Connection {
                                         Event::UserAction(client_core::user_actions::Event::NoteLoaded{result:Err(f),..}) if f.ends_session()=>Some(*f),
                                         _=>None,
                                     };
-                                    if let Some(error)=emit(event).err().or(failure) {api.stop();let _=finished.send(Some(error));}
+                                    if let Some(error)=emit(event).err().or(failure) {api.stop();end(&finished,error);}
                                     wake.request_repaint();
                                 })));
                                 continue;
@@ -408,7 +408,7 @@ impl Connection {
                                     let event=api.execute(command).await;
                                     let failure=match &event {Event::Profile{result:Err(failure),..} if failure.ends_session() && *failure!=Failure::Capacity=>Some(*failure),_=>None};
                                     let error=emit(event).err().or(failure);
-                                    if let Some(error)=error {api.stop();let _=finished.send(Some(error));}
+                                    if let Some(error)=error {api.stop();end(&finished,error);}
                                     wake.request_repaint();
                                 })));
                                 continue;
@@ -435,19 +435,19 @@ impl Connection {
                                 let api=api.clone();let emit=emit.clone();let finished=finished.clone();let history_wake=wake.clone();
                                 history=Some(AbortTask(tokio::spawn(async move {
                                     let event=scope_history_failure(api.execute(command).await,channel,request);
-                                    if let Event::Failure(f)=&event&& f.ends_session(){api.stop();let _=finished.send(Some(*f));}
-                                    if let Err(f)=emit(event){api.stop();let _=finished.send(Some(f));}
+                                    if let Event::Failure(f)=&event&& f.ends_session(){api.stop();end(&finished,*f);}
+                                    if let Err(f)=emit(event){api.stop();end(&finished,f);}
                                     history_wake.request_repaint();
                                 })));
                             } else {
-                                write_send.try_send(command).map_err(|_|Failure::Capacity)?;
+                                if !queue_write(&write_send,command,&*emit)? {break;}
                             }
                         }
                     }
                 }
                 Ok::<(),Failure>(())
             }.await;
-            if let Err(f)=result {let _=finished.send(Some(f));wake.request_repaint();}
+            if let Err(f)=result {end(&finished,f);wake.request_repaint();}
         });
 		Self {
 			commands,
@@ -532,7 +532,7 @@ async fn run_presence_sync(sync: PresenceSync) {
 	let mut failures = 0;
 	let stop = |failure: Failure| {
 		api.stop();
-		let _ = finished.send(Some(failure));
+		end(&finished, failure);
 		wake.request_repaint();
 	};
 	loop {
@@ -661,7 +661,7 @@ async fn run_activity_sharing(
 				&& failure.ends_session()
 			{
 				api.stop();
-				let _ = finished.send(Some(failure));
+				end(&finished, failure);
 				wake.request_repaint();
 				return;
 			}
@@ -704,6 +704,36 @@ impl ReliableEvents {
 		Ok(envelope)
 	}
 }
+/// Records why the session ended. The first failure wins: once the API stops, every later
+/// request fails as expired and would otherwise hide the real cause.
+fn end(finished: &watch::Sender<Option<Failure>>, failure: Failure) {
+	finished.send_if_modified(|current| {
+		let first = current.is_none();
+		if first {
+			*current = Some(failure);
+		}
+		first
+	});
+}
+
+/// Hands a write to the serial write lane. A burst of sends can outrun Discord's rate limit;
+/// a full lane refuses that one write, like a full command queue does, instead of ending the
+/// session. Returns false once the lane has closed.
+fn queue_write(
+	lane: &mpsc::Sender<Command>,
+	command: Command,
+	emit: &dyn Fn(Event) -> Result<(), Failure>,
+) -> Result<bool, Failure> {
+	match lane.try_send(command) {
+		Ok(()) => Ok(true),
+		Err(mpsc::error::TrySendError::Full(command)) => {
+			emit(Event::Rejected(Box::new(command)))?;
+			Ok(true)
+		}
+		Err(mpsc::error::TrySendError::Closed(_)) => Ok(false),
+	}
+}
+
 fn reliable_events(wake: egui::Context) -> (ReliableSender, ReliableEvents) {
 	let (send, receive) = mpsc::channel(RELIABLE_ITEMS);
 	(
@@ -868,6 +898,31 @@ fn scope_history_failure(event: Event, channel: model::Id, request: u64) -> Even
 #[cfg(test)]
 mod tests {
 	use super::*;
+	#[test]
+	fn a_full_write_lane_refuses_one_write_and_the_first_failure_is_kept() {
+		let (lane, mut receive) = mpsc::channel(1);
+		let refused = std::cell::RefCell::new(Vec::new());
+		let emit = |event: Event| {
+			refused.borrow_mut().push(event);
+			Ok(())
+		};
+		assert_eq!(queue_write(&lane, Command::StickerPacks, &emit), Ok(true));
+		// A burst beyond the lane is handed back instead of ending the session.
+		assert_eq!(queue_write(&lane, Command::StickerPacks, &emit), Ok(true));
+		assert!(matches!(
+			refused.borrow().as_slice(),
+			[Event::Rejected(command)] if matches!(**command, Command::StickerPacks)
+		));
+		assert!(matches!(receive.try_recv(), Ok(Command::StickerPacks)));
+		drop(receive);
+		assert_eq!(queue_write(&lane, Command::StickerPacks, &emit), Ok(false));
+
+		let (finished, terminal) = watch::channel(None);
+		end(&finished, Failure::Capacity);
+		// Requests failing after the stop must not hide why the session ended.
+		end(&finished, Failure::Expired);
+		assert_eq!(*terminal.borrow(), Some(Failure::Capacity));
+	}
 	#[test]
 	fn stream_preview_capacity_is_local_but_auth_failures_end_the_session() {
 		for (failure, expected) in [
