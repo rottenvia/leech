@@ -2584,6 +2584,14 @@ impl Desktop {
 		} else {
 			"Connecting with the supplied session; saved login unchanged"
 		};
+		client_core::journal::note(
+			"session",
+			if save {
+				"signing in with a new or switched login"
+			} else {
+				"signing in with the saved login"
+			},
+		);
 		self.voice.stop();
 		self.messaging.camera_test_requested = false;
 		self.messaging.camera_test_texture = None;
@@ -5495,13 +5503,27 @@ impl Desktop {
 		)
 		.clicked()
 		{
+			let journal: String = client_core::journal::recent()
+				.iter()
+				.map(|(at, kind, detail)| {
+					let seconds = at / 1000 % 86_400;
+					format!(
+						"{:02}:{:02}:{:02}.{:03} UTC {kind}: {detail}\n",
+						seconds / 3600,
+						seconds / 60 % 60,
+						seconds % 60,
+						at % 1000
+					)
+				})
+				.collect();
 			let report = format!(
-				"### Sign-in failure\n- **Reason:** {}\n- **Cause:** {}\n{}",
+				"### Sign-in failure\n- **Reason:** {}\n- **Cause:** {}\n- **Install:** {}\n{}\n#### Connection journal\n```\n{journal}```\n",
 				self.state.status,
 				self.state
 					.failure_detail
 					.as_deref()
 					.unwrap_or("No decode detail recorded"),
+				self.perf_stats.install_id().as_deref().unwrap_or("unknown"),
 				self.messaging.diagnostic_info(ui.ctx())
 			);
 			ui.ctx().copy_text(report);
@@ -6469,6 +6491,23 @@ impl Desktop {
 					);
 				}
 			}
+			client_core::journal::note(
+				"session",
+				format!(
+					"stopped: {}; {}{}",
+					failure.label(),
+					if self.voice.in_call() {
+						"was in a call"
+					} else {
+						"not in a call"
+					},
+					if failure == Failure::Expired {
+						"; saved login forgotten"
+					} else {
+						""
+					},
+				),
+			);
 			self.state.interrupt_gif_favorites();
 			self.connection = None;
 			self.pending_save = None;
@@ -6480,6 +6519,12 @@ impl Desktop {
 				generation: self.state.generation,
 				event: Event::Failure(failure),
 			});
+			// Why a session ended goes out now, not with the hourly send.
+			if self.messaging.performance_stats {
+				self.perf_stats
+					.write(&self.messaging.gpu_adapter, self.monitor_period, false);
+				self.perf_stats.send_soon();
+			}
 			if !matches!(self.state.auth, AuthState::Expired | AuthState::Challenged) {
 				self.state.auth = AuthState::Failed;
 			}

@@ -623,6 +623,7 @@ impl MessagingUi {
 					"updates-performance-notice-speed",
 					"updates-performance-notice-streams",
 					"updates-performance-notice-system",
+					"updates-performance-notice-connection",
 				] {
 					ui.horizontal_top(|ui| {
 						ui.spacing_mut().item_spacing.x = 8.0;

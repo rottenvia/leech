@@ -20,6 +20,8 @@ const KEYS = new Set([
 	'memory_peak_mb',
 	// A finished share or watched stream, summed up.
 	'stream',
+	// Connection journal entries: [unix ms, kind, detail], at most 200 per line.
+	'log',
 ]);
 const MAX_BYTES = 256 * 1024;
 const MAX_LINES = 2000;

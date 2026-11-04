@@ -25,8 +25,21 @@ encode and send times, bitrate, loss, round trip, repairs and GPU and CPU use), 
 the next summary or at close, even if Leech drew no frame meanwhile, and sent about ten seconds
 later instead of with the hourly send. Nothing is sent before everyone
 has been told once, in a notice listing what is kept and what is sent; it counts as shown once
-it is on screen, answered or not, recorded by an empty `logs/performance.notice`. While the
+it is on screen, answered or not, recorded in `logs/performance.notice`. While the
 receiver address in `perf_stats.rs` is empty, nothing is sent and no notice is due.
+
+From 0.1.17 the same file and sends also carry the connection journal (`client_core::journal`,
+on the owner's request, to trace sign-outs): every Discord REST request as method, route with
+every ID and query removed, status, time and Discord's error code; gateway connects, HELLO,
+identify or resume, READY, RESUMED, op 7 and op 9, close codes and reasons, socket errors and
+heartbeat timeouts; voice and stream socket losses and close codes; and why a session ended,
+with the `connection.rs` line that ended it. Entries are fixed labels and numbers, never a
+token, message, name or ID, and at most 300 bytes each. At most 4,000 wait in memory and they
+go into `{"at", "version", "log"}` lines of at most 200 entries with the next write. A session
+that ends is written and sent within seconds. The notice gained a line for it, and
+`logs/performance.notice` now holds `2`, so everyone who saw the shorter notice sees it once
+more before anything new is sent. Turning statistics off drops the journal too. Copied
+sign-in failure details include the installation name and the latest 60 entries.
 
 ## CJK font cache (October 30, 2026)
 

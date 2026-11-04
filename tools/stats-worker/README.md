@@ -24,3 +24,14 @@ In the Cloudflare dashboard, open Storage & databases → D1 → leech-stats →
 ```sh
 npx wrangler d1 execute leech-stats --remote --command "SELECT datetime(received, 'unixepoch') AS received, install, value AS line FROM uploads, json_each(uploads.lines) ORDER BY received DESC LIMIT 100"
 ```
+
+### Connection journal
+
+Since 0.1.17 the lines also carry the connection journal (`client_core::journal`): every REST
+request with its route (IDs removed), status and Discord error code, gateway connects, closes
+and invalidations, voice socket losses, and why a session ended, with the `connection.rs` line
+that ended it. A sign-out is sent within seconds. Read one install's timeline, oldest first:
+
+```sh
+node logs.mjs 390a292883a6b54e 48   # install, hours back (default: all installs, 24)
+```

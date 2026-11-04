@@ -24,6 +24,7 @@ assert.equal(
 				{ session: 1, version: '0.1.11' },
 				{ at: 2, memory_mb: 70 },
 				{ at: 3, stream: { kind: 'share' } },
+				{ at: 4, version: '0.1.17', log: [[1, 'gateway', 'READY, session started']] },
 				{ name: 'no' },
 				[1],
 				3,
@@ -38,6 +39,7 @@ assert.deepEqual(JSON.parse(rows[0][2]), [
 	{ session: 1, version: '0.1.11' },
 	{ at: 2, memory_mb: 70 },
 	{ at: 3, stream: { kind: 'share' } },
+	{ at: 4, version: '0.1.17', log: [[1, 'gateway', 'READY, session started']] },
 ]);
 // Nothing worth keeping writes nothing.
 assert.equal((await post({ install, lines: [{ name: 'no' }] })).status, 204);

@@ -253,6 +253,9 @@ pub struct Voice {
 	remote_textures: Vec<(Id, crate::gpu_video::VideoTexture)>,
 }
 impl Voice {
+	pub fn in_call(&self) -> bool {
+		self.call.is_some()
+	}
 	/// Sign-out or a new login: stop every worker now.
 	pub fn stop(&mut self) {
 		self.camera_test = None;
@@ -1128,11 +1131,19 @@ impl Voice {
 				media_identity,
 			)
 			.await;
+			client_core::journal::note(
+				"voice",
+				match result {
+					Ok(()) => "call media ended".to_owned(),
+					Err(error) => format!("call media failed: {error}"),
+				},
+			);
 			if let Err(error) = result {
 				let _ = transport_failure.set(error);
 			}
 			wake.request_repaint();
 		});
+		client_core::journal::note("voice", "call media starting");
 		self.call = Some(CallMedia {
 			id,
 			identity,

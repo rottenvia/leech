@@ -3956,7 +3956,7 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = パフォーマンス統計
 # Context: performance_statistics
-updates-performance-statistics-description = 起動時間、フレーム時間、メモリ使用量、配信品質を保存し、Leech の開発者に送信します。コピーした診断情報に含まれます。
+updates-performance-statistics-description = 起動時間、フレーム時間、メモリ使用量、配信品質を保存し、Leech の開発者に送信します。コピーした診断情報に含まれます。サインアウトや通話の切断を調べるため、接続イベントも送信します。
 # Context: performance_statistics
 updates-performance-notice-title = パフォーマンス統計
 # Context: performance_statistics
@@ -3967,6 +3967,8 @@ updates-performance-notice-speed = 起動時間、フレーム時間、メモリ
 updates-performance-notice-streams = 配信品質 (配信ごとのまとめ): フレームレート、エンコード時間、ビットレート、パケットロス、遅延
 # Context: performance_statistics
 updates-performance-notice-system = Leech のバージョン、システム、グラフィックカード、ディスプレイのリフレッシュレート
+# Context: performance_statistics
+updates-performance-notice-connection = 接続イベント：サインイン、切断、Discord のエラーコード、セッションや通話が終了した理由
 # Context: performance_statistics
 updates-performance-notice-never = メッセージ、名前、サーバー、チャンネル、アカウント情報、音声、映像は含みません。設定 → アップデートでいつでもオフにできます。
 # Context: performance_statistics

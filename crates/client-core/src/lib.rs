@@ -18,6 +18,7 @@ mod permissions_tests;
 mod forwarding;
 pub mod interactions;
 pub mod invites;
+pub mod journal;
 pub mod member_search;
 pub mod message_actions;
 pub mod messaging_permissions;

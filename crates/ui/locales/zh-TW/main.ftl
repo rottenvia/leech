@@ -3994,7 +3994,7 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = 效能統計
 # Context: performance_statistics
-updates-performance-statistics-description = 保存啟動時間、影格時間、記憶體使用量和直播品質，並傳送給 Leech 的開發者。複製的診斷資訊會包含這些資料。
+updates-performance-statistics-description = 保存啟動時間、影格時間、記憶體使用量和直播品質，並傳送給 Leech 的開發者。複製的診斷資訊會包含這些資料。也會傳送連線事件，用於追查登出和通話中斷。
 # Context: performance_statistics
 updates-performance-notice-title = 效能統計
 # Context: performance_statistics
@@ -4005,6 +4005,8 @@ updates-performance-notice-speed = 啟動時間、影格時間和記憶體使用
 updates-performance-notice-streams = 直播品質（按每次直播彙總）：影格率、編碼時間、位元率、封包遺失和延遲
 # Context: performance_statistics
 updates-performance-notice-system = Leech 版本、系統、顯示卡和螢幕更新率
+# Context: performance_statistics
+updates-performance-notice-connection = 連線事件：登入、斷線、Discord 錯誤代碼，以及工作階段或通話結束的原因
 # Context: performance_statistics
 updates-performance-notice-never = 絕不包含訊息、名稱、伺服器、頻道、帳號資訊、音訊或影片。可隨時在 設定 → 更新 中關閉。
 # Context: performance_statistics

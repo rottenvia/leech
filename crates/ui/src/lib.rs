@@ -6204,6 +6204,363 @@ mod composer_tests {
 		state
 	}
 
+	/// A real click spans frames: the button goes down in one frame and comes up a few frames
+	/// later, after the pointer travelled from the row to the item. Every item of the message
+	/// menu must answer that, on rows near the top, middle and bottom of the window.
+	#[test]
+	fn every_message_menu_item_answers_a_real_click() {
+		fn collect(shape: &egui::Shape, labels: &mut Vec<(String, egui::Rect)>) {
+			match shape {
+				egui::Shape::Text(text) => labels.push((
+					text.galley.job.text.clone(),
+					text.galley.rect.translate(text.pos.to_vec2()),
+				)),
+				egui::Shape::Vec(shapes) => {
+					for shape in shapes {
+						collect(shape, labels);
+					}
+				}
+				_ => {}
+			}
+		}
+		let ctx = egui::Context::default();
+		crate::fonts::install(&ctx);
+		let _ = crate::emoji::install(&ctx);
+		crate::icons::install(&ctx);
+		crate::design::apply(&ctx);
+		ctx.set_theme(egui::ThemePreference::Dark);
+		let mut state = edit_state();
+		state.demo = false;
+		state.drafts.clear();
+		let template = state.timeline.get(Id(20)).unwrap().clone();
+		let sam = model::User {
+			id: Id(2),
+			name: "Sam".into(),
+			..template.author.clone()
+		};
+		for offset in 1..=30u64 {
+			let mut message = template.clone();
+			message.id = Id(20 + (offset << 22));
+			message.content = format!("Line {offset}");
+			if offset.is_multiple_of(4) {
+				message.author = sam.clone();
+			}
+			state.timeline.insert(message, false, false).unwrap();
+		}
+		// A read marker at the newest message, as on a live account, so Mark Unread can act.
+		let read_to_newest = |state: &mut State| {
+			state.apply(client_core::Envelope {
+				generation: state.generation,
+				event: client_core::Event::ReadState(client_core::read_state::Event::Snapshot {
+					entries: Some(vec![(Id(10), Some(Id(20 + (30 << 22))), 0)]),
+					version: Some(1),
+					partial: false,
+				}),
+			});
+		};
+		read_to_newest(&mut state);
+		let mut view = MessagingUi::default();
+		let mut time = 0.0;
+		let mut frame = |view: &mut MessagingUi, state: &mut State, events: Vec<egui::Event>| {
+			time += 1.0 / 60.0;
+			let mut commands = vec![];
+			let output = ctx.run_ui(
+				egui::RawInput {
+					screen_rect: Some(egui::Rect::from_min_size(
+						egui::Pos2::ZERO,
+						egui::vec2(1400.0, 900.0),
+					)),
+					time: Some(time),
+					events,
+					..Default::default()
+				},
+				|ui| commands = view.show(ui, state),
+			);
+			let mut labels = vec![];
+			for shape in &output.shapes {
+				collect(&shape.shape, &mut labels);
+			}
+			let copied: Vec<String> = output
+				.platform_output
+				.commands
+				.iter()
+				.filter_map(|command| match command {
+					egui::OutputCommand::CopyText(text) => Some(text.clone()),
+					_ => None,
+				})
+				.collect();
+			output.drop_without_applying_deltas();
+			(commands, labels, copied)
+		};
+		let find = |labels: &[(String, egui::Rect)], text: &str| {
+			labels
+				.iter()
+				.rev()
+				.find(|(label, _)| label == text)
+				.map(|(_, rect)| *rect)
+		};
+		let button = |pos, button, pressed| egui::Event::PointerButton {
+			pos,
+			button,
+			pressed,
+			modifiers: egui::Modifiers::NONE,
+		};
+		let mut labels = vec![];
+		for _ in 0..8 {
+			labels = frame(&mut view, &mut state, vec![]).1;
+		}
+		let rows: Vec<(String, egui::Rect)> = labels
+			.iter()
+			.filter(|(label, rect)| label.starts_with("Line ") && rect.top() > 60.0)
+			.cloned()
+			.collect();
+		assert!(rows.len() >= 6, "{rows:?}");
+		let mut failures = vec![];
+		let mut tried = 0;
+		for (row, row_rect) in [&rows[0], &rows[rows.len() / 2], &rows[rows.len() - 1]] {
+			let offset: u64 = row["Line ".len()..].parse().unwrap();
+			let id = Id(20 + (offset << 22));
+			let own = !offset.is_multiple_of(4);
+			let mut items = vec![
+				"Reply",
+				"Forward",
+				"Copy message",
+				"Pin message",
+				"Mark Unread",
+				"Copy Message Link",
+				"Copy Message ID",
+			];
+			if own {
+				items.extend(["Edit message", "Delete message…"]);
+			}
+			for item in items {
+				// Start each item from a quiet window: no menu, dialog, reply or edit left over.
+				for _ in 0..3 {
+					frame(
+						&mut view,
+						&mut state,
+						vec![egui::Event::Key {
+							key: egui::Key::Escape,
+							physical_key: None,
+							pressed: true,
+							repeat: false,
+							modifiers: egui::Modifiers::NONE,
+						}],
+					);
+				}
+				view.deleting = None;
+				view.editing = None;
+				state.reply = None;
+				let at = row_rect.center();
+				for _ in 0..3 {
+					frame(&mut view, &mut state, vec![egui::Event::PointerMoved(at)]);
+				}
+				frame(
+					&mut view,
+					&mut state,
+					vec![button(at, egui::PointerButton::Secondary, true)],
+				);
+				frame(&mut view, &mut state, vec![]);
+				frame(
+					&mut view,
+					&mut state,
+					vec![button(at, egui::PointerButton::Secondary, false)],
+				);
+				let mut target = None;
+				for _ in 0..4 {
+					let (_, labels, _) = frame(&mut view, &mut state, vec![]);
+					target = find(&labels, item).or(target);
+				}
+				let Some(target) = target else {
+					failures.push(format!("{row}: {item} not offered"));
+					continue;
+				};
+				tried += 1;
+				let goal = target.center();
+				let mut commands = vec![];
+				let mut copied = vec![];
+				for step in 1..=8 {
+					let pos = at + (goal - at) * (step as f32 / 8.0);
+					let (c, _, p) =
+						frame(&mut view, &mut state, vec![egui::Event::PointerMoved(pos)]);
+					commands.extend(c);
+					copied.extend(p);
+				}
+				for events in [
+					vec![button(goal, egui::PointerButton::Primary, true)],
+					vec![],
+					vec![],
+					vec![button(goal, egui::PointerButton::Primary, false)],
+					vec![],
+					vec![],
+				] {
+					let (c, _, p) = frame(&mut view, &mut state, events);
+					commands.extend(c);
+					copied.extend(p);
+				}
+				let (_, mut labels, _) = frame(&mut view, &mut state, vec![]);
+				let menu_closed = find(&labels, "Copy Message ID").is_none();
+				// Delete asks first; its Delete button must answer a real click too.
+				if item == "Delete message…" {
+					for _ in 0..4 {
+						labels = frame(&mut view, &mut state, vec![]).1;
+					}
+					if let Some(confirm) = find(&labels, "Delete") {
+						let goal = confirm.center();
+						for events in [
+							vec![egui::Event::PointerMoved(goal)],
+							vec![button(goal, egui::PointerButton::Primary, true)],
+							vec![],
+							vec![button(goal, egui::PointerButton::Primary, false)],
+							vec![],
+						] {
+							commands.extend(frame(&mut view, &mut state, events).0);
+						}
+					}
+				}
+				let worked = match item {
+					"Reply" => state.reply_target() == Some(id),
+					"Forward" => {
+						find(&labels, "Forward").is_some() || find(&labels, "Send").is_some()
+					}
+					"Copy message" => copied.iter().any(|text| *text == row.as_str()),
+					"Copy Message ID" => copied.contains(&id.to_string()),
+					"Copy Message Link" => {
+						copied.iter().any(|text| text.ends_with(&id.to_string()))
+					}
+					"Pin message" => commands.iter().any(
+						|command| matches!(command, Command::Pin { message, .. } if *message == id),
+					),
+					"Mark Unread" => commands
+						.iter()
+						.any(|command| matches!(command, Command::MarkRead { manual: true, .. })),
+					"Edit message" => view
+						.editing
+						.as_ref()
+						.is_some_and(|(_, message, _)| *message == id),
+					"Delete message…" => commands.iter().any(
+						|command| matches!(command, Command::Delete { message, .. } if *message == id),
+					),
+					_ => unreachable!(),
+				};
+				// Discord accepts the mark, and the next row starts from a read channel again.
+				for command in &commands {
+					if let Command::MarkRead {
+						channel,
+						message,
+						request,
+						..
+					} = command
+					{
+						state.apply(client_core::Envelope {
+							generation: state.generation,
+							event: client_core::Event::ReadState(
+								client_core::read_state::Event::Result {
+									channel: *channel,
+									message: *message,
+									request: *request,
+									result: Ok(()),
+								},
+							),
+						});
+						read_to_newest(&mut state);
+					}
+				}
+				if !(worked && menu_closed) {
+					failures.push(format!(
+						"{row}: {item} at {target:?} did nothing (menu closed {menu_closed}, commands {}, copied {copied:?})",
+						commands.len()
+					));
+				}
+			}
+		}
+		assert!(tried >= 20, "{tried} items tried; {failures:#?}");
+		assert!(failures.is_empty(), "{failures:#?}");
+
+		// Right-clicking a real selection adds Copy for it; it and the entries below still answer.
+		// A row the loop above left unpinned.
+		let (row, rect) = &rows[1];
+		let offset: u64 = row["Line ".len()..].parse().unwrap();
+		let id = Id(20 + (offset << 22));
+		for item in ["Copy", "Copy message", "Pin message"] {
+			let escape = egui::Event::Key {
+				key: egui::Key::Escape,
+				physical_key: None,
+				pressed: true,
+				repeat: false,
+				modifiers: egui::Modifiers::NONE,
+			};
+			for _ in 0..3 {
+				frame(&mut view, &mut state, vec![escape.clone()]);
+			}
+			let (from, to) = (rect.left_center(), rect.right_center());
+			for events in [
+				vec![egui::Event::PointerMoved(from)],
+				vec![button(from, egui::PointerButton::Primary, true)],
+				vec![egui::Event::PointerMoved(from.lerp(to, 0.5))],
+				vec![egui::Event::PointerMoved(to)],
+				vec![button(to, egui::PointerButton::Primary, false)],
+				vec![],
+			] {
+				frame(&mut view, &mut state, events);
+			}
+			assert!(
+				crate::select::has_selection(&ctx),
+				"{item}: the drag selected nothing"
+			);
+			let at = rect.center();
+			for events in [
+				vec![egui::Event::PointerMoved(at)],
+				vec![button(at, egui::PointerButton::Secondary, true)],
+				vec![],
+				vec![button(at, egui::PointerButton::Secondary, false)],
+			] {
+				frame(&mut view, &mut state, events);
+			}
+			let mut target = None;
+			for _ in 0..4 {
+				let (_, labels, _) = frame(&mut view, &mut state, vec![]);
+				target = find(&labels, item).or(target);
+			}
+			let goal = target
+				.unwrap_or_else(|| panic!("{item} not offered over a selection"))
+				.center();
+			let mut commands = vec![];
+			let mut copied = vec![];
+			for (step, events) in (1..=8)
+				.map(|step| {
+					vec![egui::Event::PointerMoved(
+						at + (goal - at) * (step as f32 / 8.0),
+					)]
+				})
+				.chain([
+					vec![button(goal, egui::PointerButton::Primary, true)],
+					vec![],
+					vec![button(goal, egui::PointerButton::Primary, false)],
+					vec![],
+				])
+				.enumerate()
+			{
+				let (c, _, p) = frame(&mut view, &mut state, events);
+				commands.extend(c);
+				copied.extend(p.into_iter().map(|text| (step, text)));
+			}
+			let worked = match item {
+				"Copy" | "Copy message" => {
+					copied.iter().any(|(_, text)| text.contains(row.as_str()))
+				}
+				_ => commands.iter().any(
+					|command| matches!(command, Command::Pin { message, .. } if *message == id),
+				),
+			};
+			assert!(
+				worked,
+				"{item} over a selection did nothing: {copied:?}, {} commands",
+				commands.len()
+			);
+		}
+	}
+
 	fn edit_frame(
 		ctx: &egui::Context,
 		view: &mut MessagingUi,

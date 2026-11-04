@@ -4098,7 +4098,7 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Performance statistics
 # Context: performance_statistics
-updates-performance-statistics-description = Keep startup time, frame times, memory use and stream quality, and send them to Leech's developer. Copied diagnostics include them.
+updates-performance-statistics-description = Keep startup time, frame times, memory use and stream quality, and send them to Leech's developer. Copied diagnostics include them. Connection events go too, to trace sign-outs and dropped calls.
 # Context: performance_statistics
 updates-performance-notice-title = Performance statistics
 # Context: performance_statistics
@@ -4109,6 +4109,8 @@ updates-performance-notice-speed = Startup time, frame times and memory use
 updates-performance-notice-streams = Stream quality, summed up per stream: frame rate, encode time, bitrate, packet loss and latency
 # Context: performance_statistics
 updates-performance-notice-system = The Leech version, system, graphics card and display refresh rate
+# Context: performance_statistics
+updates-performance-notice-connection = Connection events: sign-ins, disconnects, Discord's error codes and why a session or call ended
 # Context: performance_statistics
 updates-performance-notice-never = Never messages, names, servers, channels, account details, audio or video. Turn this off any time in Settings → Updates.
 # Context: performance_statistics

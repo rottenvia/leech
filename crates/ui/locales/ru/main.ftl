@@ -4086,7 +4086,7 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Статистика производительности
 # Context: performance_statistics
-updates-performance-statistics-description = Хранить время запуска, время кадров, расход памяти и качество трансляции и отправлять их разработчику Leech. Скопированная диагностика включает их.
+updates-performance-statistics-description = Хранить время запуска, время кадров, расход памяти и качество трансляции и отправлять их разработчику Leech. Скопированная диагностика включает их. Также отправляются события подключения, чтобы найти причину выходов из аккаунта и обрывов звонков.
 # Context: performance_statistics
 updates-performance-notice-title = Статистика производительности
 # Context: performance_statistics
@@ -4097,6 +4097,8 @@ updates-performance-notice-speed = Время запуска, время кад�
 updates-performance-notice-streams = Качество трансляции, сводка по каждой трансляции: частота кадров, время кодирования, битрейт, потери пакетов и задержка
 # Context: performance_statistics
 updates-performance-notice-system = Версия Leech, система, видеокарта и частота обновления экрана
+# Context: performance_statistics
+updates-performance-notice-connection = События подключения: входы, отключения, коды ошибок Discord и причина завершения сеанса или звонка
 # Context: performance_statistics
 updates-performance-notice-never = Никогда не сообщения, имена, серверы, каналы, данные аккаунта, звук или видео. Отключить можно в любой момент в Настройки → Обновления.
 # Context: performance_statistics
