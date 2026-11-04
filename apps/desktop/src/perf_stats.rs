@@ -1,8 +1,10 @@
 //! Performance statistics, kept in `logs/performance.jsonl`: startup time, frame times and
-//! memory use, with the version, system and graphics card they came from. The lines are also
-//! sent to Leech's own receiver (`tools/stats-worker`), which only its developer can read,
-//! once everyone has been told so. Stream and call quality stay in `stream.log`. Nothing names
-//! a person, server, channel or message, and the file is bounded like the stream log.
+//! memory use, with the version, system and graphics card they came from, and the connection
+//! journal (`client_core::journal`: requests, disconnects, close codes, why a session ended).
+//! The lines are also sent to Leech's own receiver (`tools/stats-worker`), which only its
+//! developer can read, once everyone has been told so. Stream and call quality stay in
+//! `stream.log`. Nothing names a person, server, channel or message, and the file is bounded
+//! like the stream log.
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,8 +20,12 @@ const RECEIVER: &str = "https://leech-stats.leech-stats.workers.dev/v1/performan
 const SENT: &str = "performance.sent";
 /// A random name for this installation, so its lines can be told apart from others'.
 const INSTALL: &str = "performance.id";
-/// Present once the notice that statistics are kept and sent was shown.
+/// Holds `NOTICE_VERSION` once the notice that statistics are kept and sent was shown. An
+/// older notice said less, so it is shown again when what is sent grows.
 const NOTICE: &str = "performance.notice";
+const NOTICE_VERSION: &str = "2";
+/// Journal entries per line, so one line stays far below the receiver's request limit.
+const LOG_LINE: usize = 200;
 /// Lines go at launch and then at most this often; each request carries at most `BATCH`.
 const SEND_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const BATCH: usize = 128 * 1024;
@@ -60,10 +66,23 @@ impl Stats {
 	/// Whether this launch owes the one-time notice that statistics are kept and sent.
 	pub fn notice_due(&self) -> bool {
 		!RECEIVER.is_empty()
-			&& self
-				.directory
-				.as_ref()
-				.is_some_and(|directory| !directory.join(NOTICE).exists())
+			&& self.directory.as_ref().is_some_and(|directory| {
+				std::fs::read_to_string(directory.join(NOTICE))
+					.ok()
+					.as_deref() != Some(NOTICE_VERSION)
+			})
+	}
+
+	/// This installation's random name, which tells its lines apart in the receiver.
+	pub fn install_id(&self) -> Option<String> {
+		install(self.directory.as_ref()?)
+	}
+
+	/// Sends what is kept within seconds instead of at the next hourly send, after something
+	/// worth seeing at once, such as a session that ended.
+	pub fn send_soon(&mut self) {
+		let soon = Instant::now() + Duration::from_secs(2);
+		self.next_send = Some(self.next_send.map_or(soon, |next| next.min(soon)));
 	}
 
 	/// Records that the notice was shown, so no launch shows it again, answered or not.
@@ -73,7 +92,7 @@ impl Stats {
 		}
 		if let Some(directory) = &self.directory {
 			let _ = std::fs::create_dir_all(directory);
-			let _ = std::fs::write(directory.join(NOTICE), b"");
+			let _ = std::fs::write(directory.join(NOTICE), NOTICE_VERSION);
 		}
 	}
 
@@ -116,8 +135,9 @@ impl Stats {
 	) -> Option<String> {
 		let started = self.started.take()?;
 		if !enabled {
-			// Streams summed up while statistics are off are dropped too.
+			// Streams summed up and the journal kept while statistics are off are dropped too.
 			discord_voice::stream_log::take_summaries();
+			client_core::journal::take();
 			*self = Self {
 				next_send: self.next_send,
 				sending: self.sending.clone(),
@@ -159,10 +179,11 @@ impl Stats {
 	pub fn write(&mut self, gpu: &str, refresh: Option<Duration>, wait: bool) {
 		let frames: u64 = self.buckets.iter().sum();
 		let streams = discord_voice::stream_log::take_summaries();
+		let journal = client_core::journal::take();
 		let Some(directory) = self
 			.directory
 			.clone()
-			.filter(|_| frames > 0 || !streams.is_empty())
+			.filter(|_| frames > 0 || !streams.is_empty() || !journal.is_empty())
 		else {
 			return;
 		};
@@ -192,8 +213,15 @@ impl Stats {
 		let streams: Vec<_> = streams
 			.into_iter()
 			.map(|stream| serde_json::json!({ "at": at, "stream": stream }))
+			.chain(journal.chunks(LOG_LINE).map(|entries| {
+				serde_json::json!({
+					"at": at,
+					"version": env!("CARGO_PKG_VERSION"),
+					"log": entries,
+				})
+			}))
 			.collect();
-		if !streams.is_empty() {
+		if streams.iter().any(|line| line.get("stream").is_some()) {
 			// A finished stream goes out soon instead of with the hourly send, once the
 			// writer below has appended it.
 			let soon = Instant::now() + Duration::from_secs(10);
@@ -379,7 +407,10 @@ mod tests {
 		stats.startup(1234);
 		stats.write("Test GPU (Dx12)", None, true);
 		assert_eq!(stats.buckets.iter().sum::<u64>(), 0);
-		// A second write with no frames adds nothing.
+		// A second write with no frames adds only the journal, cut into bounded lines.
+		for index in 0..LOG_LINE + 1 {
+			client_core::journal::note("test", format!("entry {index}"));
+		}
 		stats.write("Test GPU (Dx12)", None, true);
 		let path = directory.join(FILE);
 		let text = std::fs::read_to_string(&path).unwrap();
@@ -390,6 +421,17 @@ mod tests {
 		assert_eq!(lines[0]["version"], env!("CARGO_PKG_VERSION"));
 		assert_eq!(lines[0]["refresh_hz"], serde_json::Value::Null);
 		assert_eq!(lines[1]["startup_ms"], 1234);
+		let logged: Vec<_> = lines
+			.iter()
+			.filter_map(|line| line["log"].as_array())
+			.collect();
+		assert!(logged.iter().all(|entries| entries.len() <= LOG_LINE));
+		assert!(
+			logged
+				.iter()
+				.flat_map(|entries| entries.iter())
+				.any(|entry| entry[1] == "test" && entry[2] == format!("entry {LOG_LINE}"))
+		);
 		assert!(stats.summary().starts_with("frames 1"));
 
 		// Turning statistics off forgets the interval.

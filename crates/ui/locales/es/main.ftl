@@ -3962,7 +3962,7 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Estadísticas de rendimiento
 # Context: performance_statistics
-updates-performance-statistics-description = Guardar el tiempo de inicio, los tiempos de fotograma, el uso de memoria y la calidad de la transmisión, y enviarlos al desarrollador de Leech. Los diagnósticos copiados los incluyen.
+updates-performance-statistics-description = Guardar el tiempo de inicio, los tiempos de fotograma, el uso de memoria y la calidad de la transmisión, y enviarlos al desarrollador de Leech. Los diagnósticos copiados los incluyen. También se envían los eventos de conexión, para rastrear cierres de sesión y llamadas caídas.
 # Context: performance_statistics
 updates-performance-notice-title = Estadísticas de rendimiento
 # Context: performance_statistics
@@ -3973,6 +3973,8 @@ updates-performance-notice-speed = Tiempo de inicio, tiempos de fotograma y uso 
 updates-performance-notice-streams = Calidad de la transmisión, resumida por transmisión: fotogramas por segundo, tiempo de codificación, tasa de bits, pérdida de paquetes y latencia
 # Context: performance_statistics
 updates-performance-notice-system = La versión de Leech, el sistema, la tarjeta gráfica y la frecuencia de la pantalla
+# Context: performance_statistics
+updates-performance-notice-connection = Eventos de conexión: inicios de sesión, desconexiones, códigos de error de Discord y por qué terminó una sesión o llamada
 # Context: performance_statistics
 updates-performance-notice-never = Nunca mensajes, nombres, servidores, canales, datos de la cuenta, audio ni vídeo. Desactívalo cuando quieras en Ajustes → Actualizaciones.
 # Context: performance_statistics

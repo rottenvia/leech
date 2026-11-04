@@ -46,6 +46,16 @@ fn diagnosed(
 	failure
 }
 
+/// One line in the connection journal; see `client_core::journal`.
+fn note(detail: impl Into<String>) {
+	client_core::journal::note("gateway", detail);
+}
+fn close_text(close: Option<&tokio_tungstenite::tungstenite::protocol::CloseFrame>) -> String {
+	close.map_or_else(
+		|| "no code".to_owned(),
+		|close| format!("{} {}", u16::from(close.code), close.reason.as_str()),
+	)
+}
 fn socket_failure(error: tokio_tungstenite::tungstenite::Error) -> Failure {
 	match error {
 		tokio_tungstenite::tungstenite::Error::Capacity(_) => {
@@ -1184,15 +1194,32 @@ async fn run_recoverable(
 			while voice_controls.try_recv().is_ok() {}
 			emit(Event::Disconnected)?;
 			if !std::mem::take(&mut skip_backoff) {
-				let _ = recoverable_wait(
-					sleep(Duration::from_millis(
-						(1000_u64 << attempt.min(5)) + jitter_ms(1000),
-					)),
+				let delay = (1000_u64 << attempt.min(5)) + jitter_ms(1000);
+				note(format!("waiting {delay} ms before reconnecting"));
+				if recoverable_wait(
+					sleep(Duration::from_millis(delay)),
 					if was_ready { reconnect } else { None },
 				)
-				.await;
+				.await
+				.is_none()
+				{
+					note("wait cut short by a reconnect request");
+				}
 			}
 		}
+		note(format!(
+			"connecting, attempt {attempt}, {}{}",
+			if state.session.is_some() && state.sequence.is_some() {
+				"to resume"
+			} else {
+				"to identify"
+			},
+			if state.url.is_some() {
+				" on the resume host"
+			} else {
+				""
+			},
+		));
 		let url = state.url.as_deref().unwrap_or(&initial_url);
 		// Compiled out of shipped builds. Tests replace only dialing, never URL validation.
 		#[cfg(test)]
@@ -1216,9 +1243,15 @@ async fn run_recoverable(
 		)
 		.await
 		else {
+			note("opening the socket was cut short by a reconnect request");
 			skip_backoff = true;
 			continue;
 		};
+		match &connection {
+			Err(_) => note("opening the socket timed out after 15 s"),
+			Ok(Err(error)) => note(format!("opening the socket failed: {error}")),
+			Ok(Ok(_)) => {}
+		}
 		let Ok(Ok((mut socket, _))) = connection else {
 			state.failed();
 			attempt = next_attempt(attempt, None);
@@ -1242,9 +1275,22 @@ async fn run_recoverable(
 		)
 		.await
 		else {
+			note("waiting for HELLO was cut short by a reconnect request");
 			skip_backoff = true;
 			continue;
 		};
+		match &hello {
+			Err(_) => note("no HELLO within 10 s"),
+			Ok(Err(failure)) => note(format!("socket failed before HELLO: {}", failure.label())),
+			Ok(Ok(Frame::Close(close))) => {
+				note(format!(
+					"closed before HELLO: {}",
+					close_text(close.as_ref())
+				));
+			}
+			Ok(Ok(Frame::Text(_))) => {}
+			Ok(Ok(_)) => note("first frame was not HELLO"),
+		}
 		if let Ok(Err(failure)) = hello
 			&& failure.ends_session()
 		{
@@ -1287,10 +1333,20 @@ async fn run_recoverable(
 			.await,
 			Ok(Ok(()))
 		) {
+			note("sending identify or resume failed");
 			state.failed();
 			attempt = next_attempt(attempt, None);
 			continue;
 		}
+		note(format!(
+			"{} sent, heartbeat every {} ms",
+			if state.session.is_some() && state.sequence.is_some() {
+				"resume"
+			} else {
+				"identify"
+			},
+			hello.heartbeat_interval
+		));
 		let mut heartbeat = Heartbeat::default();
 		let interval = Duration::from_millis(hello.heartbeat_interval);
 		let mut timer = interval_at(
@@ -1519,9 +1575,9 @@ async fn run_recoverable(
 						else if let Some(event)=active.take_presence() {emit(event)?;}
 					}
 				}
-				_ = tokio::time::sleep_until(ready_deadline), if ready_at.is_none() => break,
+				_ = tokio::time::sleep_until(ready_deadline), if ready_at.is_none() => { note("no READY or RESUMED within 30 s"); break },
 				_ = timer.tick() => {
-					if heartbeat.tick(Instant::now(), interval).is_err() { break; }
+					if heartbeat.tick(Instant::now(), interval).is_err() { note("heartbeat not acknowledged in time"); break; }
 					let packet = serde_json::json!({"op":1,"d":state.sequence}).to_string();
 					if !matches!(timeout(Duration::from_secs(5), socket.send(Frame::Text(packet.into()))).await, Ok(Ok(()))) { break; }
 				}
@@ -1532,6 +1588,7 @@ async fn run_recoverable(
 							None => continue,
 						},
 						Some(Err(error)) => {
+							note(format!("socket error: {error}"));
 							let failure = socket_failure(error);
 							if failure.ends_session() { return Err(failure); }
 							break;
@@ -1555,9 +1612,10 @@ async fn run_recoverable(
 									if !matches!(timeout(Duration::from_secs(5), socket.send(Frame::Text(packet.into()))).await, Ok(Ok(()))) { break; }
 									heartbeat.sent(Instant::now());
 								}
-								7 => break,
+								7 => { note("Discord asked to reconnect (op 7)"); break },
 								9 => {
 									let resumable: bool = decode(packet.d.get().as_bytes()).map_err(|_| Failure::Protocol)?;
+									note(format!("session invalidated (op 9), resumable: {resumable}"));
 									if !resumable { state = ResumeState::default(); }
 									emit(Event::Disconnected)?;
 									sleep(Duration::from_millis(1000 + jitter_ms(4000))).await;
@@ -1651,6 +1709,7 @@ async fn run_recoverable(
 										if !participants.is_empty() { emit(Event::Voice(client_core::voice::Event::Snapshot { partial: false, guild: None, participants }))?; }
 										state.failures = 0;
 										ready_at = Some(Instant::now());
+										note("READY, session started");
 									}
 									"GUILD_MEMBERS_CHUNK" => {
 										if let Some(event) = queries.chunk(packet.d.get().as_bytes()) { emit(event)?; }
@@ -1682,7 +1741,7 @@ async fn run_recoverable(
 										if !participants.is_empty() { emit(Event::Voice(client_core::voice::Event::Snapshot { partial: true, guild: None, participants }))?; }
 										calls.users.clear();
 									}
-									"RESUMED" => { emit(Event::Interaction(client_core::interactions::Event::Session(state.session.clone().ok_or(Failure::Protocol)?)))?; emit(Event::Resumed)?; state.failures = 0; ready_at = Some(Instant::now()); },
+									"RESUMED" => { emit(Event::Interaction(client_core::interactions::Event::Session(state.session.clone().ok_or(Failure::Protocol)?)))?; emit(Event::Resumed)?; state.failures = 0; ready_at = Some(Instant::now()); note("RESUMED"); },
 									"CALL_CREATE" | "CALL_UPDATE" | "CALL_DELETE" | "CHANNEL_INFO" | "VOICE_CHANNEL_START_TIME_UPDATE" | "VOICE_STATE_UPDATE" | "VOICE_SERVER_UPDATE" | "STREAM_CREATE" | "STREAM_SERVER_UPDATE" | "STREAM_DELETE" => calls.dispatch(packet.t.as_deref().unwrap_or(""),packet.d.get().as_bytes(),owner_id,state.session.as_deref().map(String::as_str),&emit)?,
 									"THREAD_MEMBER_LIST_UPDATE" => {
 										if let Some(active) = &mut active_members {
@@ -1929,19 +1988,21 @@ async fn run_recoverable(
 								},
 								_ => {
 									gateway_diagnostics.record("unsupported opcode; connection stopped");
+									note(format!("unsupported opcode {}; connection stopped", packet.op));
 									return Err(Failure::Protocol);
 								},
 							}
 						}
 						Some(Ok(Frame::Close(close))) => {
+							note(format!("closed by Discord: {}", close_text(close.as_ref())));
 							let code = close.map_or(1006, |f| u16::from(f.code));
 							state.close(code)?;
 							break;
 						}
 						Some(Ok(Frame::Ping(data))) => { if !matches!(timeout(Duration::from_secs(5), socket.send(Frame::Pong(data))).await, Ok(Ok(()))) { break; } }
 						Some(Ok(Frame::Pong(_))) => {},
-						Some(Ok(Frame::Binary(_))) => return Err(Failure::Protocol),
-						_ => break,
+						Some(Ok(Frame::Binary(_))) => { note("unexpected binary frame; connection stopped"); return Err(Failure::Protocol) },
+						_ => { note("socket ended without a close frame"); break },
 					}
 				}
 			}

@@ -52,7 +52,11 @@ impl Playback {
 	pub async fn poll(&mut self, api: &DiscordApi, user: Id) -> Result<Option<Activity>, Failure> {
 		if api.stopped() || user.0 == 0 {
 			self.token = None;
-			return Err(Failure::Expired);
+			return Err(if api.stopped() {
+				api.stop_failure()
+			} else {
+				Failure::Protocol
+			});
 		}
 		let bytes = Zeroizing::new(
 			api.request_limited(

@@ -3975,7 +3975,7 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Statistiky výkonu
 # Context: performance_statistics
-updates-performance-statistics-description = Uchovávat dobu spuštění, časy snímků, využití paměti a kvalitu streamu a odesílat je vývojáři Leech. Zkopírovaná diagnostika je obsahuje.
+updates-performance-statistics-description = Uchovávat dobu spuštění, časy snímků, využití paměti a kvalitu streamu a odesílat je vývojáři Leech. Zkopírovaná diagnostika je obsahuje. Odesílají se i události připojení, aby šlo dohledat odhlášení a spadlé hovory.
 # Context: performance_statistics
 updates-performance-notice-title = Statistiky výkonu
 # Context: performance_statistics
@@ -3986,6 +3986,8 @@ updates-performance-notice-speed = Doba spuštění, časy snímků a využití 
 updates-performance-notice-streams = Kvalita streamu, shrnutá za každý stream: snímková frekvence, doba kódování, datový tok, ztráta paketů a latence
 # Context: performance_statistics
 updates-performance-notice-system = Verze Leech, systém, grafická karta a obnovovací frekvence displeje
+# Context: performance_statistics
+updates-performance-notice-connection = Události připojení: přihlášení, odpojení, chybové kódy Discordu a proč relace nebo hovor skončily
 # Context: performance_statistics
 updates-performance-notice-never = Nikdy zprávy, jména, servery, kanály, údaje o účtu, zvuk ani video. Vypnout to můžete kdykoli v Nastavení → Aktualizace.
 # Context: performance_statistics

@@ -12,8 +12,9 @@ backend, web wrapper, or separate voice service.
   handoff limits described in the relevant auth docs.
 - No credential extraction, challenge bypass, uploaded telemetry, unbounded logs, backend or
   account system, with one exception that is the owner's decision: bounded performance
-  statistics (`logs/performance.jsonl`, opt-out, from 0.1.9), sent after a one-time notice to
-  the owner's own receiver (`tools/stats-worker`, from 2026-10-30). Nothing else is sent.
+  statistics (`logs/performance.jsonl`, opt-out, from 0.1.9) and, from 0.1.17, the connection
+  journal (`client_core::journal`), sent after a one-time notice to the owner's own receiver
+  (`tools/stats-worker`, from 2026-10-30). Nothing else is sent.
 - Use synthetic/offline data by default. Live tests need the owner’s explicit developer-session
   gate and control of the private conversation. Never ask for credentials. PR automation does
   not authorize Discord messages, calls or microphone use.

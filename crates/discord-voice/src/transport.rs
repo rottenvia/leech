@@ -589,7 +589,8 @@ async fn run_inner(
 				let event=match event {
 					// A server crash preserves the voice session. Other close codes remain terminal.
 					Some(Ok(message)) if !matches!(&message, Message::Close(Some(frame)) if u16::from(frame.code)==4015)=>message,
-					_=>{
+					other=>{
+						client_core::journal::note("voice",format!("voice socket lost ({}), resume attempt {}{}",match &other {Some(Ok(_))=>"server crash, 4015".to_owned(),Some(Err(error))=>error.to_string(),None=>"ended".to_owned()},resume_attempts+1,if encryption.is_none(){", not secured yet"}else{""}));
 						if encryption.is_none() || resume_attempts>=2 {return Err("Voice socket failed; rejoin the call");}
 						video.clear();video.announced=false;
 						resume_attempts+=1;resuming=true;ready_announced=false;waiting_announced=false;capture_reset=true;
@@ -729,6 +730,7 @@ async fn run_inner(
 								json_send(&mut ws,json!({"op":5,"d":{"speaking":0,"delay":0,"ssrc":ssrc}})).await?;
 								speaking=false;silence=0;
 								// Each drop gets two tries again once a resume succeeds; long calls lose sockets now and then.
+								if resuming {client_core::journal::note("voice","voice session resumed");}
 								resuming=false;resume_attempts=0;
 							},
 							12=>{
@@ -777,7 +779,10 @@ async fn run_inner(
 						}
 					},
 					Message::Ping(data)=>send(&mut ws,Message::Pong(data)).await?,
-					Message::Close(_)=>return Err("Discord voice connection closed; rejoin the call"),
+					Message::Close(frame)=>{
+						client_core::journal::note("voice",format!("voice closed by Discord: {}",frame.map_or_else(||"no code".to_owned(),|frame|format!("{} {}",u16::from(frame.code),frame.reason.as_str()))));
+						return Err("Discord voice connection closed; rejoin the call")
+					},
 					Message::Pong(_)=>{},
 					_=>return Err("Unsupported voice websocket frame"),
 				}
@@ -1533,7 +1538,7 @@ async fn run_stream_inner(
 						}
 					},
 					Message::Binary(bytes)=>{if bytes.len()<3{return Err("Truncated stream DAVE signaling");}seq_ack=i64::from(u16::from_be_bytes([bytes[0],bytes[1]]));metrics.signal(Signal::Binary,1);metrics.signal(match bytes[2]{25=>Signal::ExternalSender,27=>Signal::Proposals,29|30=>Signal::Commit,_=>Signal::Other},1);match bytes[2]{25=>dave.session.set_external_sender(&bytes[3..]).map_err(|_|"Stream DAVE external sender validation failed")?,27=>if let Some(response)=dave.proposals(&bytes[3..])?{send(&mut ws,Message::Binary(response.into())).await?;},29|30=>{announced=false;awaiting_keyframe=true;invalidate_stream(&mut video, &mut share_audio);match dave.group_changed(bytes[2],&bytes[3..]){Ok(id)=>if id!=0{json_send(&mut ws,json!({"op":23,"d":{"transition_id":id}})).await?;metrics.signal(Signal::TransitionReadySent,1);},Err(_)=>{if bytes.len()<5{return Err("Truncated stream DAVE transition");}let id=u16::from_be_bytes([bytes[3],bytes[4]]);json_send(&mut ws,json!({"op":31,"d":{"transition_id":id}})).await?;dave.reset()?;send(&mut ws,Message::Binary(dave.key_package()?.into())).await?;metrics.signal(Signal::KeyPackageSent,1);}}},_=>return Err("Unsupported stream DAVE opcode")}},
-					Message::Ping(data)=>send(&mut ws,Message::Pong(data)).await?, Message::Close(_)=>return Err("Discord stream connection closed"), _=>{}
+					Message::Ping(data)=>send(&mut ws,Message::Pong(data)).await?, Message::Close(frame)=>{client_core::journal::note("voice",format!("stream closed by Discord: {}",frame.map_or_else(||"no code".to_owned(),|frame|format!("{} {}",u16::from(frame.code),frame.reason.as_str()))));return Err("Discord stream connection closed")}, _=>{}
 				}
 			}
 		}

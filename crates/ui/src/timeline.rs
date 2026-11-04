@@ -1314,6 +1314,22 @@ fn deleted_message_actions(popup: egui::Popup<'_>, action: &mut Option<DeletedLo
 		}
 	});
 }
+/// Whether a message menu offers Copy for selected text: only when it was opened by a
+/// right-click over a selection, decided as it opens and kept while it stays open.
+///
+/// Any press on text leaves egui an empty selection, and a press inside the menu clears it. Read
+/// live, the entry appeared after every right-click on text and vanished on the next press, so
+/// every item below it moved up under the pointer and that click did nothing.
+fn copies_selection(ctx: &egui::Context, menu: egui::Id) -> bool {
+	let key = menu.with("copies-selection");
+	if egui::Popup::is_id_open(ctx, menu) {
+		return ctx.data(|data| data.get_temp(key)).unwrap_or(false);
+	}
+	let copies = crate::select::open_menu(ctx);
+	ctx.data_mut(|data| data.insert_temp(key, copies));
+	copies
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn message_actions(
 	popup: egui::Popup<'_>,
@@ -1344,6 +1360,7 @@ fn message_actions(
 	let (own, can_reply, can_edit, can_delete) = actions;
 	let (can_pin, pinned, pin_request) = pin;
 	let (can_thread, thread_request) = thread;
+	let copies_selection = copies_selection(popup.ctx(), popup.get_id());
 	popup.show(|ui| {
 		use crate::design::{menu_item, menu_item_if};
 		use crate::icons::Icon;
@@ -1401,7 +1418,7 @@ fn message_actions(
 			ui.close();
 		}
 		ui.separator();
-		if crate::select::has_selection(ui.ctx())
+		if copies_selection
 			&& menu_item(
 				ui,
 				Some(Icon::Copy),

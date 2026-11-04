@@ -3956,7 +3956,7 @@ updates-update-settings-download-updates-in-the-background-restart-when-you-are-
 # Context: performance_statistics
 updates-performance-statistics = Performans istatistikleri
 # Context: performance_statistics
-updates-performance-statistics-description = Başlatma süresini, kare sürelerini, bellek kullanımını ve yayın kalitesini tut ve Leech geliştiricisine gönder. Kopyalanan tanılama bilgileri bunları içerir.
+updates-performance-statistics-description = Başlatma süresini, kare sürelerini, bellek kullanımını ve yayın kalitesini tut ve Leech geliştiricisine gönder. Kopyalanan tanılama bilgileri bunları içerir. Oturum kapanmalarını ve kopan aramaları izlemek için bağlantı olayları da gönderilir.
 # Context: performance_statistics
 updates-performance-notice-title = Performans istatistikleri
 # Context: performance_statistics
@@ -3967,6 +3967,8 @@ updates-performance-notice-speed = Başlatma süresi, kare süreleri ve bellek k
 updates-performance-notice-streams = Yayın kalitesi, her yayın için özetlenir: kare hızı, kodlama süresi, bit hızı, paket kaybı ve gecikme
 # Context: performance_statistics
 updates-performance-notice-system = Leech sürümü, sistem, ekran kartı ve ekran yenileme hızı
+# Context: performance_statistics
+updates-performance-notice-connection = Bağlantı olayları: girişler, bağlantı kopmaları, Discord hata kodları ve bir oturumun veya aramanın neden bittiği
 # Context: performance_statistics
 updates-performance-notice-never = Asla mesajlar, adlar, sunucular, kanallar, hesap bilgileri, ses veya görüntü değil. Ayarlar → Güncellemeler bölümünden istediğin zaman kapatabilirsin.
 # Context: performance_statistics

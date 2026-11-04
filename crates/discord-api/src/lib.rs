@@ -62,6 +62,8 @@ pub struct DiscordApi {
 	cooldown: Mutex<Instant>,
 	requests: Semaphore,
 	stopped: AtomicBool,
+	/// Why the session stopped; every later request reports it instead of hiding it.
+	stop_reason: std::sync::Mutex<Option<Failure>>,
 	catalog: std::sync::Mutex<collectibles::Catalog>,
 	#[cfg(test)]
 	base: String,
@@ -217,6 +219,7 @@ impl DiscordApi {
 			cooldown: Mutex::new(Instant::now()),
 			requests: Semaphore::new(4),
 			stopped: AtomicBool::new(false),
+			stop_reason: std::sync::Mutex::new(None),
 			catalog: std::sync::Mutex::default(),
 			#[cfg(test)]
 			base: "https://discord.com/api/v10".into(),
@@ -255,10 +258,49 @@ impl DiscordApi {
 		Ok(client)
 	}
 	pub fn stop(&self) {
+		self.stop_because(Failure::Expired);
+	}
+	/// Stops every request. The first reason sticks: later requests fail with it, so another
+	/// task cannot report the stop itself as an expired session and forget the saved login.
+	pub fn stop_because(&self, failure: Failure) {
+		self.stop_reason
+			.lock()
+			.unwrap_or_else(std::sync::PoisonError::into_inner)
+			.get_or_insert(failure);
 		self.stopped.store(true, Ordering::Release);
 	}
 	pub fn stopped(&self) -> bool {
 		self.stopped.load(Ordering::Acquire)
+	}
+	/// What a request made after the stop fails with.
+	pub fn stop_failure(&self) -> Failure {
+		self.stop_reason
+			.lock()
+			.unwrap_or_else(std::sync::PoisonError::into_inner)
+			.unwrap_or(Failure::Expired)
+	}
+	/// Asks `/users/@me` whether the token still works: `None` when that could not be told.
+	async fn token_valid(&self) -> Option<bool> {
+		let mut authorization = HeaderValue::from_str(self.secret.expose()).ok()?;
+		authorization.set_sensitive(true);
+		#[cfg(not(test))]
+		let base = "https://discord.com/api/v10";
+		#[cfg(test)]
+		let base = &self.base;
+		let response = self
+			.rest_client()
+			.await
+			.ok()?
+			.get(format!("{base}/users/@me"))
+			.header(AUTHORIZATION, authorization)
+			.send()
+			.await
+			.ok()?;
+		match response.status() {
+			StatusCode::UNAUTHORIZED => Some(false),
+			status if status.is_success() => Some(true),
+			_ => None,
+		}
 	}
 	async fn request(
 		&self,
@@ -382,7 +424,7 @@ impl DiscordApi {
 			}
 		}
 		if self.stopped() {
-			return Err(Failure::Expired);
+			return Err(self.stop_failure());
 		}
 		let mut authorization =
 			HeaderValue::from_str(self.secret.expose()).map_err(|_| Failure::InvalidCredential)?;
@@ -392,6 +434,8 @@ impl DiscordApi {
 		#[cfg(test)]
 		let base = &self.base;
 		let write = method != Method::GET;
+		let label = format!("{method} {}", client_core::journal::route(path));
+		let started = Instant::now();
 		let mut request = self
 			.rest_client()
 			.await?
@@ -432,7 +476,21 @@ impl DiscordApi {
 					.body(body),
 			};
 		}
-		let mut response = request.send().await.map_err(|_| {
+		let mut response = request.send().await.map_err(|error| {
+			client_core::journal::note(
+				"rest",
+				format!(
+					"{label}: no response after {} ms ({})",
+					started.elapsed().as_millis(),
+					if error.is_timeout() {
+						"timed out"
+					} else if error.is_connect() {
+						"could not connect"
+					} else {
+						"connection lost"
+					}
+				),
+			);
 			if write {
 				Failure::Ambiguous
 			} else {
@@ -440,6 +498,10 @@ impl DiscordApi {
 			}
 		})?;
 		let status = response.status();
+		let elapsed = started.elapsed().as_millis();
+		if status.is_success() {
+			client_core::journal::note("rest", format!("{label} {} {elapsed} ms", status.as_u16()));
+		}
 		let exhausted = response
 			.headers()
 			.get("x-ratelimit-remaining")
@@ -460,13 +522,41 @@ impl DiscordApi {
 			*next = (*next).max(Instant::now() + safe_delay(reset.or(retry_header))?);
 		}
 		if status == StatusCode::UNAUTHORIZED {
-			self.stop();
+			// One route can refuse a valid token (a revoked Spotify link, a stream that ended).
+			// The session is over only when Discord refuses the token itself.
+			let token = if path == "/users/@me" {
+				Some(false)
+			} else {
+				self.token_valid().await
+			};
+			client_core::journal::note(
+				"rest",
+				format!(
+					"{label} 401 {elapsed} ms; {}",
+					match token {
+						Some(true) => "the token is still valid, so only this request failed",
+						Some(false) => "the token is no longer valid",
+						None => "the token could not be checked, so only this request failed",
+					}
+				),
+			);
+			if token != Some(false) {
+				return Err(Failure::ProtocolAt("Discord refused this request"));
+			}
+			self.stop_because(Failure::Expired);
 			return Err(Failure::Expired);
 		}
 		if response
 			.content_length()
 			.is_some_and(|n| n > max_bytes as u64)
 		{
+			client_core::journal::note(
+				"rest",
+				format!(
+					"{label} {} response over {max_bytes} bytes",
+					status.as_u16()
+				),
+			);
 			return Err(Failure::Capacity);
 		}
 		let mut bytes = zeroize::Zeroizing::new(Vec::with_capacity(
@@ -480,12 +570,29 @@ impl DiscordApi {
 			}
 		})? {
 			if bytes.len() + chunk.len() > max_bytes {
+				client_core::journal::note(
+					"rest",
+					format!(
+						"{label} {} response over {max_bytes} bytes",
+						status.as_u16()
+					),
+				);
 				return Err(Failure::Capacity);
 			}
 			bytes.extend_from_slice(&chunk);
 		}
 		if !status.is_success() {
 			let error = decode::<ErrorBody>(&bytes).unwrap_or_default();
+			client_core::journal::note(
+				"rest",
+				format!(
+					"{label} {} {elapsed} ms{}",
+					status.as_u16(),
+					error
+						.code
+						.map_or_else(String::new, |code| format!(", Discord code {code}"))
+				),
+			);
 			if error.captcha_key.is_some() || matches!(error.code, Some(60003 | 50014)) {
 				let auth_challenge = matches!(error.code, Some(60003 | 50014));
 				if !auth_challenge
@@ -510,7 +617,7 @@ impl DiscordApi {
 					));
 				}
 
-				self.stop();
+				self.stop_because(Failure::Challenged);
 				return Err(Failure::Challenged);
 			}
 			if status == StatusCode::TOO_MANY_REQUESTS {
@@ -551,7 +658,7 @@ impl DiscordApi {
 			Failure::ProtocolAt("Account verification: user response format unsupported")
 		})?;
 		if user.bot {
-			self.stop();
+			self.stop_because(Failure::InvalidCredential);
 			return Err(Failure::InvalidCredential);
 		}
 		Ok(user.into_model())
@@ -3079,6 +3186,48 @@ mod tests {
 		}
 		assert!(safe_delay(Some(f64::NAN)).is_err());
 		assert!(safe_delay(Some(-1.0)).is_err());
+	}
+	#[tokio::test]
+	async fn a_refused_route_signs_out_only_when_the_token_itself_is_refused() {
+		for (account, signed_out) in [("200 OK", false), ("401 Unauthorized", true)] {
+			let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+			let address = listener.local_addr().unwrap();
+			let server = tokio::spawn(async move {
+				for _ in 0..2 {
+					let (mut socket, _) = listener.accept().await.unwrap();
+					let mut buffer = [0; 4096];
+					let n = socket.read(&mut buffer).await.unwrap();
+					let request = String::from_utf8_lossy(&buffer[..n]);
+					// The route refuses; `/users/@me` says whether the token still works.
+					let status = if request.starts_with("GET /users/@me ") {
+						account
+					} else {
+						"401 Unauthorized"
+					};
+					let response = format!(
+						"HTTP/1.1 {status}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+					);
+					socket.write_all(response.as_bytes()).await.unwrap();
+				}
+			});
+			let mut api = DiscordApi::new(Arc::new(
+				SessionSecret::from_owner_input("SYNTHETIC_SECRET_MARKER".into()).unwrap(),
+			))
+			.unwrap();
+			api.base = format!("http://{address}");
+			let failure = api.gateway_url().await.unwrap_err();
+			assert_eq!(api.stopped(), signed_out, "{account}");
+			assert_eq!(failure == Failure::Expired, signed_out, "{failure:?}");
+			server.await.unwrap();
+		}
+		// A stop keeps its reason: later requests report it, not an expired session.
+		let api = DiscordApi::new(Arc::new(
+			SessionSecret::from_owner_input("SYNTHETIC_SECRET_MARKER".into()).unwrap(),
+		))
+		.unwrap();
+		api.stop_because(Failure::Capacity);
+		api.stop_because(Failure::Expired);
+		assert_eq!(api.gateway_url().await.unwrap_err(), Failure::Capacity);
 	}
 }
 
