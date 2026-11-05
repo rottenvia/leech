@@ -323,6 +323,11 @@ impl LoginView {
 		})
 	}
 
+	/// The WebKit bridge carries only the token; Leech keeps its own identity here.
+	pub fn super_properties(&self) -> Option<String> {
+		None
+	}
+
 	pub fn token(&self) -> Option<SessionSecret> {
 		if !self.state.active() {
 			self.state.close();

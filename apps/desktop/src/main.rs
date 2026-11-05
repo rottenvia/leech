@@ -30,6 +30,7 @@ mod game_activity;
 mod gpu;
 mod gpu_video;
 mod group_icon;
+mod identity;
 mod interaction_uploads;
 mod notification_runtime;
 mod notification_sounds;
@@ -1834,6 +1835,10 @@ impl Desktop {
 				.filter(|_| !demo)
 				.map(|root| root.join("logs")),
 		);
+		// Present the client the last webview sign-in came from, before any connection.
+		if !demo && let Ok(root) = local_store::data_dir() {
+			identity::load(&root);
+		}
 		// Everyone is told once that statistics are kept and sent, before any line goes.
 		messaging.performance_notice_pending = perf_stats.notice_due();
 		#[cfg(feature = "demo")]
@@ -6546,6 +6551,11 @@ impl Desktop {
 		if let Some(login) = &self.login {
 			login.pump();
 			if let Some(secret) = login.token() {
+				if let Some(value) = login.super_properties()
+					&& let Ok(root) = local_store::data_dir()
+				{
+					identity::save(&root, &value);
+				}
 				self.connect(secret, true, ctx);
 			} else if login.expired() {
 				let crashed = login.crashed();
