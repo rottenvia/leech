@@ -285,6 +285,8 @@ fn login_navigation(value: &str) -> bool {
 pub struct LoginView {
 	view: WebView,
 	tokens: Receiver<SessionSecret>,
+	/// The sign-in page's own `X-Super-Properties`, the latest seen before the token.
+	identity: Arc<std::sync::Mutex<Option<String>>>,
 	opened: Instant,
 }
 #[cfg(not(target_os = "linux"))]
@@ -294,6 +296,8 @@ impl LoginView {
 		wake: impl Fn() + Send + Sync + 'static,
 	) -> Result<Self, Failure> {
 		let (send, tokens) = mpsc::sync_channel(1);
+		let identity = Arc::new(std::sync::Mutex::new(None));
+		let seen = identity.clone();
 		let mut random = [0_u8; 32];
 		getrandom::fill(&mut random).map_err(|_| Failure::Protocol)?;
 		let capability = random
@@ -312,7 +316,25 @@ impl LoginView {
 			.with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny)
 			.with_download_started_handler(|_, _| false)
 			.with_ipc_handler(move |request| {
-				if !discord_origin(&request.uri().to_string()) || request.body().len() > 2113 {
+				if !discord_origin(&request.uri().to_string()) {
+					return;
+				}
+				if let Some(value) = request
+					.body()
+					.strip_prefix("props:")
+					.and_then(|rest| rest.strip_prefix(&capability))
+				{
+					if value.len() <= 4096
+						&& value.bytes().all(|byte| {
+							byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=')
+						}) {
+						*seen
+							.lock()
+							.unwrap_or_else(std::sync::PoisonError::into_inner) = Some(value.to_owned());
+					}
+					return;
+				}
+				if request.body().len() > 2113 {
 					return;
 				}
 				let body = zeroize::Zeroizing::new(request.into_body());
@@ -331,11 +353,19 @@ impl LoginView {
 		Ok(Self {
 			view,
 			tokens,
+			identity,
 			opened: Instant::now(),
 		})
 	}
 	pub fn token(&self) -> Option<SessionSecret> {
 		self.tokens.try_recv().ok()
+	}
+	/// Discord's own `X-Super-Properties` from the page that produced the token, if it sent one.
+	pub fn super_properties(&self) -> Option<String> {
+		self.identity
+			.lock()
+			.unwrap_or_else(std::sync::PoisonError::into_inner)
+			.clone()
 	}
 	pub fn expired(&self) -> bool {
 		self.opened.elapsed() > Duration::from_secs(600)

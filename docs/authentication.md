@@ -34,6 +34,11 @@ Queries are at least 100 ms apart, with one cancellable evaluation and one secre
 frame can only request a query of the main frame. The Linux login and verification webviews
 disable HTML media and Web Audio: a machine without a GStreamer audio sink otherwise crashes
 the web process right after login, which surfaces as a distinct "stopped unexpectedly" status.
+On Windows and macOS the login page hands over its own `X-Super-Properties` with the token, and
+REST, uploads and the Gateway identify present exactly that client from then on (0.1.18): Discord
+ended sessions within seconds when a fresh token came back as a years-older build than the page
+that created it. It is kept as `identity` beside the saved logins; a pasted token or an older
+login uses `client_core::fingerprint`.
 The Linux login webview presents the same browser identity as `client_core::fingerprint`;
 WebKitGTK's default "Safari on Linux" user agent made hCaptcha and Discord reject solved
 login challenges.

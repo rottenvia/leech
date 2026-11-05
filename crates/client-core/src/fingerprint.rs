@@ -7,12 +7,46 @@
 //! web client. Nothing here carries account data; it is the same for every user.
 
 /// Chrome version advertised on Windows and Linux; bump together when refreshing.
-const CHROME_MAJOR: &str = "128";
+/// ponytail: fallback only, for a login made before 0.1.18 or a pasted token; a webview login
+/// adopts the sign-in page's own identity (`adopt`), which never goes stale.
+const CHROME_MAJOR: &str = "156";
 /// Safari version advertised on macOS, where the verification widget runs in WebKit.
 const SAFARI_VERSION: &str = "18.5";
 /// Build number of the official web client this fingerprint mirrors.
-pub const CLIENT_BUILD_NUMBER: u64 = 328_246;
+pub const CLIENT_BUILD_NUMBER: u64 = 663_810;
 pub const LOCALE: &str = "en-US";
+
+/// The identity Discord's own sign-in page presented when it created the token: its
+/// `X-Super-Properties` (base64), that JSON decoded, and its user agent. Discord ends sessions
+/// whose token reappears under a different client within seconds, so Leech presents the one
+/// that made it.
+struct Adopted {
+	super_properties: String,
+	properties: String,
+	user_agent: String,
+}
+
+static ADOPTED: std::sync::RwLock<Option<Adopted>> = std::sync::RwLock::new(None);
+
+/// Presents this identity from the next connection on; the caller checked `properties` is the
+/// JSON object `super_properties` decodes to and took `user_agent` from it.
+pub fn adopt(super_properties: String, properties: String, user_agent: String) {
+	*ADOPTED
+		.write()
+		.unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Adopted {
+		super_properties,
+		properties,
+		user_agent,
+	});
+}
+
+fn adopted<T>(field: impl FnOnce(&Adopted) -> T) -> Option<T> {
+	ADOPTED
+		.read()
+		.unwrap_or_else(std::sync::PoisonError::into_inner)
+		.as_ref()
+		.map(field)
+}
 
 /// Discord's spelling of the host operating system.
 pub fn os_name() -> &'static str {
@@ -55,6 +89,9 @@ pub fn browser_version() -> String {
 /// `User-Agent` header value shared by REST, uploads, the Gateway identify and the
 /// embedded verification webview.
 pub fn user_agent() -> String {
+	if let Some(adopted) = adopted(|adopted| adopted.user_agent.clone()) {
+		return adopted;
+	}
 	if cfg!(target_os = "macos") {
 		format!(
 			"Mozilla/5.0 ({}) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/{SAFARI_VERSION} Safari/605.1.15",
@@ -70,6 +107,9 @@ pub fn user_agent() -> String {
 
 /// Gateway `identify.d.properties` and the decoded `X-Super-Properties` payload.
 pub fn properties() -> String {
+	if let Some(adopted) = adopted(|adopted| adopted.properties.clone()) {
+		return adopted;
+	}
 	// Hand-built JSON keeps this crate free of a serde dependency; every value is a fixed
 	// literal or a controlled ASCII string, so no escaping is required.
 	format!(
@@ -90,6 +130,9 @@ pub fn properties() -> String {
 
 /// `X-Super-Properties` header value: standard base64 of [`properties`].
 pub fn super_properties() -> String {
+	if let Some(adopted) = adopted(|adopted| adopted.super_properties.clone()) {
+		return adopted;
+	}
 	base64(properties().as_bytes())
 }
 
@@ -119,6 +162,30 @@ fn base64(input: &[u8]) -> String {
 		}
 	}
 	out
+}
+
+/// Standard base64 (with padding) decoded to UTF-8 text; `None` for anything else.
+pub fn decode_base64(input: &str) -> Option<String> {
+	let value = |byte: u8| match byte {
+		b'A'..=b'Z' => Some(byte - b'A'),
+		b'a'..=b'z' => Some(byte - b'a' + 26),
+		b'0'..=b'9' => Some(byte - b'0' + 52),
+		b'+' => Some(62),
+		b'/' => Some(63),
+		_ => None,
+	};
+	let input = input.trim_end_matches('=').as_bytes();
+	let mut out = Vec::with_capacity(input.len() * 3 / 4);
+	let (mut word, mut bits) = (0u32, 0);
+	for byte in input {
+		word = (word << 6) | u32::from(value(*byte)?);
+		bits += 6;
+		if bits >= 8 {
+			bits -= 8;
+			out.push((word >> bits) as u8);
+		}
+	}
+	String::from_utf8(out).ok()
 }
 
 /// Discord snowflake epoch in Unix milliseconds.
@@ -158,6 +225,13 @@ mod tests {
 			assert_eq!(base64(b"fo"), "Zm8=");
 			assert_eq!(base64(b"foo"), "Zm9v");
 			assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+			for text in ["", "f", "fo", "foo", "foobar", "{\"browser\":\"Edge\"}"] {
+				assert_eq!(
+					decode_base64(&base64(text.as_bytes())).as_deref(),
+					Some(text)
+				);
+			}
+			assert_eq!(decode_base64("not base64!"), None);
 		}
 		// The values discord.py-self sends for these locations.
 		assert_eq!(

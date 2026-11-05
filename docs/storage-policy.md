@@ -41,6 +41,13 @@ that ends is written and sent within seconds. The notice gained a line for it, a
 more before anything new is sent. Turning statistics off drops the journal too. Copied
 sign-in failure details include the installation name and the latest 60 entries.
 
+## Sign-in identity (November 5, 2026)
+
+`identity` in the data directory holds the `X-Super-Properties` value Discord's own login page
+sent before handing over the token: browser, version, operating system, build number and the
+page's launch identifiers. It names no account and holds no token. Leech presents it on later
+connections and replaces it at the next webview sign-in.
+
 ## CJK font cache (October 30, 2026)
 
 The first CJK text inflates the bundled Noto Sans CJK collection once into

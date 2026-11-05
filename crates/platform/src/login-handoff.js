@@ -17,6 +17,13 @@
     delivered = true;
     window.ipc.postMessage(capability + value);
   };
+  // Discord's own identity for this page (X-Super-Properties), so Leech presents the client
+  // that created the token. Before the token only; "props:" first keeps it from ever being
+  // read as a token.
+  const identify = value => {
+    if (delivered || typeof value !== "string" || value.length < 16 || value.length > 4096 || !/^[A-Za-z0-9+/=]+$/.test(value)) return;
+    window.ipc.postMessage("props:" + capability + value);
+  };
   const destinations = new WeakMap();
   const open = XMLHttpRequest.prototype.open;
   const setHeader = XMLHttpRequest.prototype.setRequestHeader;
@@ -25,13 +32,16 @@
     return open.call(this, method, url, ...rest);
   };
   XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
-    if (destinations.get(this) && String(name).toLowerCase() === "authorization") deliver(value);
+    const header = String(name).toLowerCase();
+    if (destinations.get(this) && header === "x-super-properties") identify(value);
+    if (destinations.get(this) && header === "authorization") deliver(value);
     return setHeader.call(this, name, value);
   };
   const originalFetch = window.fetch;
   window.fetch = function(input, init) {
     if (allowed(input instanceof Request ? input.url : input)) {
       const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      identify(headers.get("x-super-properties"));
       deliver(headers.get("authorization"));
     }
     return originalFetch.apply(this, arguments);

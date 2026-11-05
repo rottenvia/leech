@@ -36,7 +36,22 @@ function setup(origin = 'https://discord.com') {
   context.fetch('https://discord.com/api/v10/users/@me', {headers:{authorization:'SYNTHETIC_FETCH_MARKER'}});
   assert.equal(messages.length, 0);
 }
-console.log('Authentication handoff: origin, byte cap, one-shot and fetch/XHR checks passed (synthetic only).');
+{
+  // The page's own X-Super-Properties goes first, under its own prefix; never after the token.
+  const {context, messages} = setup();
+  const xhr = new context.XMLHttpRequest();
+  xhr.open('POST', '/api/v10/auth/login');
+  xhr.setRequestHeader('X-Super-Properties', 'not base64 at all!');
+  xhr.setRequestHeader('X-Super-Properties', 'eyJvcyI6IldpbmRvd3MifQ==');
+  context.fetch('https://discord.com/api/v10/users/@me', {headers:{'x-super-properties':'eyJvcyI6IldpbmRvd3MiLCJ4IjoxfQ==', authorization:'SYNTHETIC_FETCH_MARKER'}});
+  xhr.setRequestHeader('X-Super-Properties', 'eyJsYXRlIjp0cnVlfQ==');
+  assert.deepEqual(messages, [
+    'props:SYNTHETIC_CAPABILITY:eyJvcyI6IldpbmRvd3MifQ==',
+    'props:SYNTHETIC_CAPABILITY:eyJvcyI6IldpbmRvd3MiLCJ4IjoxfQ==',
+    'SYNTHETIC_CAPABILITY:SYNTHETIC_FETCH_MARKER',
+  ]);
+}
+console.log('Authentication handoff: origin, byte cap, one-shot, fetch/XHR and identity checks passed (synthetic only).');
 
 
 // WebKit6 does not identify the sender frame in its script-message callback.
@@ -82,6 +97,13 @@ function linuxSetup({ origin = 'https://discord.com', frame = false } = {}) {
   assert.equal(take(), null);
   context.ipc.postMessage(linuxCapability + 'SYNTHETIC_DUPLICATE_SESSION');
   assert.deepEqual(messages, [true]);
+}
+{
+  // The Linux bridge carries only the token; the identity message never fills its slot.
+  const { context, messages, take } = linuxSetup();
+  context.fetch('/api/v10/users/@me', { headers: { 'x-super-properties': 'eyJvcyI6IkxpbnV4In0=', authorization: 'SYNTHETIC_LINUX_SESSION' } });
+  assert.deepEqual(messages, [true]);
+  assert.equal(take(), linuxCapability + 'SYNTHETIC_LINUX_SESSION');
 }
 for (const options of [{origin: 'https://evil.test'}, {frame: true}]) {
   const { context, messages } = linuxSetup(options);
