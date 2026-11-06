@@ -624,13 +624,18 @@ impl Voice {
 		let Some(media) = &self.call else {
 			return;
 		};
+		// Nothing shows cameras while the window is minimized: each newest picture waits,
+		// uploaded once the window shows again, instead of feeding the GPU (and its staging
+		// memory) every frame behind a game.
+		let hidden = ui.window_hidden;
 		// Uploading is a plane copy into GPU staging, so it runs under the slot lock
 		// instead of cloning each picture out first.
 		if let Ok(mut slot) = media.remote_video.try_lock() {
 			for (user, picture, dirty) in slot.iter_mut() {
-				if !std::mem::take(dirty) {
+				if !*dirty || hidden {
 					continue;
 				}
+				*dirty = false;
 				let user = Id(*user);
 				let index = match self.remote_textures.iter().position(|(id, _)| *id == user) {
 					Some(index) => index,

@@ -48,6 +48,7 @@ mod registered_games;
 #[cfg(feature = "demo")]
 mod rendering_demo;
 mod screen;
+mod self_view;
 #[cfg(feature = "demo")]
 mod server_settings_demo;
 #[cfg(feature = "demo")]
@@ -1019,6 +1020,8 @@ struct Desktop {
 	downloads: downloads::Downloads,
 	audio: audio::Audio,
 	video: video::Video,
+	/// Stream to yourself: captures and decoders behind the windows only this device shows.
+	self_views: self_view::SelfViews,
 	/// Synthetic stream/camera textures the demo view borrows by id.
 	_demo_textures: Vec<egui::TextureHandle>,
 	/// The synthetic screen share, decoded-video shaped (`--demo-call-stream`).
@@ -2296,9 +2299,16 @@ impl Desktop {
 			state.status = "Offline fixture · join-server dialog opened at startup";
 		}
 		#[cfg(feature = "demo")]
-		if demo && std::env::args().any(|arg| arg == "--demo-screen-share") {
-			// Pairs with `--demo-call`: synthetic sources, never a real capture.
+		if demo
+			&& let Some(page) = std::env::args()
+				.find_map(|arg| arg.strip_prefix("--demo-screen-share").map(str::to_owned))
+		{
+			// Pairs with `--demo-call`: synthetic sources, never a real capture. `=self` opens
+			// the Stream to yourself page.
 			messaging.preview_screen_share(&state);
+			if page == "=self" {
+				messaging.screen.tab = ui::screen::Tab::OnlyMe;
+			}
 			state.status = "Offline fixture · screen-share picker opened at startup";
 		}
 		#[cfg(feature = "demo")]
@@ -2418,6 +2428,7 @@ impl Desktop {
 			downloads: downloads::Downloads::default(),
 			audio: audio::Audio::default(),
 			video: video::Video::default(),
+			self_views: self_view::SelfViews::default(),
 			_demo_textures: demo_textures,
 			_demo_stream: demo_stream,
 			demo_video_autoplay: if std::env::args().any(|arg| arg == "--demo-video-paused") {
@@ -6914,6 +6925,7 @@ impl eframe::App for Desktop {
 			|| ctx.input(|input| {
 				input.viewport().minimized == Some(true) || input.viewport().close_requested()
 			});
+		self.messaging.window_hidden = hidden_or_closing;
 		if self.state.user.is_none()
 			|| (!self.state.demo && self.state.auth != AuthState::Authenticated)
 			|| hidden_or_closing
@@ -6924,6 +6936,12 @@ impl eframe::App for Desktop {
 			self.messaging.video().stop();
 		}
 		self.video.poll(self.messaging.video(), ctx);
+		self.self_views.poll(
+			&mut self.messaging.self_views,
+			ctx,
+			self.runtime.handle(),
+			&self.window,
+		);
 		let audio = self.audio.poll();
 		let player = self.messaging.audio();
 		player.position = audio.position.as_secs_f64();
@@ -7003,7 +7021,8 @@ impl eframe::App for Desktop {
 			|| size.x < width
 			|| size.y < height
 		{
-			self.messaging.show_voice_pip(&ctx, &self.state);
+			self.messaging.show_voice_pip(&ctx, &mut self.state);
+			self.messaging.self_views.show(&ctx);
 			return;
 		}
 		let title_bar_height = if self.login.is_some() || self.login_preview {

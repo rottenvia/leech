@@ -121,15 +121,26 @@ impl Watch {
 			if live.task.is_finished() && !matches!(report, Some(Report::Failed(_))) {
 				report = Some(Report::Failed("The stream connection ended"));
 			}
+			// Minimized without picture-in-picture, nothing shows the stream: the newest
+			// picture waits and is uploaded once something shows it again.
+			let shown = ui.voice_pip_open() || !ui.window_hidden;
 			// Uploading copies the planes into GPU staging, so it runs under the slot lock
 			// and the decoder keeps refilling the same allocation.
 			if let Ok(mut slot) = live.frames.try_lock()
 				&& let Some((picture, fresh)) = slot.as_mut()
-				&& std::mem::take(fresh)
-				&& let Some(texture) = self.texture.upload(ctx, "remote-stream", picture.borrow())
+				&& *fresh
 			{
-				ui.voice_stream_view = Some(texture);
-				if !matches!(report, Some(Report::Failed(_))) {
+				let mut live_now = !shown;
+				if shown {
+					*fresh = false;
+					if let Some(texture) =
+						self.texture.upload(ctx, "remote-stream", picture.borrow())
+					{
+						ui.voice_stream_view = Some(texture);
+						live_now = true;
+					}
+				}
+				if live_now && !matches!(report, Some(Report::Failed(_))) {
 					report = Some(Report::Live);
 				}
 			}

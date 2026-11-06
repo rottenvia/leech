@@ -61,6 +61,10 @@ pub struct Gate {
 	/// A failed microphone is being retried; the warning stays up until the retry succeeds.
 	input_retrying: AtomicBool,
 	input_callbacks: AtomicU64,
+	/// Capture callbacks that carried a nonzero sample; exact digital silence leaves it unchanged.
+	input_heard: AtomicU64,
+	/// The last microphone error meant the device or its format changed; journal wording only.
+	input_device_changed: AtomicBool,
 	revision: AtomicU64,
 	acknowledged_revision: AtomicU64,
 	/// Bumped when the microphone gate changes; only capture drops partial PCM.
@@ -85,6 +89,8 @@ impl Default for Gate {
 			input_failed_revision: AtomicU64::new(0),
 			input_retrying: AtomicBool::new(false),
 			input_callbacks: AtomicU64::new(0),
+			input_heard: AtomicU64::new(0),
+			input_device_changed: AtomicBool::new(false),
 			revision: AtomicU64::new(1),
 			acknowledged_revision: AtomicU64::new(0),
 			capture_generation: AtomicU64::new(0),
@@ -206,6 +212,12 @@ impl Audio {
 				let mut recovery_attempts = 0u8;
 				let mut next_default_check = Instant::now();
 				let mut next_input_retry = Instant::now() + Duration::from_secs(2);
+				// A microphone that really outputs zeros (a hardware mute switch) is reopened once
+				// per silent stretch, at most every 30 seconds.
+				let mut silence_armed = true;
+				let mut silence_reopened: Option<Instant> = None;
+				// A device failing in a loop notes each reason once a minute.
+				let mut noted: Option<(&str, Instant)> = None;
 				'audio: while !worker_gate.stopped.load(Ordering::Acquire) {
 					let revision = worker_gate.revision.load(Ordering::Acquire);
 					let current = selected.borrow_and_update().clone();
@@ -302,9 +314,38 @@ impl Audio {
 						active.input_callbacks = callbacks;
 						active.input_activity = Instant::now();
 					}
+					let heard = worker_gate.input_heard.load(Ordering::Acquire);
+					silence_armed |= heard != active.input_heard;
+					// Silence counts only while an open call microphone is unmuted.
+					if heard != active.input_heard
+						|| preview || active._input.is_none()
+						|| !worker_gate.capture()
+					{
+						active.input_heard = heard;
+						active.input_sound = Instant::now();
+					}
+					let mut reason = if worker_gate.input_device_changed.load(Ordering::Acquire) {
+						"device changed"
+					} else {
+						"device error"
+					};
+					let mut retry = Duration::from_secs(2);
 					if active._input.is_some()
 						&& active.input_activity.elapsed() >= Duration::from_secs(5)
 					{
+						reason = "stall";
+						worker_gate
+							.input_failed_revision
+							.fetch_max(revision, Ordering::AcqRel);
+					} else if silence_armed
+						&& active.input_sound.elapsed() >= Duration::from_secs(8)
+						&& silence_reopened.is_none_or(|at| at.elapsed() >= Duration::from_secs(30))
+					{
+						// The device itself still works: reopen at once, without the retry gap.
+						reason = "digital silence";
+						retry = Duration::ZERO;
+						silence_armed = false;
+						silence_reopened = Some(Instant::now());
 						worker_gate
 							.input_failed_revision
 							.fetch_max(revision, Ordering::AcqRel);
@@ -312,9 +353,19 @@ impl Audio {
 					if worker_gate.input_failed_revision.load(Ordering::Acquire) == revision
 						&& active._input.is_some()
 					{
+						if noted.is_none_or(|(last, at)| {
+							last != reason || at.elapsed() >= Duration::from_secs(60)
+						}) {
+							noted = Some((reason, Instant::now()));
+							// Fixed wording only: no device name or audio reaches the journal.
+							client_core::journal::note(
+								"voice",
+								format!("reopening the microphone: {reason}"),
+							);
+						}
 						active._input = None;
 						active.input_id = None;
-						next_input_retry = Instant::now() + Duration::from_secs(2);
+						next_input_retry = Instant::now() + retry;
 						worker_gate.echo_reset.store(true, Ordering::Release);
 						emit(Ok(())); // Wake the UI for the recoverable microphone warning.
 					}
@@ -546,6 +597,9 @@ struct Streams {
 	input_gate: crate::activity::InputGate,
 	input_callbacks: u64,
 	input_activity: Instant,
+	input_heard: u64,
+	/// The last nonzero sample, or when silence last stopped counting.
+	input_sound: Instant,
 	_input: Option<cpal::Stream>,
 	_output: cpal::Stream,
 	input: rtrb::Consumer<Frame>,
@@ -670,6 +724,8 @@ impl Streams {
 			host,
 			input_callbacks: gate.input_callbacks.load(Ordering::Acquire),
 			input_activity: Instant::now(),
+			input_heard: gate.input_heard.load(Ordering::Acquire),
+			input_sound: Instant::now(),
 			_input: input_stream,
 			_output: output_stream,
 			input: input_read,
@@ -852,7 +908,17 @@ where
 				capture.process(data, channels, &gate);
 			},
 			move |error| {
-				if is_fatal_error(&error) {
+				// A default microphone rerouted to a new device keeps the format it opened with.
+				let changed = matches!(
+					error.kind(),
+					cpal::ErrorKind::DeviceChanged
+						| cpal::ErrorKind::DeviceNotAvailable
+						| cpal::ErrorKind::StreamInvalidated
+				);
+				if changed || is_fatal_error(&error) {
+					failure
+						.input_device_changed
+						.store(changed, Ordering::Release);
 					failure
 						.input_failed_revision
 						.fetch_max(revision, Ordering::AcqRel);
@@ -938,10 +1004,16 @@ impl Capture {
 			self.reset();
 			return;
 		}
+		let mut heard = false;
 		for frame in data.chunks_exact(channels) {
 			let sample = frame.iter().map(|v| v.to_sample::<f32>()).sum::<f32>() / channels as f32;
+			heard |= sample != 0.0;
 			// Keep microphone gain after AEC to avoid clipping the echo before cancellation.
 			self.sample(amplify(sample, 1.0));
+		}
+		if heard {
+			// The worker reopens a microphone whose callbacks carry only exact zeros.
+			gate.input_heard.fetch_add(1, Ordering::Release);
 		}
 		if std::mem::take(&mut self.overrun) {
 			gate.echo_reset.store(true, Ordering::Release);
@@ -1514,5 +1586,27 @@ mod tests {
 				assert!(is_fatal_error(&cpal::Error::from(fatal)));
 			}
 		}
+	}
+
+	#[test]
+	fn digital_silence_leaves_the_heard_counter_unchanged() {
+		let audio = audio_without_devices();
+		audio.set_ready(true);
+		assert!(
+			audio
+				.gate
+				.acknowledge(audio.gate.revision.load(Ordering::Acquire))
+		);
+		let heard = || audio.gate.input_heard.load(Ordering::Acquire);
+		let mut capture = Capture::new(48_000, rtrb::RingBuffer::new(8).0);
+		capture.process(&[0_i16; 960], 1, &audio.gate);
+		// Unsigned silence sits at the midpoint.
+		capture.process(&[32_768_u16; 960], 2, &audio.gate);
+		assert_eq!(heard(), 0);
+		capture.process(&[1_i16; 960], 1, &audio.gate);
+		assert_eq!(heard(), 1);
+		audio.set_controls(true, false);
+		capture.process(&[1_i16; 960], 1, &audio.gate);
+		assert_eq!(heard(), 1, "A muted microphone is not judged");
 	}
 }

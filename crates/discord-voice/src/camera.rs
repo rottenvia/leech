@@ -781,4 +781,55 @@ mod tests {
 			}
 		}
 	}
+
+	/// The receive path drops a source's hardware decoder whenever its pictures go stale and
+	/// builds a new one on the next keyframe (`video_receive.rs`), so building and dropping one
+	/// must not leak. Prints this process's private working set every 25 decoders:
+	/// `cargo test -p discord-voice --release decoder_rebuilds_do_not_leak -- --ignored --nocapture`
+	#[cfg(target_os = "windows")]
+	#[test]
+	#[ignore]
+	fn decoder_rebuilds_do_not_leak() {
+		use std::sync::atomic::AtomicUsize;
+		let mut encoder = encoder().unwrap();
+		let mut yuv = YUVBuffer::new(WIDTH, HEIGHT);
+		let rgb = (0..WIDTH * HEIGHT * 3).map(|i| (i % 251) as u8).collect();
+		let keyframe = encode_rgb(&mut encoder, &mut yuv, rgb)
+			.unwrap()
+			.unwrap()
+			.h264;
+		let pictures = Arc::new(AtomicUsize::new(0));
+		let cycle = || {
+			let seen = pictures.clone();
+			let mut decoder = platform::video::live::H264Decoder::new(Box::new(move |_| {
+				seen.fetch_add(1, Ordering::Relaxed);
+			}))
+			.unwrap();
+			for _ in 0..4 {
+				decoder.decode(&keyframe).unwrap();
+			}
+		};
+		let memory = || platform::memory::private_working_set().unwrap() >> 20;
+		// Warm-up: Media Foundation, the driver and the allocator settle first.
+		for _ in 0..10 {
+			cycle();
+		}
+		let start = memory();
+		for round in 1..=8 {
+			for _ in 0..25 {
+				cycle();
+			}
+			eprintln!(
+				"{} decoders: {} MB (start {start} MB)",
+				round * 25,
+				memory()
+			);
+		}
+		assert!(pictures.load(Ordering::Relaxed) > 0, "no picture decoded");
+		let growth = memory().saturating_sub(start);
+		assert!(
+			growth < 64,
+			"200 decoder rebuilds grew memory by {growth} MB"
+		);
+	}
 }

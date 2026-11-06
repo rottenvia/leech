@@ -1761,7 +1761,7 @@ fn decode(bytes: &[u8], budget: &Budget) -> Option<egui::ColorImage> {
 	))
 }
 
-fn resize_to(image: image::RgbaImage, fit: u32) -> image::RgbaImage {
+pub(crate) fn resize_to(image: image::RgbaImage, fit: u32) -> image::RgbaImage {
 	let (width, height) = ui::fit_edge(image.width(), image.height(), fit);
 	if (width, height) == image.dimensions() {
 		return image;
@@ -2029,7 +2029,7 @@ fn apng_plays(bytes: &[u8]) -> Option<u32> {
 	None
 }
 
-fn animation_frames(bytes: &[u8]) -> Option<image::Frames<'_>> {
+pub(crate) fn animation_frames(bytes: &[u8]) -> Option<image::Frames<'_>> {
 	use image::{AnimationDecoder, ImageDecoder};
 	let mut limits = image::Limits::default();
 	limits.max_image_width = Some(ANIMATION_CANVAS);

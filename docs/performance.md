@@ -610,3 +610,16 @@ the new measurements and executable hash. NSIS remains unavailable; this is an
 unsigned directory and ZIP. Final serial workspace checking reached 1,158
 passes, eight recorded baseline UI failures and 23 ignored tests. Formatting,
 strict workspace Clippy and the independent policy check passed.
+
+## Hidden-window video uploads — November 6, 2026
+
+While the main window is minimized, hidden to the tray or closing, remote camera pictures and
+the watched stream (unless picture-in-picture shows it) are no longer uploaded to the GPU.
+Each source keeps only its newest decoded picture, which is uploaded when the window shows
+again. Previously every received picture was copied into GPU staging memory and submitted
+from the background loop, behind a game, with nothing on screen. The live H.264 decoder
+also ends streaming and hands back its DXGI device manager before it is released, since the
+receive path rebuilds decoders after stalls. This is cleanup, not a measured fix: the ignored
+`decoder_rebuilds_do_not_leak` test rebuilt 200 decoders and the process settled near 62 MB
+from 42 MB both with and without it. The 1.5 GB growth the owner reported is still
+unexplained.
