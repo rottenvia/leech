@@ -299,6 +299,135 @@ impl Drop for Worker {
 	}
 }
 
+/// One picture of a [`LocalCapture`]: tightly packed, opaque RGBA.
+pub struct LocalFrame {
+	pub width: u32,
+	pub height: u32,
+	pub rgba: Vec<u8>,
+}
+
+/// A screen or window captured only for a window on this device ("Stream to yourself"):
+/// pictures in memory at up to `fps`, the latest one kept. No encoder, no system audio, and
+/// nothing leaves the device.
+pub struct LocalCapture {
+	stop: Arc<AtomicBool>,
+	latest: Arc<Mutex<Option<LocalFrame>>>,
+}
+
+impl LocalCapture {
+	/// `wake` runs after each new picture and once when the capture ends.
+	pub fn start(
+		source: SourceId,
+		fps: u32,
+		wake: impl Fn() + Send + 'static,
+	) -> Result<Self, &'static str> {
+		#[cfg(target_os = "windows")]
+		{
+			let stop = Arc::new(AtomicBool::new(false));
+			let latest = Arc::new(Mutex::new(None));
+			let (started, start_result) = mpsc::sync_channel(1);
+			let (thread_stop, thread_latest) = (stop.clone(), latest.clone());
+			// The capture lives and ends on its own thread, like a share's encoder thread.
+			std::thread::Builder::new()
+				.name("local-capture".into())
+				.spawn(move || {
+					let pending = Arc::new(AtomicBool::new(false));
+					let (send, raw) = mpsc::sync_channel::<RawFrame>(1);
+					// The stream size and the GPU path only concern the encoder; pictures in
+					// memory arrive at the source's own size.
+					let capture = capture::Capture::start(
+						Settings {
+							source,
+							width: 1920,
+							height: 1080,
+							fps: fps.clamp(1, 60),
+							cursor: true,
+							audio: false,
+						},
+						send,
+						None,
+						thread_stop.clone(),
+						Arc::new(AtomicBool::new(false)),
+						Arc::new(AtomicU64::new(0)),
+						pending.clone(),
+						Arc::new(AtomicBool::new(false)),
+						Arc::new(Mutex::new(None)),
+					);
+					let _capture = match capture {
+						Ok(capture) => {
+							let _ = started.send(Ok(()));
+							capture
+						}
+						Err(error) => {
+							let _ = started.send(Err(error));
+							return;
+						}
+					};
+					while !thread_stop.load(Ordering::Acquire) {
+						match raw.recv_timeout(Duration::from_millis(200)) {
+							Ok(RawFrame {
+								width,
+								height,
+								mut data,
+								..
+							}) => {
+								pending.store(false, Ordering::Release);
+								// Captured pictures are BGRA; windows may leave alpha unset.
+								for pixel in data.as_chunks_mut::<4>().0 {
+									*pixel = [pixel[2], pixel[1], pixel[0], 255];
+								}
+								*thread_latest
+									.lock()
+									.unwrap_or_else(std::sync::PoisonError::into_inner) = Some(LocalFrame {
+									width,
+									height,
+									rgba: data,
+								});
+								wake();
+							}
+							Err(mpsc::RecvTimeoutError::Timeout) => {}
+							Err(mpsc::RecvTimeoutError::Disconnected) => break,
+						}
+					}
+					// The source went away (a closed window) or the view closed.
+					thread_stop.store(true, Ordering::Release);
+					wake();
+				})
+				.map_err(|_| "Screen capture could not be started")?;
+			start_result
+				.recv()
+				.map_err(|_| "Screen capture could not be started")??;
+			Ok(Self { stop, latest })
+		}
+		#[cfg(not(target_os = "windows"))]
+		{
+			let _ = (source, fps, wake);
+			Err("Showing a screen or window to yourself is available on Windows")
+		}
+	}
+
+	/// The newest picture since the last call, if any.
+	pub fn take(&self) -> Option<LocalFrame> {
+		self.latest
+			.lock()
+			.unwrap_or_else(std::sync::PoisonError::into_inner)
+			.take()
+	}
+
+	/// The source went away (its window closed) or capture failed.
+	pub fn ended(&self) -> bool {
+		self.stop.load(Ordering::Acquire)
+	}
+}
+
+impl Drop for LocalCapture {
+	/// The capture thread notices within one wait and ends the capture there, so closing a
+	/// window never waits on it.
+	fn drop(&mut self) {
+		self.stop.store(true, Ordering::Release);
+	}
+}
+
 #[cfg(not(target_os = "linux"))]
 #[allow(clippy::too_many_arguments)] // Media outputs of one explicitly started capture.
 fn encode_loop(

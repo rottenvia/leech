@@ -102,6 +102,7 @@ mod search;
 #[cfg(test)]
 mod search_navigation_tests;
 pub mod select;
+pub mod self_view;
 mod server_admin;
 mod server_audit_log;
 mod server_integrations;
@@ -394,6 +395,10 @@ pub struct MessagingUi {
 	pub voice_available: bool,
 	voice_switch: Option<voice::CallSwitch>,
 	pub screen: screen::ScreenUi,
+	/// Stream to yourself: pictures only this device shows, each in its own window.
+	pub self_views: self_view::SelfViews,
+	/// The main window is minimized, hidden to the tray or closing: nothing in it shows.
+	pub window_hidden: bool,
 	pub voice_camera_available: bool,
 	pub voice_camera_status: &'static str,
 	pub voice_cameras: Vec<(String, String)>,
@@ -428,6 +433,9 @@ pub struct MessagingUi {
 	voice_pip_unpinned: bool,
 	/// The picture-in-picture window fills its whole area, stretched, instead of letterboxing.
 	voice_pip_stretch: bool,
+	/// Zoom into the watched share (hold left click and scroll), and whose share it is for.
+	voice_stream_zoom: voice::PictureZoom,
+	voice_stream_zoom_of: Option<Id>,
 	/// Whether the other participants stay visible as a strip under the enlarged tile.
 	pub voice_focus_participants: bool,
 	/// How far the call stage's hover chrome (and tile name badges) has faded out: 0 shown.
@@ -4310,6 +4318,7 @@ impl MessagingUi {
 		}
 		// Its own native window, so it keeps playing whatever the main window shows.
 		self.show_voice_pip(ui.ctx(), state);
+		self.self_views.show(ui.ctx());
 		// Fullscreen media owns the whole client surface, including during native resizing.
 		if self.show_fullscreen_voice(ui.ctx(), state) {
 			ui.painter()
@@ -5313,7 +5322,7 @@ impl MessagingUi {
 			self.thread_create.open(channel, None, String::new());
 		}
 		self.thread_create.show(&ctx, state, &mut commands);
-		self.screen.show(&ctx, state);
+		self.screen.show(&ctx, state, &mut self.self_views);
 		if let Some(id) = self.timeline.channel_reference_load.take()
 			&& state.channel(id).is_none()
 			&& state.channel_reference_name(id).is_none()

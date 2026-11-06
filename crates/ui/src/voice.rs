@@ -85,7 +85,7 @@ impl MessagingUi {
 				match focus {
 					StageFocus::LocalScreen => self.screen_tile(ui, rect, false),
 					StageFocus::Stream(user) => {
-						self.stream_tile(ui, state, rect, channel, user, true)
+						self.stream_tile(ui, state, rect, channel, user, true, None)
 					}
 					StageFocus::Participant(_) => unreachable!("validated screen share"),
 				}
@@ -144,7 +144,7 @@ impl MessagingUi {
 	/// Picture-in-picture: the watched share alone in a small borderless window of its own.
 	/// The OS moves, resizes and snaps it (Win+Arrow) like any window, and while pinned it
 	/// stays above other windows, so a game or browser keeps focus while the share plays.
-	pub fn show_voice_pip(&mut self, ctx: &egui::Context, state: &State) {
+	pub fn show_voice_pip(&mut self, ctx: &egui::Context, state: &mut State) {
 		let Some((user, placement)) = self.voice_pip else {
 			return;
 		};
@@ -194,6 +194,8 @@ impl MessagingUi {
 			Some(PipAction::Close) => self.voice_pip = None,
 			None => {}
 		}
+		// Stop watching from the window's menu applies now: the call window may be minimized.
+		self.apply_watch_request(state);
 	}
 
 	/// The picture-in-picture window's surface: the picture letterboxed on black (or stretched
@@ -218,21 +220,32 @@ impl MessagingUi {
 		if !maximized && placement.is_some() {
 			self.voice_pip_rect = placement;
 		}
-		design::window_drag(ui, rect);
+		let streamer = self.voice_pip.map(|(user, _)| user)?;
+		let surface = ui.interact(
+			rect,
+			ui.scope_id().with("voice-pip-surface"),
+			egui::Sense::click_and_drag(),
+		);
+		let content = match self.voice_stream_view {
+			Some(texture) if !self.voice_pip_stretch => fit_rect(rect, texture.size),
+			_ => rect,
+		};
+		let uv = self.stream_zoom(streamer).update(ui, &surface, content);
+		self.voice_stream_zoom.move_window(ui, &surface);
+		if surface.double_clicked() {
+			if self.voice_stream_zoom.zoomed() {
+				self.voice_stream_zoom.reset(ui);
+			} else if cfg!(target_os = "windows") {
+				ui.ctx()
+					.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+			}
+		}
 		match self.voice_stream_view {
 			Some(texture) => {
 				// The video texture carries mipmaps and is sampled trilinearly with anisotropy,
-				// so squeezing one axis harder than the other keeps the picture sharp.
-				ui.painter().image(
-					texture.id,
-					if self.voice_pip_stretch {
-						rect
-					} else {
-						fit_rect(rect, texture.size)
-					},
-					egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-					egui::Color32::WHITE,
-				);
+				// so squeezing one axis harder than the other, or zooming in, keeps it sharp.
+				ui.painter()
+					.image(texture.id, content, uv, egui::Color32::WHITE);
 			}
 			None => {
 				let status = if self.voice_stream_status.is_empty() {
@@ -259,12 +272,28 @@ impl MessagingUi {
 		let hovered = ui
 			.input(|input| input.pointer.hover_pos())
 			.is_some_and(|pointer| rect.contains(pointer));
+		if self.voice_stream_view.is_some() {
+			self.voice_stream_zoom.badge(
+				ui,
+				egui::Id::unique("voice-pip-zoom"),
+				content,
+				hovered,
+				true,
+			);
+		}
 		let shown =
 			ui.ctx()
 				.animate_bool_with_time(ui.scope_id().with("voice-pip-chrome"), hovered, 0.15);
 		let mut action = closed.then_some(PipAction::Close);
+		// The same menu as the share's tile in the call.
+		if let Some(menu) = egui::Popup::context_menu(&surface)
+			.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+			.show(|ui| self.stream_menu(ui, streamer, true))
+			&& let Some(chosen) = menu.inner
+		{
+			action = Some(chosen);
+		}
 		if shown > 0.0 {
-			let accent = design::palette(ui).accent;
 			let size = 32.0;
 			// Window actions sit in the top-right corner, picture actions in the top-left.
 			let slot = |index: f32, right: bool| {
@@ -297,22 +326,7 @@ impl MessagingUi {
 				);
 				let pinned = button == PipButton::Pin && !self.voice_pip_unpinned;
 				let on = pinned || (button == PipButton::Stretch && self.voice_pip_stretch);
-				let hover = design::hover_motion(ui, &response);
-				// A lifted dark gray rather than black, so the plate and its hover still show
-				// over the black letterbox bars.
-				let fill = if on {
-					accent
-				} else {
-					let lift = 34.0 + 26.0 * hover;
-					egui::Color32::from_rgba_unmultiplied(
-						lift as u8,
-						lift as u8,
-						(lift + 4.0) as u8,
-						(190.0 + 30.0 * hover) as u8,
-					)
-				};
-				ui.painter()
-					.rect_filled(area, 8, fill.gamma_multiply(shown));
+				chrome_plate(ui, &response, on, shown);
 				let glyph = area.shrink(7.0);
 				let color = egui::Color32::WHITE.gamma_multiply(shown);
 				let (label, hint) = match button {
@@ -380,6 +394,11 @@ impl MessagingUi {
 			pip_resize(ui, rect);
 		}
 		action
+	}
+
+	/// The watched share plays in its own picture-in-picture window.
+	pub fn voice_pip_open(&self) -> bool {
+		self.voice_pip.is_some()
 	}
 
 	/// Effective screen-share audio level, independent of participant voice levels.
@@ -1574,7 +1593,10 @@ impl MessagingUi {
 		let response = ui.interact(
 			rect,
 			ui.scope_id().with(("voice-tile", tile.key())),
-			if has_video || matches!(tile, Tile::Participant(_) | Tile::Stream(_)) {
+			if has_video && matches!(tile, Tile::Stream(_)) {
+				// A watched share also pans while zoomed in.
+				egui::Sense::click_and_drag()
+			} else if has_video || matches!(tile, Tile::Participant(_) | Tile::Stream(_)) {
 				egui::Sense::click()
 			} else {
 				egui::Sense::hover()
@@ -1592,18 +1614,21 @@ impl MessagingUi {
 					.unwrap_or("Your screen · local preview")
 			}
 			Tile::Stream(streamer) if has_video => {
-				self.stream_tile(ui, state, rect, channel, *streamer, false);
+				self.stream_tile(ui, state, rect, channel, *streamer, false, Some(&response));
 				egui::Popup::context_menu(&response)
 					.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-					.show(|ui| {
-						self.stream_audio_controls(ui);
-						ui.separator();
-						if ui.button("Stop watching").clicked() {
-							self.watch_request = Some(None);
-							ui.close();
-						}
-					});
-				"Screen share you are watching"
+					.show(|ui| self.stream_menu(ui, *streamer, false));
+				// Holding the button to zoom, or a click while zoomed in, keeps the layout.
+				if self.voice_stream_zoom.gesturing(ui) || self.voice_stream_zoom.zoomed() {
+					if response.double_clicked() {
+						self.voice_stream_zoom.reset(ui);
+					}
+					response.on_hover_text(
+						"Hold left click and scroll to zoom · drag to look around · double-click for the whole picture",
+					);
+					return None;
+				}
+				"Screen share you are watching · hold left click and scroll to zoom"
 			}
 			Tile::Stream(streamer) => {
 				let watch = self.stream_invite_tile(ui, state, rect, channel, *streamer, compact);
@@ -1679,6 +1704,18 @@ impl MessagingUi {
 	}
 
 	/// The screen share this device chose to watch: the latest decoded picture or a status.
+	/// Resets the zoom when another share comes on; returns the watched share's zoom.
+	fn stream_zoom(&mut self, streamer: Id) -> &mut PictureZoom {
+		if self.voice_stream_zoom_of != Some(streamer) {
+			self.voice_stream_zoom_of = Some(streamer);
+			self.voice_stream_zoom = PictureZoom::default();
+		}
+		&mut self.voice_stream_zoom
+	}
+
+	/// `tile` is the stage tile's own response, which zooms and pans the picture; fullscreen
+	/// has none and senses the picture itself.
+	#[allow(clippy::too_many_arguments)] // Placement and framing flags of one tile.
 	fn stream_tile(
 		&mut self,
 		ui: &mut egui::Ui,
@@ -1687,6 +1724,7 @@ impl MessagingUi {
 		channel: Id,
 		streamer: Id,
 		overlay: bool,
+		tile: Option<&egui::Response>,
 	) {
 		let name = participant_user(state, channel, streamer)
 			.map_or_else(|| "Participant".to_owned(), |user| user.name.clone());
@@ -1720,10 +1758,32 @@ impl MessagingUi {
 				rect
 			}
 			Some(texture) => {
+				let texture = *texture;
 				let content = fit_rect(rect, texture.size);
+				let response = tile.cloned().unwrap_or_else(|| {
+					ui.interact(
+						content,
+						ui.scope_id().with("voice-stream-zoom"),
+						egui::Sense::click_and_drag(),
+					)
+				});
+				let uv = self.stream_zoom(streamer).update(ui, &response, content);
 				ui.put(
 					content,
-					egui::Image::from_texture((texture.id, content.size())).corner_radius(10),
+					egui::Image::from_texture((texture.id, content.size()))
+						.uv(uv)
+						.corner_radius(if overlay { 0 } else { 10 }),
+				);
+				if overlay && self.voice_stream_zoom.zoomed() && response.double_clicked() {
+					self.voice_stream_zoom.reset(ui);
+				}
+				let hovered = response.hovered() || response.dragged();
+				self.voice_stream_zoom.badge(
+					ui,
+					egui::Id::unique("voice-stream-zoom"),
+					content,
+					hovered,
+					false,
 				);
 				content
 			}
@@ -1957,18 +2017,49 @@ impl MessagingUi {
 		);
 	}
 
+	/// The stream's level and mute as menu rows, the same in every menu that shows them.
 	fn stream_audio_controls(&mut self, ui: &mut egui::Ui) {
-		ui.set_width(220.0);
-		design::checkbox(
+		ui.set_width(232.0);
+		design::menu_slider(
 			ui,
-			&mut self.voice_stream_muted,
-			crate::i18n::translate("voice-stream-audio-controls-mute-stream-audio"),
-		);
-		gain_slider(
-			ui,
-			self.voice_stream_volume.get_or_insert(100),
 			"voice-stream-audio-controls-stream-volume",
+			self.voice_stream_volume.get_or_insert(100),
+			0..=200,
+			"%",
 		);
+		design::menu_check(
+			ui,
+			"voice-stream-audio-controls-mute-stream-audio",
+			&mut self.voice_stream_muted,
+		);
+	}
+
+	/// Right-click menu of a watched share, in the call and in picture-in-picture: its audio,
+	/// where it plays, and Stop watching.
+	fn stream_menu(&mut self, ui: &mut egui::Ui, streamer: Id, in_pip: bool) -> Option<PipAction> {
+		self.stream_audio_controls(ui);
+		ui.separator();
+		let mut action = None;
+		if self.voice_stream_zoom.zoomed()
+			&& design::menu_item(ui, None, "Show the whole picture", false).clicked()
+		{
+			self.voice_stream_zoom.reset(ui);
+			ui.close();
+		}
+		if in_pip {
+			if design::menu_item(ui, None, "Back to Leech", false).clicked() {
+				action = Some(PipAction::Back);
+				ui.close();
+			}
+		} else if design::menu_item(ui, None, "Picture-in-picture", false).clicked() {
+			self.open_voice_pip(ui.ctx(), streamer);
+			ui.close();
+		}
+		if design::menu_item(ui, None, "Stop watching", true).clicked() {
+			self.watch_request = Some(None);
+			ui.close();
+		}
+		action
 	}
 
 	/// Apply a tile's watch click once the stage has mutable state again.
@@ -4131,7 +4222,7 @@ impl MessagingUi {
 						&& state.can_stream(call.channel)
 				}));
 		let label = if self.screen.busy {
-			"Stop sharing"
+			"Stream options"
 		} else {
 			"Share your screen"
 		};
@@ -5276,7 +5367,7 @@ impl MessagingUi {
 						can_share,
 						self.screen.busy,
 						if self.screen.busy {
-							"Stop sharing"
+							"Stream options"
 						} else {
 							"Share your screen"
 						},
@@ -5284,7 +5375,7 @@ impl MessagingUi {
 							if let Some(status) = self.screen.capture_status {
 								status
 							} else if self.screen.busy {
-								"Stop sharing your screen"
+								"Stop streaming, or show something only you see"
 							} else {
 								"Share a screen or window"
 							}
@@ -5588,8 +5679,210 @@ fn best_fit(count: usize, area: egui::Vec2, cap: f32) -> (usize, egui::Vec2) {
 	best
 }
 
+/// Zoom into a live picture by holding the left mouse button on it and scrolling, then drag to
+/// look around while zoomed. Zooming samples a smaller part of the full-resolution texture
+/// (mipmapped, trilinear), so detail stays sharp up to the source's own pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PictureZoom {
+	scale: f32,
+	/// The texture point (0–1 on each axis) shown at the middle of the picture.
+	center: egui::Pos2,
+	/// Start time of the press that zoomed: its release is part of the gesture, not a click.
+	gesture: Option<f64>,
+	/// When the level last changed, on the interface clock, so the level badge shows it.
+	changed: f64,
+	/// Start time of the press that moved the window: the OS owned that press, so egui may
+	/// not have seen its release, and its wheel never zooms.
+	moved: Option<f64>,
+}
+
+impl Default for PictureZoom {
+	fn default() -> Self {
+		Self {
+			scale: 1.0,
+			center: egui::pos2(0.5, 0.5),
+			gesture: None,
+			changed: f64::NEG_INFINITY,
+			moved: None,
+		}
+	}
+}
+
+impl PictureZoom {
+	pub(crate) const MAX: f32 = 8.0;
+
+	pub(crate) fn zoomed(&self) -> bool {
+		self.scale > 1.001
+	}
+
+	/// The part of the texture to draw.
+	pub(crate) fn uv(&self) -> egui::Rect {
+		egui::Rect::from_center_size(self.center, egui::Vec2::splat(1.0 / self.scale))
+	}
+
+	/// Whether the pointer's current (or just released) press zoomed, so it is no click.
+	pub(crate) fn gesturing(&self, ui: &egui::Ui) -> bool {
+		self.gesture.is_some() && self.gesture == ui.input(|input| input.pointer.press_start_time())
+	}
+
+	pub(crate) fn reset(&mut self, ui: &egui::Ui) {
+		if self.zoomed() {
+			self.changed = ui.input(|input| input.time);
+		}
+		self.scale = 1.0;
+		self.center = egui::pos2(0.5, 0.5);
+	}
+
+	/// Applies the wheel while the left button is held on `response`, and its drag while
+	/// zoomed, for a picture drawn over `content`. Returns the texture part to draw.
+	pub(crate) fn update(
+		&mut self,
+		ui: &egui::Ui,
+		response: &egui::Response,
+		content: egui::Rect,
+	) -> egui::Rect {
+		let held = response.is_pointer_button_down_on()
+			&& ui.input(|input| {
+				input.pointer.primary_down()
+					&& (self.moved.is_none() || self.moved != input.pointer.press_start_time())
+			});
+		if held && content.is_positive() {
+			// The held wheel belongs to the picture, never to a list or page behind it.
+			let wheel = ui.input_mut(|input| {
+				let wheel = input.smooth_scroll_delta.y + input.smooth_scroll_delta.x;
+				input.smooth_scroll_delta = egui::Vec2::ZERO;
+				wheel
+			});
+			let pointer = ui.input(|input| input.pointer.latest_pos());
+			if wheel != 0.0
+				&& let Some(pointer) = pointer
+			{
+				let next = (self.scale * (wheel * 0.006).exp()).clamp(1.0, Self::MAX);
+				// The texture point under the pointer stays under it.
+				let at = ((pointer - content.min) / content.size())
+					.clamp(egui::Vec2::ZERO, egui::Vec2::splat(1.0));
+				let uv = self.uv();
+				let target = uv.min + at * uv.size();
+				let size = 1.0 / next;
+				self.center = target - at * size + egui::Vec2::splat(size * 0.5);
+				self.scale = next;
+				self.gesture = ui.input(|input| input.pointer.press_start_time());
+				self.changed = ui.input(|input| input.time);
+			}
+		}
+		if self.zoomed() && response.dragged_by(egui::PointerButton::Primary) {
+			self.center -= response.drag_delta() / content.size() * self.uv().size();
+		}
+		if !self.zoomed() {
+			self.scale = 1.0;
+			self.center = egui::pos2(0.5, 0.5);
+		}
+		let half = 0.5 / self.scale;
+		self.center = egui::pos2(
+			self.center.x.clamp(half, 1.0 - half),
+			self.center.y.clamp(half, 1.0 - half),
+		);
+		if self.zoomed() && response.hovered() {
+			ui.ctx().set_cursor_icon(if response.dragged() {
+				egui::CursorIcon::Grabbing
+			} else {
+				egui::CursorIcon::Grab
+			});
+		}
+		self.uv()
+	}
+
+	/// For a borderless picture window: a press on `surface` that travels a few points moves
+	/// the window like a title bar, unless the press zooms or pans. A press that holds still
+	/// keeps the wheel for zooming. The OS owns the move until the button is released.
+	pub(crate) fn move_window(&mut self, ui: &egui::Ui, surface: &egui::Response) {
+		if self.zoomed() || self.gesturing(ui) || !surface.is_pointer_button_down_on() {
+			return;
+		}
+		let (press, travelled) = ui.input(|input| {
+			(
+				input.pointer.press_start_time(),
+				input.pointer.primary_down()
+					&& input
+						.pointer
+						.press_origin()
+						.zip(input.pointer.latest_pos())
+						.is_some_and(|(from, to)| from.distance(to) > 3.0),
+			)
+		});
+		if travelled && press.is_some() && self.moved != press {
+			self.moved = press;
+			ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+		}
+	}
+
+	/// The zoom level in a small pill at the picture's top-left (or bottom-left, under a
+	/// window's own top buttons) while it changes or the pointer is over the picture;
+	/// clicking it returns to the whole picture.
+	pub(crate) fn badge(
+		&mut self,
+		ui: &mut egui::Ui,
+		id: egui::Id,
+		content: egui::Rect,
+		hovered: bool,
+		bottom: bool,
+	) {
+		let now = ui.input(|input| input.time);
+		let recent = now - self.changed < 1.2;
+		let shown = ui
+			.ctx()
+			.animate_bool_with_time(id, (self.zoomed() && hovered) || recent, 0.15);
+		if recent {
+			ui.ctx()
+				.request_repaint_after_secs((1.2 - (now - self.changed)) as f32);
+		}
+		if shown <= 0.0 || content.height() < 72.0 {
+			return;
+		}
+		let text = format!("{:.0}%", self.scale * 100.0);
+		let font = egui::FontId::new(12.0, design::medium_family(ui.ctx()));
+		let galley = ui
+			.painter()
+			.layout_no_wrap(text, font, egui::Color32::WHITE);
+		let size = egui::vec2(galley.size().x + 20.0, 24.0);
+		let pill = egui::Rect::from_min_size(
+			if bottom {
+				content.left_bottom() + egui::vec2(PIP_INSET, -PIP_INSET - size.y)
+			} else {
+				content.left_top() + egui::Vec2::splat(PIP_INSET)
+			},
+			size,
+		);
+		let response = ui
+			.interact(
+				pill,
+				id.with("reset"),
+				if self.zoomed() {
+					egui::Sense::click()
+				} else {
+					egui::Sense::hover()
+				},
+			)
+			.on_hover_text("Back to the whole picture");
+		let fill = if response.hovered() { 220 } else { 170 };
+		ui.painter().rect_filled(
+			pill,
+			12,
+			egui::Color32::from_black_alpha(fill).gamma_multiply(shown),
+		);
+		ui.painter().galley(
+			pill.center() - galley.size() * 0.5,
+			galley,
+			egui::Color32::WHITE.gamma_multiply(shown),
+		);
+		if response.clicked() {
+			self.reset(ui);
+		}
+	}
+}
+
 /// The largest centred rectangle of the image's aspect ratio inside `rect`.
-fn fit_rect(rect: egui::Rect, image: egui::Vec2) -> egui::Rect {
+pub(crate) fn fit_rect(rect: egui::Rect, image: egui::Vec2) -> egui::Rect {
 	if image.x <= 0.0 || image.y <= 0.0 {
 		return rect;
 	}
@@ -6274,7 +6567,7 @@ fn paint_grid_lines(
 }
 
 /// Stretch to fill: a double arrow pulling the picture out sideways.
-fn paint_stretch_glyph(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+pub(crate) fn paint_stretch_glyph(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
 	paint_grid_lines(
 		painter,
 		rect,
@@ -6345,10 +6638,30 @@ enum PipButton {
 
 /// Gap between the picture-in-picture window's edge and its buttons; the resize corners
 /// stay inside it so they never cover a button.
-const PIP_INSET: f32 = 10.0;
+pub(crate) const PIP_INSET: f32 = 10.0;
+
+/// One action plate of a borderless picture window's hover chrome: accent while `on`,
+/// otherwise a lifted dark gray rather than black, so the plate and its hover still show over
+/// black letterbox bars.
+pub(crate) fn chrome_plate(ui: &egui::Ui, response: &egui::Response, on: bool, shown: f32) {
+	let hover = design::hover_motion(ui, response);
+	let fill = if on {
+		design::palette(ui).accent
+	} else {
+		let lift = 34.0 + 26.0 * hover;
+		egui::Color32::from_rgba_unmultiplied(
+			lift as u8,
+			lift as u8,
+			(lift + 4.0) as u8,
+			(190.0 + 30.0 * hover) as u8,
+		)
+	};
+	ui.painter()
+		.rect_filled(response.rect, 8, fill.gamma_multiply(shown));
+}
 
 /// Edge and corner resize handles for the borderless picture-in-picture window.
-fn pip_resize(ui: &mut egui::Ui, rect: egui::Rect) {
+pub(crate) fn pip_resize(ui: &mut egui::Ui, rect: egui::Rect) {
 	use egui::{CursorIcon as C, ResizeDirection as D};
 	let (l, r, t, b) = (rect.left(), rect.right(), rect.top(), rect.bottom());
 	let (edge, corner) = (6.0, PIP_INSET);
@@ -8411,7 +8724,7 @@ mod tests {
 			)),
 			..Default::default()
 		};
-		let frame = |messaging: &mut MessagingUi, state: &State, open: bool| {
+		let frame = |messaging: &mut MessagingUi, state: &mut State, open: bool| {
 			let mut raw = egui::RawInput::default();
 			raw.viewports
 				.entry(egui::ViewportId::ROOT)
@@ -8429,22 +8742,22 @@ mod tests {
 			.drop_without_applying_deltas();
 		};
 		// Sized to the stream (ultrawide clamps to 2.4:1), inset from the window's corner.
-		frame(&mut messaging, &state, true);
+		frame(&mut messaging, &mut state, true);
 		let (user, placement) = messaging.voice_pip.unwrap();
 		assert_eq!(user, Id(3));
 		assert_eq!(placement.size(), egui::vec2(480.0, 200.0));
 		assert_eq!(placement.max, egui::pos2(1276.0, 826.0));
-		frame(&mut messaging, &state, false);
+		frame(&mut messaging, &mut state, false);
 		assert!(messaging.voice_pip.is_some());
 		// Stopping (or losing) the watched share closes the window with it.
 		state.voice.active.as_mut().unwrap().watching = None;
-		frame(&mut messaging, &state, false);
+		frame(&mut messaging, &mut state, false);
 		assert!(messaging.voice_pip.is_none());
 		// A remembered placement wins over the default corner.
 		let moved = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(640.0, 360.0));
 		messaging.voice_pip_rect = Some(moved);
 		state.voice.active.as_mut().unwrap().watching = Some(Id(3));
-		frame(&mut messaging, &state, true);
+		frame(&mut messaging, &mut state, true);
 		assert_eq!(messaging.voice_pip.map(|(_, rect)| rect), Some(moved));
 	}
 
@@ -8632,7 +8945,7 @@ mod tests {
 				},
 				|ui| {
 					reveal = screen.live_reveal(ui.ctx());
-					screen.show(ui.ctx(), &state);
+					screen.show(ui.ctx(), &state, &mut Default::default());
 				},
 			);
 			output.textures_delta.clear();
@@ -8653,7 +8966,7 @@ mod tests {
 		);
 		assert!(frame(&mut screen, 1.5) > 0.5);
 		assert_eq!(frame(&mut screen, 2.0), 1.0);
-		screen.launch(&state);
+		screen.stop();
 		assert!(matches!(screen.request, Some(crate::screen::Request::Stop)));
 		assert!(!screen.busy);
 		assert_eq!(

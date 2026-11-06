@@ -14,6 +14,14 @@ pub enum Request {
 	Stop,
 }
 
+/// The picker's two pages: Go Live to the call, or pictures only you see.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Tab {
+	#[default]
+	GoLive,
+	OnlyMe,
+}
+
 pub struct ScreenUi {
 	pub context: Option<(u64, Id, u64)>,
 	pub open: bool,
@@ -37,6 +45,9 @@ pub struct ScreenUi {
 	fps: u32,
 	cursor: bool,
 	audio: bool,
+	pub tab: Tab,
+	/// The screen or window chosen on the Stream to yourself page.
+	local_selected: Option<SourceId>,
 }
 impl Default for ScreenUi {
 	fn default() -> Self {
@@ -59,25 +70,28 @@ impl Default for ScreenUi {
 			fps: 30,
 			cursor: true,
 			audio: cfg!(target_os = "macos"),
+			tab: Tab::GoLive,
+			local_selected: None,
 		}
 	}
 }
 impl ScreenUi {
+	/// Opens the picker. While a share is live it opens on Stop streaming, with Stream to
+	/// yourself one tab away.
 	pub(crate) fn launch(&mut self, state: &State) {
 		let Some(call) = &state.voice.active else {
 			return;
 		};
-		if self.busy {
-			self.request = Some(Request::Stop);
-			// Stopping clears the button and LIVE on the click, before Discord confirms.
-			self.busy = false;
-			self.live = false;
-			self.started_at = None;
-			self.live_at = None;
-			return;
-		}
 		self.context = Some((state.generation, call.channel, call.request));
 		self.open = true;
+		self.tab = Tab::GoLive;
+		self.local_selected = None;
+		if self.busy {
+			if self.sources.is_empty() && !state.demo {
+				self.refresh_requested = true;
+			}
+			return;
+		}
 		self.selected = None;
 		self.sources.clear();
 		if state.demo {
@@ -104,6 +118,14 @@ impl ScreenUi {
 			self.refresh_requested = true;
 			self.status = "Looking for screens and windows…";
 		}
+	}
+	/// Stops the share. The button and LIVE clear on the click, before Discord confirms.
+	pub(crate) fn stop(&mut self) {
+		self.request = Some(Request::Stop);
+		self.busy = false;
+		self.live = false;
+		self.started_at = None;
+		self.live_at = None;
 	}
 	fn settings(&self) -> Option<Settings> {
 		let source = self
@@ -145,7 +167,12 @@ impl ScreenUi {
 		}
 		egui::emath::easing::cubic_out(t)
 	}
-	pub(super) fn show(&mut self, ctx: &egui::Context, state: &State) {
+	pub(super) fn show(
+		&mut self,
+		ctx: &egui::Context,
+		state: &State,
+		views: &mut crate::self_view::SelfViews,
+	) {
 		let now = ctx.input(|input| input.time);
 		if !self.busy {
 			self.started_at = None;
@@ -175,50 +202,188 @@ impl ScreenUi {
 		}
 		let mut cancel = false;
 		let mut share = false;
-		let response = crate::dialog::Dialog::new(
-			"screen-share-settings",
-			crate::i18n::translate("screen-show-share-your-screen"),
-		)
-		.subtitle(crate::i18n::translate(
-			"screen-show-choose-what-people-in-this-call-can-see",
-		))
-		.width(460.0)
-		.show(ctx, |d| {
-			d.scroll(260.0, |ui| self.body(ui, state));
-			d.footer(|ui| {
-				let allowed = !state.offline_preview()
-					&& self.supported
-					&& !self.busy && self.settings().is_some()
-					&& state.call_connected()
-					&& state
-						.voice
-						.active
-						.as_ref()
-						.is_some_and(|call| state.can_stream(call.channel));
-				ui.add_enabled_ui(allowed, |ui| {
-					share = crate::dialog::action(
-						ui,
-						"screen-show-share-screen",
-						crate::dialog::Action::Primary,
-					)
-					.clicked();
+		let mut stop = false;
+		let local = self.tab == Tab::OnlyMe;
+		let (title, subtitle) = if local {
+			(
+				"Stream to yourself".to_owned(),
+				"Only you see these. They stay above your other windows, and nothing is sent to the call.".to_owned(),
+			)
+		} else {
+			(
+				crate::i18n::translate("screen-show-share-your-screen"),
+				crate::i18n::translate("screen-show-choose-what-people-in-this-call-can-see"),
+			)
+		};
+		let response = crate::dialog::Dialog::new("screen-share-settings", title)
+			.subtitle(subtitle)
+			.width(460.0)
+			.show(ctx, |d| {
+				d.scroll(260.0, |ui| {
+					tabs(ui, &mut self.tab);
+					ui.add_space(14.0);
+					match self.tab {
+						Tab::GoLive => self.body(ui, state),
+						Tab::OnlyMe => self.local_body(ui, state, views),
+					}
 				});
-				cancel |=
-					crate::dialog::action(ui, "screen-show-cancel", crate::dialog::Action::Neutral)
+				d.footer(|ui| match self.tab {
+					Tab::OnlyMe => {
+						let source = self
+							.local_selected
+							.and_then(|id| self.sources.iter().find(|source| source.id == id));
+						ui.add_enabled_ui(source.is_some() && views.has_room(), |ui| {
+							if crate::dialog::action(
+								ui,
+								"Show on top",
+								crate::dialog::Action::Primary,
+							)
+							.clicked() && let Some(source) = source
+							{
+								views.requests.push(crate::self_view::Request::Capture(
+									source.id,
+									source.name.clone(),
+								));
+							}
+						});
+						cancel |= crate::dialog::action(ui, "Done", crate::dialog::Action::Neutral)
+							.clicked();
+					}
+					Tab::GoLive if self.busy => {
+						stop = crate::dialog::action(
+							ui,
+							"Stop streaming",
+							crate::dialog::Action::Danger,
+						)
 						.clicked();
+						cancel |=
+							crate::dialog::action(ui, "Close", crate::dialog::Action::Neutral)
+								.clicked();
+					}
+					Tab::GoLive => {
+						let allowed = !state.offline_preview()
+							&& self.supported && self.settings().is_some()
+							&& state.call_connected()
+							&& state
+								.voice
+								.active
+								.as_ref()
+								.is_some_and(|call| state.can_stream(call.channel));
+						ui.add_enabled_ui(allowed, |ui| {
+							share = crate::dialog::action(
+								ui,
+								"screen-show-share-screen",
+								crate::dialog::Action::Primary,
+							)
+							.clicked();
+						});
+						cancel |= crate::dialog::action(
+							ui,
+							"screen-show-cancel",
+							crate::dialog::Action::Neutral,
+						)
+						.clicked();
+					}
+				});
 			});
-		});
 		cancel |= response.close;
 		if share && !cancel {
 			self.request = self.settings().map(Request::Start);
 		}
-		if cancel || share {
+		if stop {
+			self.stop();
+		}
+		if cancel || share || stop {
 			self.open = false;
 		}
 	}
 
-	/// Source list, then the capture options Discord exposes without an entitlement.
-	fn body(&mut self, ui: &mut egui::Ui, state: &State) {
+	/// Stream to yourself: a screen or window, files or the clipboard, and what is open now.
+	fn local_body(
+		&mut self,
+		ui: &mut egui::Ui,
+		state: &State,
+		views: &mut crate::self_view::SelfViews,
+	) {
+		let colors = crate::design::palette(ui);
+		self.sources_header(ui, state);
+		ui.add_space(6.0);
+		egui::ScrollArea::vertical()
+			.id_salt("local-sources")
+			.max_height(148.0)
+			.scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+			.show(ui, |ui| self.source_list(ui, true));
+		ui.add_space(10.0);
+		ui.label(crate::design::eyebrow(
+			ui,
+			"From a file or the clipboard",
+			colors.muted,
+		));
+		ui.add_space(6.0);
+		ui.horizontal(|ui| {
+			ui.spacing_mut().item_spacing.x = 8.0;
+			ui.add_enabled_ui(!views.busy && views.has_room(), |ui| {
+				if crate::design::button(
+					ui,
+					"Video, GIF or image…",
+					crate::design::ButtonKind::Outline,
+				)
+				.on_hover_text("Choose one or more files; each opens in its own window")
+				.clicked()
+				{
+					views.requests.push(crate::self_view::Request::Files);
+				}
+				if crate::design::button(ui, "Paste image", crate::design::ButtonKind::Outline)
+					.on_hover_text("Show the image you copied")
+					.clicked()
+				{
+					views.requests.push(crate::self_view::Request::Paste);
+				}
+			});
+			if views.busy {
+				ui.add(egui::Spinner::new().size(16.0).color(colors.muted));
+			}
+		});
+		if !views.views.is_empty() {
+			ui.add_space(14.0);
+			let mut close_all = false;
+			ui.horizontal(|ui| {
+				ui.label(crate::design::eyebrow(
+					ui,
+					format!("On your screen · {}", views.views.len()),
+					colors.muted,
+				));
+				ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+					close_all = crate::design::text_action(ui, "Close all").clicked();
+				});
+			});
+			ui.add_space(6.0);
+			let mut closing = None;
+			for view in &views.views {
+				if open_row(ui, view) {
+					closing = Some(view.id);
+				}
+			}
+			// The desktop drops a window's capture or decoder once its view is gone.
+			if close_all {
+				views.views.clear();
+			} else if let Some(id) = closing {
+				views.views.retain(|view| view.id != id);
+			}
+		}
+		let status = if !views.has_room() {
+			"Close a window to open another: at most 8 show at once."
+		} else {
+			views.status
+		};
+		if !status.is_empty() {
+			ui.add_space(10.0);
+			status_note(ui, status);
+		}
+	}
+
+	/// "Screen or window" over the source list, with Refresh at its right.
+	fn sources_header(&mut self, ui: &mut egui::Ui, state: &State) {
 		let colors = crate::design::palette(ui);
 		ui.horizontal(|ui| {
 			ui.label(crate::design::eyebrow(
@@ -237,19 +402,40 @@ impl ScreenUi {
 					.inner
 					.clicked()
 				{
-					self.selected = None;
+					if !self.busy {
+						self.selected = None;
+					}
+					self.local_selected = None;
 					self.sources.clear();
 					self.refresh_requested = true;
 					self.status = "Looking for screens and windows…";
 				}
 			});
 		});
+	}
+
+	/// Source list, then the capture options Discord exposes without an entitlement. While
+	/// live, the options describe the running share and stay as they are.
+	fn body(&mut self, ui: &mut egui::Ui, state: &State) {
+		let colors = crate::design::palette(ui);
+		if self.busy {
+			status_note(
+				ui,
+				if self.live {
+					"You are live. Stop streaming below, or open Stream to yourself to show something only you see."
+				} else {
+					"Your stream is starting…"
+				},
+			);
+			return;
+		}
+		self.sources_header(ui, state);
 		ui.add_space(6.0);
 		egui::ScrollArea::vertical()
 			.id_salt("screen-sources")
 			.max_height(196.0)
 			.scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-			.show(ui, |ui| self.source_list(ui));
+			.show(ui, |ui| self.source_list(ui, false));
 		ui.add_space(6.0);
 		ui.label(crate::design::eyebrow(
 			ui,
@@ -324,26 +510,18 @@ impl ScreenUi {
 		);
 		if !self.status.is_empty() {
 			ui.add_space(10.0);
-			egui::Frame::new()
-				.fill(colors.base)
-				.corner_radius(8)
-				.inner_margin(egui::Margin::symmetric(12, 10))
-				.show(ui, |ui| {
-					ui.set_width(ui.available_width());
-					ui.add(
-						egui::Label::new(
-							egui::RichText::new(self.status)
-								.size(12.0)
-								.color(colors.muted),
-						)
-						.wrap(),
-					);
-				});
+			status_note(ui, self.status);
 		}
 	}
 
-	/// Selectable source rows; the caller bounds the height so options stay visible.
-	fn source_list(&mut self, ui: &mut egui::Ui) {
+	/// Selectable source rows; the caller bounds the height so options stay visible. `local`
+	/// picks for Stream to yourself, which keeps its own choice.
+	fn source_list(&mut self, ui: &mut egui::Ui, local: bool) {
+		let chosen = if local {
+			&mut self.local_selected
+		} else {
+			&mut self.selected
+		};
 		let colors = crate::design::palette(ui);
 		if self.sources.is_empty() {
 			egui::Frame::new()
@@ -365,7 +543,7 @@ impl ScreenUi {
 				});
 		}
 		for source in &self.sources {
-			let selected = self.selected == Some(source.id);
+			let selected = *chosen == Some(source.id);
 			let (rect, response) = ui
 				.allocate_exact_size(egui::vec2(ui.available_width(), 48.0), egui::Sense::click());
 			let fill = if selected {
@@ -450,11 +628,127 @@ impl ScreenUi {
 				egui::WidgetInfo::selected(egui::Role::RadioButton, true, selected, &source_name)
 			});
 			if response.clicked() {
-				self.selected = Some(source.id);
+				*chosen = Some(source.id);
 			}
 			ui.add_space(4.0);
 		}
 	}
+}
+
+/// Go Live | Stream to yourself, as one segmented control whose selection slides.
+fn tabs(ui: &mut egui::Ui, tab: &mut Tab) {
+	let colors = crate::design::palette(ui);
+	let (rect, _) =
+		ui.allocate_exact_size(egui::vec2(ui.available_width(), 38.0), egui::Sense::hover());
+	ui.painter().rect_filled(rect, 10, colors.base);
+	let half = egui::vec2(rect.width() * 0.5, rect.height());
+	let at = ui.ctx().animate_value_with_time(
+		ui.scope_id().with("screen-tab-slide"),
+		if *tab == Tab::GoLive { 0.0 } else { 1.0 },
+		0.18,
+	);
+	let slider =
+		egui::Rect::from_min_size(rect.min + egui::vec2(half.x * at, 0.0), half).shrink(3.0);
+	ui.painter()
+		.rect_filled(slider, 8, colors.accent.gamma_multiply(0.18));
+	ui.painter().rect_stroke(
+		slider,
+		8,
+		egui::Stroke::new(1.0, colors.accent.gamma_multiply(0.6)),
+		egui::StrokeKind::Inside,
+	);
+	for (index, (choice, label)) in [
+		(Tab::GoLive, "Go Live"),
+		(Tab::OnlyMe, "Stream to yourself"),
+	]
+	.into_iter()
+	.enumerate()
+	{
+		let area =
+			egui::Rect::from_min_size(rect.min + egui::vec2(half.x * index as f32, 0.0), half);
+		let response = ui.interact(
+			area,
+			ui.scope_id().with(("screen-tab", index)),
+			egui::Sense::click(),
+		);
+		let selected = *tab == choice;
+		let hover = crate::design::hover_motion(ui, &response);
+		ui.painter().text(
+			area.center(),
+			egui::Align2::CENTER_CENTER,
+			label,
+			egui::FontId::new(14.0, crate::design::medium_family(ui.ctx())),
+			if selected {
+				colors.text_strong
+			} else {
+				colors.muted.lerp_to_gamma(colors.text_strong, hover * 0.6)
+			},
+		);
+		response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, selected, label));
+		if response.clicked() {
+			*tab = choice;
+		}
+	}
+}
+
+/// One window open on Stream to yourself: its kind, its name and Close. True on Close.
+fn open_row(ui: &mut egui::Ui, view: &crate::self_view::View) -> bool {
+	let colors = crate::design::palette(ui);
+	let (rect, _) =
+		ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::hover());
+	ui.painter().rect_filled(rect, 8, colors.base);
+	crate::icons::paint(
+		ui.painter(),
+		view.kind.icon(),
+		egui::Rect::from_center_size(
+			egui::pos2(rect.left() + 22.0, rect.center().y),
+			egui::Vec2::splat(18.0),
+		),
+		colors.muted,
+	);
+	let action = egui::Rect::from_min_max(
+		egui::pos2(rect.right() - 72.0, rect.top()),
+		egui::pos2(rect.right() - 12.0, rect.bottom()),
+	);
+	let name = egui::WidgetText::from(
+		egui::RichText::new(&view.name)
+			.size(14.0)
+			.color(colors.text_strong),
+	)
+	.into_galley(
+		ui,
+		Some(egui::TextWrapMode::Truncate),
+		(action.left() - 8.0 - (rect.left() + 42.0)).max(40.0),
+		egui::TextStyle::Body,
+	);
+	ui.painter().galley(
+		egui::pos2(rect.left() + 42.0, rect.center().y - name.size().y * 0.5),
+		name,
+		colors.text_strong,
+	);
+	ui.scope_builder(
+		egui::UiBuilder::new()
+			.max_rect(action)
+			.id_salt(("self-view-row", view.id))
+			.layout(egui::Layout::right_to_left(egui::Align::Center)),
+		|ui| crate::design::text_action(ui, "Close").clicked(),
+	)
+	.inner
+}
+
+/// A quiet note in a soft box under the options.
+fn status_note(ui: &mut egui::Ui, text: &str) {
+	let colors = crate::design::palette(ui);
+	egui::Frame::new()
+		.fill(colors.base)
+		.corner_radius(8)
+		.inner_margin(egui::Margin::symmetric(12, 10))
+		.show(ui, |ui| {
+			ui.set_width(ui.available_width());
+			ui.add(
+				egui::Label::new(egui::RichText::new(text).size(12.0).color(colors.muted)).wrap(),
+			);
+		});
 }
 
 /// Compact segmented choice used by the quality and frame-rate rows.

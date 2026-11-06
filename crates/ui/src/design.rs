@@ -3277,6 +3277,122 @@ pub fn menu_check(ui: &mut egui::Ui, label: &str, checked: &mut bool) -> egui::R
 	response
 }
 
+/// Menu row with a level slider, like Discord's "User Volume": the label and its value share
+/// the first line at the row's text insets, and the track spans the row under them, so the
+/// knob's travel lines up with the text above it. Drag, click, arrow keys or the wheel set it.
+pub fn menu_slider(
+	ui: &mut egui::Ui,
+	label: &str,
+	value: &mut u16,
+	range: std::ops::RangeInclusive<u16>,
+	suffix: &str,
+) -> egui::Response {
+	const INSET: f32 = 10.0;
+	const KNOB: f32 = 7.0;
+	let label = crate::i18n::translate_if_key(label);
+	let p = palette(ui);
+	let enabled = ui.is_enabled();
+	let (min, max) = (*range.start(), *range.end());
+	let width = ui.available_width().max(160.0);
+	let (rect, mut response) =
+		ui.allocate_exact_size(egui::vec2(width, 54.0), egui::Sense::click_and_drag());
+	// The knob's outer edge stops where the label and the value start and end.
+	let track = egui::Rect::from_min_max(
+		egui::pos2(rect.left() + INSET + KNOB, rect.top() + 38.0 - 2.0),
+		egui::pos2(rect.right() - INSET - KNOB, rect.top() + 38.0 + 2.0),
+	);
+	let mut current = (*value).clamp(min, max);
+	if enabled {
+		if (response.dragged() || response.clicked() || response.drag_started())
+			&& let Some(pointer) = response.interact_pointer_pos()
+		{
+			let t = ((pointer.x - track.left()) / track.width()).clamp(0.0, 1.0);
+			current = min + (t * f32::from(max - min)).round() as u16;
+		}
+		let step = |current: u16, up: bool, by: u16| {
+			if up {
+				current.saturating_add(by).min(max)
+			} else {
+				current.saturating_sub(by).max(min)
+			}
+		};
+		if response.has_focus() {
+			ui.input(|input| {
+				if input.key_pressed(egui::Key::ArrowLeft)
+					|| input.key_pressed(egui::Key::ArrowDown)
+				{
+					current = step(current, false, 1);
+				}
+				if input.key_pressed(egui::Key::ArrowRight) || input.key_pressed(egui::Key::ArrowUp)
+				{
+					current = step(current, true, 1);
+				}
+			});
+		}
+		if response.hovered() {
+			// One step per wheel notch, from the raw events; the smoothed delta would repeat it.
+			let wheel = ui.input_mut(|input| {
+				input.smooth_scroll_delta = egui::Vec2::ZERO;
+				input
+					.events
+					.iter()
+					.filter_map(|event| match event {
+						egui::Event::MouseWheel { delta, .. } => Some(delta.x + delta.y),
+						_ => None,
+					})
+					.sum::<f32>()
+			});
+			if wheel != 0.0 {
+				current = step(current, wheel > 0.0, 5);
+			}
+		}
+	}
+	if current != *value {
+		*value = current;
+		response.mark_changed();
+	}
+	let readout = format!("{current}{suffix}");
+	response.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(current), &label));
+	let hot = enabled && (response.hovered() || response.dragged() || response.has_focus());
+	let dim = if enabled { 1.0 } else { 0.45 };
+	let painter = ui.painter();
+	let line = rect.top() + 16.0;
+	painter.text(
+		egui::pos2(rect.left() + INSET, line),
+		egui::Align2::LEFT_CENTER,
+		&label,
+		FontId::new(14.0, medium_family(ui.ctx())),
+		p.text.gamma_multiply(dim),
+	);
+	painter.text(
+		egui::pos2(rect.right() - INSET, line),
+		egui::Align2::RIGHT_CENTER,
+		readout,
+		FontId::new(13.0, medium_family(ui.ctx())),
+		p.muted.gamma_multiply(dim),
+	);
+	let t = f32::from(current - min) / f32::from((max - min).max(1));
+	let knob = egui::pos2(track.left() + track.width() * t, track.center().y);
+	painter.rect_filled(track, 2, p.border.gamma_multiply(dim));
+	painter.rect_filled(track.with_max_x(knob.x), 2, p.accent.gamma_multiply(dim));
+	if hot {
+		painter.circle_filled(knob, KNOB + 5.0, p.accent.gamma_multiply(0.18));
+	}
+	painter.circle(
+		knob,
+		if response.dragged() { KNOB + 1.0 } else { KNOB },
+		Color32::WHITE.gamma_multiply(dim),
+		Stroke::new(1.0, Color32::from_black_alpha(40)),
+	);
+	if response.has_focus() {
+		painter.circle_stroke(knob, KNOB + 3.0, Stroke::new(2.0, p.accent));
+	}
+	if hot {
+		ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+	}
+	response
+}
+
 /// Quiet inline action for secondary verbs such as "Reset" or "Try again": muted text that
 /// brightens and underlines on hover instead of a full button. The text sits on the layout's
 /// edge like any label; only the hover tint reaches past it.

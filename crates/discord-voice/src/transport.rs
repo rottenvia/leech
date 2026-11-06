@@ -399,6 +399,13 @@ async fn run_inner(
 	encoder
 		.set_bitrate(Bitrate::Bits(64_000))
 		.map_err(|_| "Opus bitrate configuration failed")?;
+	// In-band FEC lets a receiver rebuild a lost packet from the next one; libopus spends bits on
+	// it only with a nonzero loss estimate. Complexity 10 is its best quality (its default is 9).
+	encoder
+		.set_inband_fec(true)
+		.and_then(|()| encoder.set_packet_loss_perc(10))
+		.and_then(|()| encoder.set_complexity(10))
+		.map_err(|_| "Opus loss protection configuration failed")?;
 	let mut random = [0; 6];
 	getrandom::fill(&mut random).map_err(|_| "Voice random initialization failed")?;
 	let mut sequence = u16::from_be_bytes([random[0], random[1]]);
@@ -447,6 +454,8 @@ async fn run_inner(
 				if (!enabled && ready_announced) || (!waiting && waiting_announced) {ready_announced=false;waiting_announced=false;emit(Status::Securing).map_err(|_|"Call interface closed")?;}
 				if waiting && !waiting_announced {deadline=None;waiting_announced=true;emit(Status::WaitingForPeer).map_err(|_|"Call interface closed")?;}
 				if !waiting {waiting_announced=false;}
+				// A departure or protocol transition can drop readiness after Ready cleared the deadline.
+				if !enabled && !waiting {deadline.get_or_insert(now+Duration::from_secs(30));}
 				if enabled && !ready_announced {
 					deadline=None;ready_announced=true;
 					emit(Status::Ready{privacy_code:dave.session.voice_privacy_code().unwrap_or_default().into()}).map_err(|_|"Call interface closed")?;

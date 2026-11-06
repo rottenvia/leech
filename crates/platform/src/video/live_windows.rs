@@ -35,6 +35,33 @@ pub struct H264Decoder {
 	provides_samples: bool,
 }
 
+impl Drop for H264Decoder {
+	/// The documented teardown before the transform is released: end streaming, then hand
+	/// back the DXGI device manager, so the transform drops its D3D11 device and decoder
+	/// surfaces now. The receive path rebuilds decoders after stalls, so each rebuild must
+	/// leave nothing behind.
+	fn drop(&mut self) {
+		// SAFETY: Messages to a live transform on the thread that created it.
+		unsafe {
+			let _ = self.transform.ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
+			let _ = self
+				.transform
+				.ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0);
+			let _ = self
+				.transform
+				.ProcessMessage(MFT_MESSAGE_NOTIFY_END_STREAMING, 0);
+			if self._manager.is_some() {
+				let _ = self
+					.transform
+					.ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, 0);
+			}
+			if let Ok(shutdown) = self.transform.cast::<IMFShutdown>() {
+				let _ = shutdown.Shutdown();
+			}
+		}
+	}
+}
+
 #[derive(Clone, Copy)]
 struct OutputFormat {
 	width: u32,

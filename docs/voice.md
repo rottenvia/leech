@@ -476,6 +476,44 @@ with no audio recordings or remote processing. Quality, CPU cost, physical laten
 cross-platform behavior require owner-operated checks; this local implementation does
 not establish production readiness or superiority over Discord's processing.
 
+## Microphone recovery and loss protection — November 6, 2026
+
+The owner reported calls where a friend heard them badly until they rejoined. The cause is
+not established; these changes cover the states that previously recovered only on rejoin:
+
+- **Opus:** in-band FEC on, a 10 % expected-loss hint and complexity 10 (libopus defaults
+  were FEC off, 0 % and 9). Bitrate stays 64 kbps VOIP. FEC helps receivers that decode it;
+  whether Discord's clients do is unverified.
+- **Silent microphone:** callbacks that carry only exact-zero samples for 8 s, while an
+  unmuted call microphone is open, reopen the device at once, at most once per silent
+  stretch and never within 30 s of the last such reopen. A virtual microphone whose gate
+  outputs exact zeros between sentences gets one quick reopen after a long pause.
+- **Device changes:** a device-changed error reopens the input like a stall. On Windows,
+  WASAPI already reported these as invalidated streams, which already reopened.
+- **Encryption readiness:** while the call is neither ready nor waiting for a peer, a
+  30 s deadline is armed if none is. A transition that never completes then ends the voice
+  connection, and the call controller reconnects with fresh credentials (backing off 1, 2
+  and 4 s), instead of staying silent until a manual rejoin.
+- Each microphone reopen writes one fixed journal line (`reopening the microphone:
+  stall | device changed | device error | digital silence`), at most once a minute per
+  reason, with no device names or audio.
+
+## Stream to yourself — November 6, 2026
+
+The screen-share picker has a second tab. It shows a screen or window, a video, a GIF or an
+image (from a file or the clipboard) in a borderless window that stays above other windows.
+The picture is stretched to the window unless fitted, and is zoomed by holding the left mouse
+button and scrolling. At most 8 windows show at once.
+
+Nothing is encoded or sent. Screens and windows are captured in memory at up to 30 fps
+through the share capture path without its encoder or system audio; only the newest
+picture is kept. Videos play silently on a loop on their own thread (audio is decoded only
+so the reader does not queue it). Animations keep at most 1,200 frames and 192 MB decoded,
+and are scaled down until they fit. Stills keep at most a 3840 px edge. A shared screen
+shows these windows like any other window, so on one monitor they work as an overlay.
+Showing a screen or window to yourself is Windows-only; files and the clipboard work
+everywhere.
+
 ## Screen sharing
 
 In a connected call, select **Share your screen**, choose a display/window, 480p, 720p or 1080p, 15/30/60 fps, cursor visibility and optional **Share system audio**, then select **Share screen**. The screen button changes to **Stop sharing** while starting/sharing; it also remains available in the compact call controls. Call microphone controls remain independent. All presets are selectable without Nitro, but Discord acceptance and sustained frame rate are not guaranteed.

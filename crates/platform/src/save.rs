@@ -117,6 +117,33 @@ pub fn emoji_sources(
 	}
 }
 
+/// Pictures and videos for Stream to yourself; each opens in its own window.
+pub fn media_sources(
+	parent: Arc<winit::window::Window>,
+) -> impl std::future::Future<Output = Option<Vec<PathBuf>>> + Send + 'static {
+	let dialog = rfd::AsyncFileDialog::new()
+		.set_parent(parent.as_ref())
+		.set_title("Choose videos, GIFs or images to show")
+		.add_filter(
+			"Pictures and videos",
+			&[
+				"png", "jpg", "jpeg", "gif", "webp", "bmp", "mp4", "m4v", "mov", "wmv", "avi",
+				"mkv", "webm",
+			],
+		)
+		.pick_files();
+	async move {
+		let files = dialog.await?;
+		drop(parent);
+		Some(
+			files
+				.into_iter()
+				.map(|file| file.path().to_owned())
+				.collect(),
+		)
+	}
+}
+
 pub fn attachment_source(
 	parent: Arc<winit::window::Window>,
 ) -> impl std::future::Future<Output = Option<Vec<PathBuf>>> + Send + 'static {

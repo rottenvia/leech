@@ -1,0 +1,346 @@
+//! "Stream to yourself": pictures only this device shows (a screen or window, a video, a GIF
+//! or an image), each in a borderless window that stays above other windows. On one monitor
+//! that works as a widget or banner, without OBS. The desktop captures and decodes; nothing
+//! is sent to the call, though a shared screen shows these windows like any other.
+use crate::{
+	design,
+	voice::{PIP_INSET, PictureZoom, chrome_plate, fit_rect, paint_stretch_glyph, pip_resize},
+};
+use client_core::screen::SourceId;
+
+/// Most windows open at once; each holds one picture texture and a capture or decoder.
+pub const MAX_VIEWS: usize = 8;
+
+pub enum Request {
+	/// Show a screen or window from the picker, under its name.
+	Capture(SourceId, String),
+	/// Choose videos, GIFs or images in a file dialog.
+	Files,
+	/// Show the image or files on the clipboard.
+	Paste,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Kind {
+	Screen,
+	Window,
+	Video,
+	Animation,
+	Image,
+}
+
+impl Kind {
+	pub(crate) fn icon(self) -> crate::icons::Icon {
+		match self {
+			Self::Screen => crate::icons::Icon::Television,
+			Self::Window => crate::icons::Icon::Window,
+			Self::Video => crate::icons::Icon::FileVideo,
+			Self::Animation => crate::icons::Icon::Gif,
+			Self::Image => crate::icons::Icon::Image,
+		}
+	}
+}
+
+pub struct View {
+	pub id: u64,
+	pub name: String,
+	pub kind: Kind,
+	/// The latest picture; `None` while the first one loads.
+	pub texture: Option<egui::load::SizedTexture>,
+	/// Over the picture when it stopped, such as a closed window; empty otherwise.
+	pub status: &'static str,
+	/// Letterboxed at the picture's own shape instead of stretched over the window.
+	fit: bool,
+	unpinned: bool,
+	/// The first picture has resized the window to its shape.
+	sized: bool,
+	zoom: PictureZoom,
+	opened: egui::Rect,
+}
+
+#[derive(Default)]
+pub struct SelfViews {
+	pub views: Vec<View>,
+	pub requests: Vec<Request>,
+	/// Why the latest file, paste or capture did not open, for the Stream to yourself tab.
+	pub status: &'static str,
+	/// A file dialog, a paste or a decode is in progress.
+	pub busy: bool,
+}
+
+impl SelfViews {
+	/// A new window over the main one, cascaded so several never sit exactly on each other.
+	pub fn open(&mut self, ctx: &egui::Context, id: u64, name: String, kind: Kind) {
+		let parent =
+			ctx.input(|input| input.viewport().inner_rect)
+				.unwrap_or(egui::Rect::from_min_size(
+					egui::Pos2::ZERO,
+					egui::vec2(1280.0, 800.0),
+				));
+		let step = 32.0 * (self.views.len() % 6) as f32;
+		let opened = egui::Rect::from_min_size(
+			parent.min + egui::vec2(56.0 + step, 72.0 + step),
+			egui::vec2(480.0, 270.0),
+		);
+		self.status = "";
+		self.views.push(View {
+			id,
+			name,
+			kind,
+			texture: None,
+			status: "",
+			fit: false,
+			unpinned: false,
+			sized: false,
+			zoom: PictureZoom::default(),
+			opened,
+		});
+	}
+
+	pub fn has_room(&self) -> bool {
+		self.views.len() < MAX_VIEWS
+	}
+
+	/// Draws every window; a window asked to close leaves the list, and the desktop drops
+	/// its picture source with it.
+	pub fn show(&mut self, ctx: &egui::Context) {
+		self.views.retain_mut(|view| {
+			let builder = egui::ViewportBuilder::default()
+				.with_title(format!("{} · only you", view.name))
+				.with_position(view.opened.min)
+				.with_inner_size(view.opened.size())
+				.with_min_inner_size([160.0, 90.0])
+				.with_decorations(false)
+				.with_taskbar(false)
+				.with_active(false)
+				.with_window_level(if view.unpinned {
+					egui::WindowLevel::Normal
+				} else {
+					egui::WindowLevel::AlwaysOnTop
+				});
+			!ctx.show_viewport_immediate(
+				egui::ViewportId::from_hash_of(("self-view", view.id)),
+				builder,
+				|ui, _| view.ui(ui),
+			)
+		});
+	}
+}
+
+impl View {
+	/// One window's surface, like picture-in-picture: the picture (stretched unless fitted),
+	/// moved from anywhere, zoomed by holding left click and scrolling, with its actions
+	/// fading in under the pointer. Returns true when the window asks to close.
+	fn ui(&mut self, ui: &mut egui::Ui) -> bool {
+		let rect = ui.max_rect();
+		ui.painter().rect_filled(rect, 0, egui::Color32::BLACK);
+		let (maximized, mut close) = ui.input(|input| {
+			(
+				input.viewport().maximized == Some(true),
+				input.viewport().close_requested(),
+			)
+		});
+		// The first picture gives the window its shape at about the same area, so a stretched
+		// picture starts undistorted.
+		if !self.sized
+			&& let Some(texture) = self.texture
+		{
+			self.sized = true;
+			let aspect = (texture.size.x / texture.size.y.max(1.0)).clamp(0.25, 4.0);
+			let height = (480.0 * 270.0 / aspect).sqrt();
+			let size = egui::vec2(height * aspect, height)
+				.round()
+				.max(egui::vec2(160.0, 90.0));
+			if !maximized {
+				ui.ctx()
+					.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+			}
+		}
+		// Every window draws in one context: ids carry the window's own id.
+		let id = egui::Id::unique(("self-view", self.id));
+		let surface = ui.interact(rect, id.with("surface"), egui::Sense::click_and_drag());
+		let content = match self.texture {
+			Some(texture) if self.fit => fit_rect(rect, texture.size),
+			_ => rect,
+		};
+		let uv = self.zoom.update(ui, &surface, content);
+		self.zoom.move_window(ui, &surface);
+		if surface.double_clicked() {
+			if self.zoom.zoomed() {
+				self.zoom.reset(ui);
+			} else if cfg!(target_os = "windows") {
+				ui.ctx()
+					.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+			}
+		}
+		let muted = design::palette(ui).muted;
+		match self.texture {
+			Some(texture) => {
+				ui.painter()
+					.image(texture.id, content, uv, egui::Color32::WHITE);
+			}
+			None if self.status.is_empty() => {
+				ui.put(
+					egui::Rect::from_center_size(
+						rect.center() - egui::vec2(0.0, 14.0),
+						egui::Vec2::splat(20.0),
+					),
+					egui::Spinner::new().color(muted),
+				);
+				ui.painter().text(
+					rect.center() + egui::vec2(0.0, 16.0),
+					egui::Align2::CENTER_CENTER,
+					"Loading…",
+					egui::FontId::proportional(12.0),
+					muted,
+				);
+			}
+			None => {}
+		}
+		if !self.status.is_empty() {
+			// The last picture stays, dimmed, under why it stopped.
+			ui.painter()
+				.rect_filled(rect, 0, egui::Color32::from_black_alpha(150));
+			let galley = ui.painter().layout(
+				self.status.to_owned(),
+				egui::FontId::proportional(13.0),
+				egui::Color32::WHITE,
+				(rect.width() - 32.0).max(80.0),
+			);
+			ui.painter().galley(
+				rect.center() - galley.size() * 0.5,
+				galley,
+				egui::Color32::WHITE,
+			);
+		}
+		let hovered = ui
+			.input(|input| input.pointer.hover_pos())
+			.is_some_and(|pointer| rect.contains(pointer));
+		if self.texture.is_some() {
+			self.zoom.badge(ui, id.with("zoom"), content, hovered, true);
+		}
+		let shown = ui
+			.ctx()
+			.animate_bool_with_time(id.with("chrome"), hovered, 0.15);
+		if shown > 0.0 {
+			close |= self.chrome(ui, id, rect, hovered, shown);
+		}
+		if let Some(menu) = egui::Popup::context_menu(&surface)
+			.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+			.show(|ui| self.menu(ui))
+		{
+			close |= menu.inner;
+		}
+		if !maximized {
+			pip_resize(ui, rect);
+		}
+		close
+	}
+
+	/// Close and Keep on top at the top-right, Stretch at the top-left: picture-in-picture's
+	/// plates and places. Returns true when Close is clicked.
+	fn chrome(
+		&mut self,
+		ui: &mut egui::Ui,
+		id: egui::Id,
+		rect: egui::Rect,
+		hovered: bool,
+		shown: f32,
+	) -> bool {
+		const SIZE: f32 = 32.0;
+		let slot = |index: f32, right: bool| {
+			let offset = PIP_INSET + index * (SIZE + 6.0);
+			let x = if right {
+				rect.right() - offset - SIZE
+			} else {
+				rect.left() + offset
+			};
+			egui::Rect::from_min_size(
+				egui::pos2(x, rect.top() + PIP_INSET),
+				egui::Vec2::splat(SIZE),
+			)
+		};
+		let mut close = false;
+		for (index, area) in [slot(0.0, true), slot(1.0, true), slot(0.0, false)]
+			.into_iter()
+			.enumerate()
+		{
+			let response = ui.interact(
+				area,
+				id.with(("button", index)),
+				if hovered {
+					egui::Sense::click()
+				} else {
+					egui::Sense::hover()
+				},
+			);
+			let on = match index {
+				1 => !self.unpinned,
+				2 => !self.fit,
+				_ => false,
+			};
+			chrome_plate(ui, &response, on, shown);
+			let glyph = area.shrink(7.0);
+			let color = egui::Color32::WHITE.gamma_multiply(shown);
+			let (label, hint) = match index {
+				0 => {
+					crate::icons::paint(ui.painter(), crate::icons::Icon::Close, glyph, color);
+					("Close", "Close this window")
+				}
+				1 => {
+					crate::icons::paint(ui.painter(), crate::icons::Icon::Pin, glyph, color);
+					if self.unpinned {
+						("Keep on top", "Keep this window above other windows")
+					} else {
+						("Unpin", "Stop keeping this window above other windows")
+					}
+				}
+				_ => {
+					paint_stretch_glyph(ui.painter(), glyph, color);
+					if self.fit {
+						(
+							"Stretch to fill",
+							"Stretch the picture over the whole window",
+						)
+					} else {
+						("Fit picture", "Show the whole picture at its own shape")
+					}
+				}
+			};
+			response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+			if response.on_hover_text(hint).clicked() {
+				match index {
+					0 => close = true,
+					1 => self.unpinned = !self.unpinned,
+					_ => self.fit = !self.fit,
+				}
+			}
+		}
+		close
+	}
+
+	/// Right-click menu: how the picture fills the window, Keep on top, and Close.
+	fn menu(&mut self, ui: &mut egui::Ui) -> bool {
+		ui.set_width(232.0);
+		let mut stretched = !self.fit;
+		if design::menu_check(ui, "Stretch to fill", &mut stretched).changed() {
+			self.fit = !stretched;
+		}
+		let mut on_top = !self.unpinned;
+		if design::menu_check(ui, "Keep on top", &mut on_top).changed() {
+			self.unpinned = !on_top;
+		}
+		if self.zoom.zoomed()
+			&& design::menu_item(ui, None, "Show the whole picture", false).clicked()
+		{
+			self.zoom.reset(ui);
+			ui.close();
+		}
+		ui.separator();
+		let close = design::menu_item(ui, None, "Close", true).clicked();
+		if close {
+			ui.close();
+		}
+		close
+	}
+}
