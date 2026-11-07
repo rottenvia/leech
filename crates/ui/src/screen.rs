@@ -46,6 +46,8 @@ pub struct ScreenUi {
 	cursor: bool,
 	audio: bool,
 	pub tab: Tab,
+	/// Opened by a right click while live: Stream to yourself alone, without tabs.
+	local_only: bool,
 	/// The screen or window chosen on the Stream to yourself page.
 	local_selected: Option<SourceId>,
 }
@@ -71,28 +73,41 @@ impl Default for ScreenUi {
 			cursor: true,
 			audio: cfg!(target_os = "macos"),
 			tab: Tab::GoLive,
+			local_only: false,
 			local_selected: None,
 		}
 	}
 }
 impl ScreenUi {
-	/// Opens the picker. While a share is live it opens on Stop streaming, with Stream to
-	/// yourself one tab away.
+	/// The share button's left click: stops a share that is starting or live, otherwise opens
+	/// the picker on Go Live with Stream to yourself one tab away.
 	pub(crate) fn launch(&mut self, state: &State) {
+		if self.busy {
+			self.stop();
+		} else {
+			self.open_picker(state, false);
+		}
+	}
+	/// The share button's right click: while a share is starting or live, Stream to yourself
+	/// alone. Otherwise the left click covers both pages.
+	pub(crate) fn launch_local(&mut self, state: &State) {
+		if self.busy {
+			self.open_picker(state, true);
+		}
+	}
+	fn open_picker(&mut self, state: &State, local_only: bool) {
 		let Some(call) = &state.voice.active else {
 			return;
 		};
 		self.context = Some((state.generation, call.channel, call.request));
 		self.open = true;
-		self.tab = Tab::GoLive;
+		self.local_only = local_only;
+		self.tab = if local_only { Tab::OnlyMe } else { Tab::GoLive };
 		self.local_selected = None;
-		if self.busy {
-			if self.sources.is_empty() && !state.demo {
-				self.refresh_requested = true;
-			}
-			return;
+		// The live share keeps its source; the list itself is fetched fresh.
+		if !self.busy {
+			self.selected = None;
 		}
-		self.selected = None;
 		self.sources.clear();
 		if state.demo {
 			self.sources = if cfg!(target_os = "macos") {
@@ -112,7 +127,9 @@ impl ScreenUi {
 					},
 				]
 			};
-			self.selected = self.sources.first().map(|source| source.id);
+			if !self.busy {
+				self.selected = self.sources.first().map(|source| source.id);
+			}
 			self.status = "Offline preview · no screen is captured";
 		} else {
 			self.refresh_requested = true;
@@ -202,7 +219,6 @@ impl ScreenUi {
 		}
 		let mut cancel = false;
 		let mut share = false;
-		let mut stop = false;
 		let local = self.tab == Tab::OnlyMe;
 		let (title, subtitle) = if local {
 			(
@@ -220,8 +236,10 @@ impl ScreenUi {
 			.width(460.0)
 			.show(ctx, |d| {
 				d.scroll(260.0, |ui| {
-					tabs(ui, &mut self.tab);
-					ui.add_space(14.0);
+					if !self.local_only {
+						tabs(ui, &mut self.tab);
+						ui.add_space(14.0);
+					}
 					match self.tab {
 						Tab::GoLive => self.body(ui, state),
 						Tab::OnlyMe => self.local_body(ui, state, views),
@@ -248,17 +266,6 @@ impl ScreenUi {
 						});
 						cancel |= crate::dialog::action(ui, "Done", crate::dialog::Action::Neutral)
 							.clicked();
-					}
-					Tab::GoLive if self.busy => {
-						stop = crate::dialog::action(
-							ui,
-							"Stop streaming",
-							crate::dialog::Action::Danger,
-						)
-						.clicked();
-						cancel |=
-							crate::dialog::action(ui, "Close", crate::dialog::Action::Neutral)
-								.clicked();
 					}
 					Tab::GoLive => {
 						let allowed = !state.offline_preview()
@@ -290,10 +297,7 @@ impl ScreenUi {
 		if share && !cancel {
 			self.request = self.settings().map(Request::Start);
 		}
-		if stop {
-			self.stop();
-		}
-		if cancel || share || stop {
+		if cancel || share {
 			self.open = false;
 		}
 	}
@@ -418,17 +422,6 @@ impl ScreenUi {
 	/// live, the options describe the running share and stay as they are.
 	fn body(&mut self, ui: &mut egui::Ui, state: &State) {
 		let colors = crate::design::palette(ui);
-		if self.busy {
-			status_note(
-				ui,
-				if self.live {
-					"You are live. Stop streaming below, or open Stream to yourself to show something only you see."
-				} else {
-					"Your stream is starting…"
-				},
-			);
-			return;
-		}
 		self.sources_header(ui, state);
 		ui.add_space(6.0);
 		egui::ScrollArea::vertical()
@@ -794,6 +787,29 @@ fn segment(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn left_click_stops_a_live_share_and_right_click_opens_only_stream_to_yourself() {
+		let state = test_support::call_demo_state();
+		let mut screen = ScreenUi::default();
+		// Not live: right click does nothing, left click opens both pages on Go Live.
+		screen.launch_local(&state);
+		assert!(!screen.open);
+		screen.launch(&state);
+		assert!(screen.open && !screen.local_only && screen.tab == Tab::GoLive);
+		screen.open = false;
+		screen.busy = true;
+		screen.launch_local(&state);
+		assert!(screen.open && screen.local_only && screen.tab == Tab::OnlyMe);
+		assert!(
+			screen.request.is_none(),
+			"opening the page never stops the share"
+		);
+		screen.open = false;
+		screen.launch(&state);
+		assert!(matches!(screen.request, Some(Request::Stop)));
+		assert!(!screen.open && !screen.busy);
+	}
 	#[test]
 	fn settings_require_a_current_source_and_offer_high_quality_without_entitlements() {
 		let mut picker = ScreenUi {

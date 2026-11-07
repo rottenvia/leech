@@ -310,6 +310,7 @@ pub struct LocalFrame {
 /// pictures in memory at up to `fps`, the latest one kept. No encoder, no system audio, and
 /// nothing leaves the device.
 pub struct LocalCapture {
+	source: SourceId,
 	stop: Arc<AtomicBool>,
 	latest: Arc<Mutex<Option<LocalFrame>>>,
 }
@@ -397,7 +398,11 @@ impl LocalCapture {
 			start_result
 				.recv()
 				.map_err(|_| "Screen capture could not be started")??;
-			Ok(Self { stop, latest })
+			Ok(Self {
+				source,
+				stop,
+				latest,
+			})
 		}
 		#[cfg(not(target_os = "windows"))]
 		{
@@ -417,6 +422,19 @@ impl LocalCapture {
 	/// The source went away (its window closed) or capture failed.
 	pub fn ended(&self) -> bool {
 		self.stop.load(Ordering::Acquire)
+	}
+
+	/// The source is a minimized window, which draws nothing until it is restored.
+	pub fn minimized(&self) -> bool {
+		#[cfg(target_os = "windows")]
+		{
+			capture::minimized(self.source)
+		}
+		#[cfg(not(target_os = "windows"))]
+		{
+			let _ = self.source;
+			false
+		}
 	}
 }
 
