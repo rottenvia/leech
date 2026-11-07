@@ -3485,6 +3485,28 @@ settings-appearance-settings-call-color-description = Rings and halos around ava
 # Context: appearance_settings
 settings-appearance-settings-choose-call-color = Choose call animation color
 # Context: appearance_settings
+settings-appearance-settings-loading-colors = Loading colors
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-description = The launch screen and upload progress. From theme takes the two main colors of the theme's background picture.
+# Context: appearance_settings; segmented choice
+settings-appearance-settings-loading-colors-theme = From theme
+# Context: appearance_settings; segmented choice
+settings-appearance-settings-loading-colors-custom = Custom
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-background = Loading background
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-bar = Progress bar
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-background-description = Behind the launch screen and under progress bars.
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-bar-description = The bar itself, and the worm on the launch screen.
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-choose-background = Choose the loading background color
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-choose-bar = Choose the progress bar color
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-too-close = These two colors are too close to read against each other, so loading keeps the theme's colors.
+# Context: appearance_settings
 # Context: appearance_settings
 settings-appearance-settings-primary-color = Primary color
 # Context: appearance_settings

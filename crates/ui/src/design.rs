@@ -698,6 +698,11 @@ pub(crate) fn surface_uv(
 	}
 }
 
+/// The active theme's background picture as decoded, before any fit or opacity.
+pub(crate) fn background_image() -> Option<std::sync::Arc<egui::ColorImage>> {
+	BACKGROUND_IMAGE.with(|image| image.borrow().as_ref().map(|(image, _)| image.clone()))
+}
+
 pub fn has_window_background(ui: &egui::Ui) -> bool {
 	BACKGROUND_IMAGE.with(|image| image.borrow().is_some())
 		&& EXTENSION_THEME.get().is_some_and(|palettes| {
@@ -2887,10 +2892,10 @@ pub fn segmented(ui: &mut egui::Ui, labels: &[&str], selected: usize) -> Option<
 		.collect();
 	let height = 32.0;
 	let total = widths.iter().sum::<f32>() + 8.0;
-	let (rect, base) = ui.allocate_exact_size(
-		egui::vec2(total.min(ui.available_width()), height + 8.0),
-		egui::Sense::hover(),
-	);
+	// Always the labels' width: the segments never shrink, so a narrower track would leave
+	// the last one hanging past it, and a settings row could never learn the room it needs.
+	let (rect, base) =
+		ui.allocate_exact_size(egui::vec2(total, height + 8.0), egui::Sense::hover());
 	// Interact before painting so the whole group can be drawn in one pass.
 	let mut x = rect.left() + 4.0;
 	let segments: Vec<(egui::Rect, egui::Response)> = widths

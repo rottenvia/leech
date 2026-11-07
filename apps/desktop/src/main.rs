@@ -2049,6 +2049,19 @@ impl Desktop {
 		}
 		#[cfg(feature = "demo")]
 		if demo
+			&& let Some(rest) = std::env::args()
+				.find_map(|arg| arg.strip_prefix("--demo-loading-custom").map(str::to_owned))
+		{
+			// Custom loading colours: a navy surface with an amber bar, or `=close` for two
+			// too alike to use.
+			messaging.loading_colors = Some(if rest == "=close" {
+				[[60, 60, 80], [80, 80, 104]]
+			} else {
+				[[24, 28, 52], [255, 190, 80]]
+			});
+		}
+		#[cfg(feature = "demo")]
+		if demo
 			&& let Some(code) = std::env::args()
 				.find_map(|arg| arg.strip_prefix("--demo-language=").map(str::to_owned))
 		{
@@ -2252,7 +2265,7 @@ impl Desktop {
 			}
 		}
 		#[cfg(feature = "demo")]
-		if demo && std::env::args().any(|arg| arg == "--demo-sending") {
+		if demo && std::env::args().any(|arg| arg.starts_with("--demo-sending")) {
 			messaging.preview_sending(&cc.egui_ctx, &mut state);
 			state.status = "Offline fixture · synthetic pending message; no upload or send";
 		}
@@ -6691,6 +6704,8 @@ impl Desktop {
 }
 impl Desktop {
 	fn sync_customization(&mut self, ctx: &egui::Context) {
+		// Before the splash colours are saved, so the next launch shows the Custom pair.
+		ui::loading::set_custom(self.messaging.loading_colors);
 		if self.messaging.primary_color != ui::design::primary_color() {
 			ui::design::set_primary_color(self.messaging.primary_color);
 			ui::design::apply(ctx);
@@ -6855,6 +6870,14 @@ impl eframe::App for Desktop {
 		);
 		self.messaging.sync_reading_zoom(ctx);
 		self.poll(ctx);
+		#[cfg(feature = "demo")]
+		if self.state.demo && std::env::args().any(|arg| arg == "--demo-sending=grow") {
+			// Bytes leave in nine chunks over eight seconds, then the upload starts over.
+			let share = ((ctx.input(|input| input.time) % 10.0) as f32 - 1.0) / 8.0;
+			self.messaging
+				.preview_upload_progress((share.clamp(0.0, 1.0) * 9.0).floor() / 9.0);
+			ctx.request_repaint_after(Duration::from_millis(50));
+		}
 		self.sync_fonts(ctx);
 		self.hotkeys.sync(&self.messaging.keybinds, &self.runtime);
 		self.messaging.global_keybind_status = self.hotkeys.status();

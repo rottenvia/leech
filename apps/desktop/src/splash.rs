@@ -35,13 +35,25 @@ pub struct Splash {
 	fill: f32,
 	/// UI time the fade began.
 	leaving: Option<f64>,
-	/// The theme's colours, saved by the last session; `None` paints with the context's.
+	/// The theme's colours, saved by the last session; `None` paints with the live ones.
 	colors: Option<local_store::SplashColors>,
 }
 
-/// The live theme's colours for the splash. The canvas is the opaque one controls use, so a
-/// theme's background image or the window's translucency never reaches the splash.
+/// The live theme's colours for the splash: the loading colours (a background picture's two
+/// main ones, or the Custom pair) when there are any, else the palette. The canvas is the
+/// opaque one controls use, so the picture itself or the window's translucency never
+/// reaches the splash.
 pub fn theme_colors(ctx: &egui::Context) -> local_store::SplashColors {
+	if let Some(loading) = ui::loading::colors() {
+		return local_store::SplashColors {
+			accent: loading.bar.to_array(),
+			canvas: loading.surface.to_array(),
+			text: loading.text.to_array(),
+			raised: loading.track.to_array(),
+			muted: loading.muted.to_array(),
+			dark: loading.dark,
+		};
+	}
 	let palette = ui::design::palette_for(ctx);
 	local_store::SplashColors {
 		accent: palette.accent.to_array(),
@@ -146,7 +158,11 @@ impl Splash {
 			.leaving
 			.map_or(0.0, |start| ((time - start) as f32 / FADE).clamp(0.0, 1.0));
 
-		let [accent, text_strong, raised, muted, canvas] = match self.colors {
+		// With nothing saved, the live loading colours of a theme that loaded behind it.
+		let colors = self
+			.colors
+			.or_else(|| ui::loading::colors().map(|_| theme_colors(ui.ctx())));
+		let [accent, text_strong, raised, muted, canvas] = match colors {
 			Some(saved) => [
 				saved.accent,
 				saved.text,
@@ -166,9 +182,7 @@ impl Splash {
 				]
 			}
 		};
-		let dark = self
-			.colors
-			.map_or(ui.visuals().dark_mode, |saved| saved.dark);
+		let dark = colors.map_or(ui.visuals().dark_mode, |saved| saved.dark);
 		ui::design::window_drag(ui, rect);
 		let painter = ui.painter();
 		painter.rect_filled(rect, 0, canvas);
@@ -712,6 +726,45 @@ mod tests {
 			output.textures_delta.clear();
 		}
 		assert!(finished, "a finished splash fades out within four seconds");
+	}
+
+	#[test]
+	fn a_theme_picture_lends_the_splash_its_two_main_colours() {
+		let ctx = egui::Context::default();
+		// Near-black with a broad near-white band, like a black-and-white poster.
+		let mut image = egui::ColorImage::filled([200, 300], Color32::from_gray(20));
+		for pixel in &mut image.pixels[200 * 100..200 * 160] {
+			*pixel = Color32::from_gray(235);
+		}
+		ui::design::set_background_image(&ctx, Some(std::sync::Arc::new(image)));
+		let colors = theme_colors(&ctx);
+		assert_eq!(
+			(colors.canvas, colors.accent),
+			([20, 20, 20, 255], [235, 235, 235, 255])
+		);
+		assert!(colors.dark);
+		// A splash with nothing saved yet paints with them too.
+		let mut splash = Splash::new(0, None);
+		let input = egui::RawInput {
+			screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, SIZE.into())),
+			..Default::default()
+		};
+		let output = ctx.run_ui(input, |ui| {
+			splash.show(
+				ui,
+				&Look::Starting {
+					stage: None,
+					done: false,
+				},
+			);
+		});
+		assert!(output.shapes.iter().any(|clipped| matches!(
+			&clipped.shape,
+			egui::Shape::Rect(rect) if rect.fill == Color32::from_gray(20)
+		)));
+		output.drop_without_applying_deltas();
+		ui::design::set_background_image(&ctx, None);
+		assert_ne!(theme_colors(&ctx).canvas, colors.canvas);
 	}
 
 	#[test]
