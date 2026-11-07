@@ -1544,6 +1544,7 @@ dependencies = [
 name = "discord-voice"
 version = "0.1.21"
 dependencies = [
+ "base64 0.22.1",
  "block2 0.6.2",
  "chacha20poly1305",
  "client-core",
@@ -1576,7 +1577,9 @@ dependencies = [
  "rtrb",
  "screencapturekit",
  "serde_json",
+ "sha2 0.10.9",
  "sha3",
+ "socket2",
  "sonora",
  "tokio",
  "tokio-tungstenite",
@@ -1585,6 +1588,7 @@ dependencies = [
  "windows 0.61.3",
  "windows-capture",
  "windows-core 0.61.2",
+ "x25519-dalek",
  "zbus",
  "zeroize",
 ]

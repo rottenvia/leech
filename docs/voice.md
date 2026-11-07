@@ -543,6 +543,72 @@ From 0.1.21 (November 7, 2026):
   download at a time, at most 96 MB (2 MB for a page), 30 s and 5 redirects.
 - **Zoom** moves a tenth per wheel notch (100 %, 110 %, 120 %…), in shares too.
 
+## Remote control — November 8, 2026
+
+From 0.1.22 one Leech user can control another's PC while both are in the same call. The
+call bar has a remote control button between screen share and More. Left click offers
+**ACCESS** (ask to control their PC) and **CONTROL** (let them control yours), and asks who
+when more than two people are in the call.
+
+**Signalling.** The two Leech clients trade connection offers through their direct
+message: silent messages (`@silent`) carrying a marker (`U+2063 lr1 <kind> <session> <offer>`)
+that Leech never shows, never notifies and never counts as unread
+(`client-core/src/remote.rs`). Each sender deletes its own signal as soon as Discord confirms
+it, so other clients may show it for a moment. Signals are accepted only from someone in this
+device's connected call, through their one-to-one DM; a missing DM is opened without
+navigating to it. Kinds: `ask`, `give`, `yes` (with the responder's offer) and `no`.
+
+**Flow.** Access: the asker's waiting window animates while the other side gets Leech's own
+notification (bottom right, always on top, a 15 second countdown ring; it declines when the
+countdown ends, the × declines too). A click opens the answer in Leech. Accepting connects at
+once and opens the setup: keyboard only, mouse only or full control, whether the PC's sound
+goes along, and one pause key, then a warning to remember it ("don't warn me again" skips
+it next time). Finish starts control. Control: the one offering sets up first, then the other
+side answers the same notification. The asker gives up after 60 seconds.
+
+**While controlled.** The pause key works from anywhere (a low-level keyboard hook) and
+pauses or resumes the controller at once; the controller is told. Left click on the button
+ends control; right click opens Access, where the permission changes live or Disable ends
+control, audio switches, and Pause/Resume sits next to End control.
+
+**Controlling.** The other screen opens fullscreen on this monitor with nothing over it but a
+small label at the top right ("Full control · Name's PC"), which a key chosen with right
+click on the button hides. The picture keeps the other screen's shape: a smaller monitor here
+sees it scaled down, the encoder's black bars never show, and the pointer maps exactly onto
+the other screen. Escape gives Leech back and shrinks the view to a window that only
+shows; a double-click returns to control. Shift+Escape sends Escape. The Windows key stops
+control. While a game there hides its pointer, raw motion drives it and this pointer is
+confined and hidden (after a quarter second, so typing does not flicker it).
+
+**Transport** (`discord-voice/src/remote/`). Direct UDP between the two PCs: each offer
+carries a session id, an X25519 key and candidate addresses (the STUN-mapped public address
+from `stun.l.google.com:19302` / `stun.cloudflare.com:3478`, plus local and VPN addresses).
+Both sides punch every 50 ms for up to 10 s; the first authenticated packet picks the path.
+Keys per direction come from the shared secret and session id (ChaCha20-Poly1305, counter
+nonces, replay window of 64). Keepalives every second; 6 s of silence ends the session.
+
+- **Video:** the primary display, captured and encoded like a Go Live share (1080p60, or
+  720p60 for smaller displays, low-latency CBR without B-frames, no cursor drawn: the
+  controller's own pointer is the cursor). Frames go in datagrams of at most 1200 bytes,
+  keyframes paced 32 fragments per millisecond. An incomplete frame is dropped after 150 ms
+  or when a newer one completes, then frames wait for a keyframe, asked at most every 300 ms.
+  Loss reports every 500 ms scale the bitrate ×0.75 above 3 % loss and ×1.08 below 1 %,
+  between 1 Mbps and the share cap, from 8 Mbps.
+- **Audio:** the PC's sound as 20 ms Opus frames, only while allowed; the controller plays it
+  on the default output with a 60 ms prefill and drops above 200 ms.
+- **Input:** batched per frame, each datagram sent twice and repeating the previous batch;
+  the controlled PC applies batches once, in order, through `SendInput` (scan codes, so games
+  see keys; absolute moves over the virtual desktop that reach every edge pixel; relative
+  moves while its pointer is hidden). Every 100 ms the controller sends what it holds, so a
+  lost key-up never leaves a key down. Pausing, a permission change and the end release
+  everything held.
+- Media and input run on the link's own thread and runtime with the 1 ms timer and MMCSS
+  priority, like calls, so a game's load does not delay them.
+
+Not verified on real networks yet: NAT traversal beyond loopback, behaviour under real loss.
+Windows only for being controlled; injection cannot reach elevated windows, the UAC prompt
+or the lock screen unless Leech itself is elevated.
+
 ## Screen sharing
 
 In a connected call, select **Share your screen**, choose a display/window, 480p, 720p or 1080p, 15/30/60 fps, cursor visibility and optional **Share system audio**, then select **Share screen**. The screen button changes to **Stop sharing** while starting/sharing; it also remains available in the compact call controls. Call microphone controls remain independent. All presets are selectable without Nitro, but Discord acceptance and sustained frame rate are not guaranteed.

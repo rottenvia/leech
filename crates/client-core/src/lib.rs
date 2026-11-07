@@ -28,6 +28,7 @@ pub mod presence;
 pub mod profile;
 pub mod reactions;
 pub mod read_state;
+pub mod remote;
 mod replies;
 pub use replies::{HistoryNavigation, Reply, ReplyDeletions};
 pub mod group_actions;
@@ -690,6 +691,7 @@ pub struct State {
 	pub premium_type: u8,
 	pub stickers: stickers::Stickers,
 	pub interactions: interactions::Interactions,
+	pub remote: remote::Remote,
 	pub application_commands: application_commands::Catalog,
 	pub messaging_permissions: messaging_permissions::Settings,
 	pub guild_folders: Option<model::guild_folders::Settings>,
@@ -918,6 +920,7 @@ impl Default for State {
 			premium_type: 0,
 			stickers: Default::default(),
 			interactions: Default::default(),
+			remote: Default::default(),
 			application_commands: Default::default(),
 			messaging_permissions: Default::default(),
 			guild_folders: None,
@@ -2310,11 +2313,14 @@ impl State {
 	}
 	fn apply_with_permissions(
 		&mut self,
-		envelope: Envelope,
+		mut envelope: Envelope,
 		prepared_permissions: Option<permissions::Permissions>,
 	) {
 		self.reply_deletions.0.clear();
 		if envelope.generation != self.generation {
+			return;
+		}
+		if self.intercept_remote(&mut envelope.event) {
 			return;
 		}
 		if self.handle_private_message_event(&envelope.event) {

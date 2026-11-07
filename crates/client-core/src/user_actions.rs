@@ -219,6 +219,8 @@ pub struct Actions {
 	// Friendship is required only for the existing friend-only navigation callers.
 	dm_origin: Option<(Option<Id>, u64, bool)>,
 	opened_dm: Option<(Id, Id)>,
+	/// A direct message opened for remote control signalling, which never navigates.
+	remote_dm: Option<Id>,
 	/// One-shot error toast text, also used for message deletes that the service refused.
 	pub(crate) status: Option<&'static str>,
 }
@@ -773,6 +775,17 @@ impl State {
 		self.status = "Opening direct message…";
 		Some(command)
 	}
+	/// Opens a direct message for remote control signalling without navigating to it.
+	pub(crate) fn request_remote_dm(&mut self, user: Id) -> Option<Command> {
+		if !self.dm_target_allowed(user, false) {
+			return None;
+		}
+		let command = self.request_user_action(Action::OpenDm(user))?;
+		self.user_actions.dm_origin = None;
+		self.user_actions.opened_dm = None;
+		self.user_actions.remote_dm = Some(user);
+		Some(command)
+	}
 	/// Consume one confirmed DM target without overriding navigation made during the request.
 	pub fn select_opened_dm(&mut self) -> Option<Command> {
 		let (channel, user) = self.user_actions.opened_dm.take()?;
@@ -918,6 +931,7 @@ impl State {
 				{
 					return Ok(());
 				}
+				let remote = self.user_actions.remote_dm.take() == Some(user);
 				let result = result.and_then(|channel| {
 					if channel.id.0 == 0
 						|| channel.guild.is_some()
@@ -933,12 +947,15 @@ impl State {
 								|| known.recipients[0].webhook
 						}) {
 						Err(Failure::Ambiguous)
-					} else if self
-						.user_actions
-						.dm_origin
-						.is_none_or(|(_, _, friend_only)| {
-							!self.dm_target_allowed(user, friend_only)
-						}) {
+					} else if if remote {
+						!self.dm_target_allowed(user, false)
+					} else {
+						self.user_actions
+							.dm_origin
+							.is_none_or(|(_, _, friend_only)| {
+								!self.dm_target_allowed(user, friend_only)
+							})
+					} {
 						Err(Failure::Forbidden)
 					} else {
 						Ok(channel)

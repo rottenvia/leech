@@ -45,6 +45,7 @@ mod post_menu_demo;
 mod proxy_auth;
 mod reading_settings;
 mod registered_games;
+mod remote;
 #[cfg(feature = "demo")]
 mod rendering_demo;
 mod screen;
@@ -1033,6 +1034,7 @@ struct Desktop {
 	video: video::Video,
 	/// Stream to yourself: captures and decoders behind the windows only this device shows.
 	self_views: self_view::SelfViews,
+	remote: remote::Remote,
 	/// Synthetic stream/camera textures the demo view borrows by id.
 	_demo_textures: Vec<egui::TextureHandle>,
 	/// The synthetic screen share, decoded-video shaped (`--demo-call-stream`).
@@ -2440,6 +2442,7 @@ impl Desktop {
 			audio: audio::Audio::default(),
 			video: video::Video::default(),
 			self_views: self_view::SelfViews::default(),
+			remote: remote::Remote::default(),
 			_demo_textures: demo_textures,
 			_demo_stream: demo_stream,
 			demo_video_autoplay: if std::env::args().any(|arg| arg == "--demo-video-paused") {
@@ -7037,6 +7040,22 @@ impl eframe::App for Desktop {
 			self.runtime.handle(),
 			&self.window,
 		);
+		let remote = self.remote.poll(
+			&mut self.messaging,
+			&mut self.state,
+			ctx,
+			self.runtime.handle(),
+		);
+		for command in remote.commands {
+			self.command(command);
+		}
+		if remote.focus {
+			self.tray_window.show(ctx);
+		}
+		// The notification and the controller's window show while Leech sits in the tray.
+		if self.tray_window.hidden && self.messaging.remote.shows_windows() {
+			ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
+		}
 		let audio = self.audio.poll();
 		let player = self.messaging.audio();
 		player.position = audio.position.as_secs_f64();
@@ -7117,11 +7136,13 @@ impl eframe::App for Desktop {
 		let size = ctx.content_rect().size() * ctx.zoom_factor();
 		let [width, height] = app_settings::MIN_WINDOW_SIZE.map(|size| size as f32 * 0.5);
 		if ctx.input(|input| input.viewport().minimized == Some(true))
+			|| self.tray_window.hidden
 			|| size.x < width
 			|| size.y < height
 		{
 			self.messaging.show_voice_pip(&ctx, &mut self.state);
 			self.messaging.self_views.show(&ctx);
+			self.messaging.show_remote(&ctx, &self.state);
 			return;
 		}
 		let title_bar_height = if self.login.is_some() || self.login_preview {
@@ -7512,6 +7533,7 @@ impl eframe::App for Desktop {
 				self.messaging.notification_sound_status = "Could not save device notification settings. Changes apply only until restart.";
 			}
 			let mut commands = self.messaging.show(ui, &mut self.state);
+			self.messaging.show_remote(&ctx, &self.state);
 			self.extensions.cancel_stale_message_events(&self.state);
 			self.choose_interaction_files(&ctx);
 			if let Some(command) = self.captcha.sync(

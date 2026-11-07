@@ -95,6 +95,19 @@ pub struct AppPreferences {
 	pub image_cache: model::CachePreferences,
 	/// The last theme's colours for the launch splash, which shows before themes load.
 	pub splash_colors: Option<SplashColors>,
+	/// Keys remembered for remote control.
+	pub remote_keys: RemoteKeys,
+}
+/// Remote control keys as a low-level keyboard hook reports them: scan code and extended flag.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct RemoteKeys {
+	/// Pauses the controller while this PC is controlled.
+	pub pause: Option<(u16, bool)>,
+	/// Hides the label over a controlled screen.
+	pub overlay: Option<(u16, bool)>,
+	/// The pause key warning was dismissed for good.
+	pub skip_warning: bool,
 }
 impl Default for AppPreferences {
 	fn default() -> Self {
@@ -137,6 +150,7 @@ impl Default for AppPreferences {
 			cosmetics: Default::default(),
 			image_cache: Default::default(),
 			splash_colors: None,
+			remote_keys: RemoteKeys::default(),
 		}
 	}
 }
@@ -165,6 +179,10 @@ impl AppPreferences {
 			&& self
 				.splash_colors
 				.is_none_or(|colors| colors.canvas[3] == u8::MAX)
+			&& [self.remote_keys.pause, self.remote_keys.overlay]
+				.into_iter()
+				.flatten()
+				.all(|(scan, _)| scan != 0 && scan < 0x200)
 			&& [&self.voice_input, &self.voice_output]
 				.into_iter()
 				.all(|value| value.as_ref().is_none_or(|value| value.len() <= 1024))

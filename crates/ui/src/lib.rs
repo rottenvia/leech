@@ -96,6 +96,7 @@ mod profile_edit;
 mod reactions;
 mod reading;
 mod registered_games;
+pub mod remote;
 pub mod screen;
 pub mod scroll;
 mod search;
@@ -399,6 +400,8 @@ pub struct MessagingUi {
 	pub screen: screen::ScreenUi,
 	/// Stream to yourself: pictures only this device shows, each in its own window.
 	pub self_views: self_view::SelfViews,
+	/// Remote control of another Leech user's PC in the call, or of this one.
+	pub remote: remote::Remote,
 	/// The main window is minimized, hidden to the tray or closing: nothing in it shows.
 	pub window_hidden: bool,
 	pub voice_camera_available: bool,
