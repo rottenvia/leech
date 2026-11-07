@@ -20,6 +20,14 @@ use ui::self_view::{Kind, MAX_VIEWS, Request};
 
 /// Screens and windows refresh at most this often: a widget, not a stream.
 const CAPTURE_FPS: u32 = 30;
+/// A capture with no picture this long after it started is waiting on an app that draws
+/// nothing while hidden.
+const FIRST_PICTURE: Duration = Duration::from_secs(3);
+const MINIMIZED: &str = "This window is minimized, and Windows draws nothing for a minimized window. It shows here again once restored.\n\n\
+	A game in exclusive fullscreen minimizes when you click away: set it to borderless or fullscreen windowed to keep it showing.";
+const NOT_DRAWING: &str = "Nothing to show yet: this app draws nothing while it is hidden. Some games and browsers stop drawing when another window covers them.\n\n\
+	Bring it to the front once, or set a game to borderless or fullscreen windowed.";
+const GONE: &str = "This screen or window is no longer available";
 /// Longest edge kept for a still image; larger ones are scaled down once when they load.
 const MAX_EDGE: u32 = 3840;
 /// Longest edge of animation frames, and the decoded bytes one animation may keep.
@@ -31,7 +39,8 @@ const MAX_IMAGE_FILE: u64 = 96 * 1024 * 1024;
 const VIDEO_EXTENSIONS: [&str; 7] = ["mp4", "m4v", "mov", "wmv", "avi", "mkv", "webm"];
 
 enum Source {
-	Capture(LocalCapture),
+	/// With when it started, for the first-picture wait.
+	Capture(LocalCapture, Instant),
 	Video(VideoLoop),
 	/// A still image is one frame; an animation loops through its frames and delays.
 	Frames {
@@ -121,7 +130,13 @@ impl SelfViews {
 							} else {
 								Kind::Screen
 							};
-							self.add(views, ctx, name, kind, Source::Capture(capture));
+							self.add(
+								views,
+								ctx,
+								name,
+								kind,
+								Source::Capture(capture, Instant::now()),
+							);
 						}
 						Err(error) => views.status = error,
 					}
@@ -199,12 +214,26 @@ impl SelfViews {
 				continue;
 			};
 			match &mut local.source {
-				Source::Capture(capture) => {
+				Source::Capture(capture, started) => {
 					if let Some(frame) = capture.take() {
 						view.texture = upload(&mut local.texture, ctx, &frame);
 					}
-					if capture.ended() {
-						view.status = "This screen or window is no longer available";
+					let minimized = capture.minimized();
+					let waiting = view.texture.is_none() && started.elapsed() >= FIRST_PICTURE;
+					// A minimized or silent source says why instead of loading forever; the
+					// last picture stays under it, and it clears once pictures come again.
+					view.status = if capture.ended() {
+						GONE
+					} else if minimized {
+						MINIMIZED
+					} else if waiting {
+						NOT_DRAWING
+					} else {
+						""
+					};
+					if !capture.ended() && (minimized || view.texture.is_none()) {
+						// Restoring a window wakes nothing here, so look again.
+						ctx.request_repaint_after(Duration::from_millis(500));
 					}
 				}
 				Source::Video(video) => {

@@ -201,14 +201,32 @@ impl View {
 			// The last picture stays, dimmed, under why it stopped.
 			ui.painter()
 				.rect_filled(rect, 0, egui::Color32::from_black_alpha(150));
-			let galley = ui.painter().layout(
-				self.status.to_owned(),
-				egui::FontId::proportional(13.0),
-				egui::Color32::WHITE,
-				(rect.width() - 32.0).max(80.0),
+			let layout = |text: &str| {
+				let mut job = egui::text::LayoutJob::simple(
+					text.to_owned(),
+					egui::FontId::proportional(13.0),
+					egui::Color32::WHITE,
+					(rect.width() - 32.0).max(80.0),
+				);
+				job.halign = egui::Align::Center;
+				ui.painter().layout_job(job)
+			};
+			// A small window keeps the first paragraph, the reason, without the advice.
+			let mut galley = layout(self.status);
+			if galley.size().y > rect.height() - 24.0
+				&& let Some((reason, _)) = self.status.split_once("\n\n")
+			{
+				galley = layout(reason);
+			}
+			// A panel keeps the note readable over a busy picture.
+			ui.painter().rect_filled(
+				egui::Rect::from_center_size(rect.center(), galley.size() + egui::vec2(28.0, 20.0)),
+				8,
+				egui::Color32::from_black_alpha(190),
 			);
+			// Centred rows sit around x = 0, so place the galley by its own rect.
 			ui.painter().galley(
-				rect.center() - galley.size() * 0.5,
+				rect.center() - galley.rect.center().to_vec2(),
 				galley,
 				egui::Color32::WHITE,
 			);

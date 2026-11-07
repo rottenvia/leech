@@ -4222,7 +4222,7 @@ impl MessagingUi {
 						&& state.can_stream(call.channel)
 				}));
 		let label = if self.screen.busy {
-			"Stream options"
+			"Stop sharing"
 		} else {
 			"Share your screen"
 		};
@@ -4241,13 +4241,13 @@ impl MessagingUi {
 			stage_tones().text.lerp_to_gamma(colors.accent_text, fill),
 			label,
 			if enabled {
-				self.screen
-					.capture_status
-					.unwrap_or(if self.screen.status.is_empty() {
-						label
-					} else {
-						self.screen.status
-					})
+				self.screen.capture_status.unwrap_or(if self.screen.busy {
+					"Stop sharing · right-click to show something only you see"
+				} else if self.screen.status.is_empty() {
+					label
+				} else {
+					self.screen.status
+				})
 			} else {
 				"Screen sharing requires a connected call and video permission on a supported desktop."
 			},
@@ -4301,6 +4301,8 @@ impl MessagingUi {
 		}
 		if response.clicked() {
 			self.screen.launch(state);
+		} else if response.secondary_clicked() {
+			self.screen.launch_local(state);
 		}
 	}
 
@@ -5307,6 +5309,7 @@ impl MessagingUi {
 					&& state.can_stream(channel_id));
 				let mut camera_clicked = false;
 				let mut share_clicked = false;
+				let mut share_local = false;
 				ui.horizontal(|ui| {
 					ui.spacing_mut().item_spacing.x = 8.0;
 					// Two equal halves. Camera and its settings chevron form one split cell
@@ -5359,7 +5362,7 @@ impl MessagingUi {
 						"voice-voice-card-section-camera-settings",
 					);
 					self.camera_settings_popup(&camera_settings, state.demo);
-					share_clicked = card_action(
+					let share = card_action(
 						ui,
 						width,
 						whole,
@@ -5367,7 +5370,7 @@ impl MessagingUi {
 						can_share,
 						self.screen.busy,
 						if self.screen.busy {
-							"Stream options"
+							"Stop sharing"
 						} else {
 							"Share your screen"
 						},
@@ -5375,21 +5378,24 @@ impl MessagingUi {
 							if let Some(status) = self.screen.capture_status {
 								status
 							} else if self.screen.busy {
-								"Stop streaming, or show something only you see"
+								"Stop sharing · right-click to show something only you see"
 							} else {
 								"Share a screen or window"
 							}
 						} else {
 							"Screen sharing requires a connected call and video permission on a supported desktop."
 						},
-					)
-					.clicked();
+					);
+					share_clicked = share.clicked();
+					share_local = share.secondary_clicked();
 				});
 				if camera_clicked && state.set_call_camera(!camera) {
 					self.voice_camera_status = "";
 				}
 				if share_clicked {
 					self.screen.launch(state);
+				} else if share_local {
+					self.screen.launch_local(state);
 				}
 			});
 		if connected && ui.is_rect_visible(ui.max_rect()) {
@@ -8966,7 +8972,8 @@ mod tests {
 		);
 		assert!(frame(&mut screen, 1.5) > 0.5);
 		assert_eq!(frame(&mut screen, 2.0), 1.0);
-		screen.stop();
+		// Left click on the share button while live stops at once, as before 0.1.19.
+		screen.launch(&state);
 		assert!(matches!(screen.request, Some(crate::screen::Request::Stop)));
 		assert!(!screen.busy);
 		assert_eq!(
