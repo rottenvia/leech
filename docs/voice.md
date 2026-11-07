@@ -514,6 +514,35 @@ shows these windows like any other window, so on one monitor they work as an ove
 Showing a screen or window to yourself is Windows-only; files and the clipboard work
 everywhere.
 
+From 0.1.21 (November 7, 2026):
+
+- **Minimized windows keep drawing.** Windows sends no pictures for a minimized window, and
+  many apps (browsers, Spotify) stop painting while hidden. While a minimized window is
+  shown to yourself, Leech parks it: restored without activation, see-through (layered
+  alpha 1 of 255), click-through and topmost, so it paints and the capture sees it whole.
+  Activating it from the taskbar or Alt+Tab gives it back as it was; minimizing parks it
+  again; closing the view minimizes it again with its old placement. A window that fills its
+  display when restored (a game) and one drawing its own per-pixel alpha are never parked
+  and say so instead. Parked windows carry window properties, so a Leech that crashed gives
+  them back at its next start.
+- **Crop** (chrome button and menu) keeps part of the picture, chosen over the whole one
+  with corner and side handles; the texture is only sampled differently, so nothing is
+  rescaled. Picture-in-picture streams crop the same way.
+- **Opacity** (menu, 20–100 %) fades the whole window, in picture-in-picture too. On
+  Windows every window now presents through DirectComposition so its alpha reaches the
+  desktop; the main window still paints opaque pixels unless its own transparency is on.
+- **Remove background** (chrome button and menu, images and GIFs only). A GIF or PNG with
+  see-through pixels opens without a backdrop. An opaque one cuts out the plain colour most
+  of its border shares, flood-filled from the border so the same colour inside the subject
+  stays, with a soft edge; a picture without a plain border (a photo) stays whole. Masks
+  are made once on a worker thread.
+- **Pasting links.** Ctrl+V on the Stream to yourself page goes there, not to the message
+  behind the dialog. A browser's Copy image pastes the address it came from, so a GIF
+  arrives whole instead of as its first frame (the copied bitmap is the fallback); a copied
+  Giphy page link becomes its GIF, and other pages give their `og:image`/`og:video`. One
+  download at a time, at most 96 MB (2 MB for a page), 30 s and 5 redirects.
+- **Zoom** moves a tenth per wheel notch (100 %, 110 %, 120 %…), in shares too.
+
 ## Screen sharing
 
 In a connected call, select **Share your screen**, choose a display/window, 480p, 720p or 1080p, 15/30/60 fps, cursor visibility and optional **Share system audio**, then select **Share screen**. The screen button changes to **Stop sharing** while starting/sharing; it also remains available in the compact call controls. Call microphone controls remain independent. All presets are selectable without Nitro, but Discord acceptance and sustained frame rate are not guaranteed.

@@ -377,6 +377,8 @@ pub struct MessagingUi {
 	pub pasted_text: Option<(Id, egui::Id, String)>,
 	paste_key_handled: bool,
 	pasted_text_frame: Option<u64>,
+	/// A paste on the Stream to yourself page was taken this key press.
+	local_paste_held: bool,
 	pub remove_attachment_requested: bool,
 	pub cancel_upload_requested: bool,
 	pub upload_busy: bool,
@@ -433,6 +435,9 @@ pub struct MessagingUi {
 	voice_pip_unpinned: bool,
 	/// The picture-in-picture window fills its whole area, stretched, instead of letterboxing.
 	voice_pip_stretch: bool,
+	/// The part of the share picture-in-picture keeps, and its opacity in percent (unset: 100).
+	voice_pip_crop: voice::PictureCrop,
+	voice_pip_opacity: Option<u16>,
 	/// Zoom into the watched share (hold left click and scroll), and whose share it is for.
 	voice_stream_zoom: voice::PictureZoom,
 	voice_stream_zoom_of: Option<Id>,
@@ -646,6 +651,49 @@ enum MentionWrite {
 }
 
 impl MessagingUi {
+	/// While the Stream to yourself page is open, Ctrl+V shows the clipboard there in a new
+	/// window instead of attaching it to the message being written behind the dialog.
+	fn take_local_paste(&mut self, ctx: &egui::Context) {
+		if !(self.screen.open && self.screen.tab == screen::Tab::OnlyMe) {
+			self.local_paste_held = false;
+			return;
+		}
+		let (mut paste, mut held) = (false, self.local_paste_held);
+		ctx.input_mut(|input| {
+			input.events.retain(|event| {
+				let (trigger, release) = match event {
+					egui::Event::Paste(_) | egui::Event::PasteImage(_) => (true, false),
+					egui::Event::Key {
+						key: egui::Key::V,
+						pressed,
+						modifiers,
+						..
+					} => {
+						let chord = !modifiers.shift && (modifiers.ctrl || modifiers.command);
+						// A release ends the press even when Ctrl went up first.
+						if !chord && (*pressed || !held) {
+							return true;
+						}
+						(*pressed, !*pressed)
+					}
+					_ => return true,
+				};
+				if trigger && !held {
+					paste = true;
+					held = true;
+				} else if release {
+					// eframe takes the key press for its own paste, so a release with no
+					// paste before it (a clipboard holding only files) pastes too.
+					paste |= !std::mem::take(&mut held);
+				}
+				false
+			});
+		});
+		self.local_paste_held = held;
+		if paste {
+			self.self_views.requests.push(self_view::Request::Paste);
+		}
+	}
 	pub fn interaction_modal_id(&self) -> Option<Id> {
 		self.interaction_components.modal_id()
 	}
@@ -4217,6 +4265,7 @@ impl MessagingUi {
 	}
 
 	pub fn show(&mut self, ui: &mut egui::Ui, state: &mut State) -> Vec<Command> {
+		self.take_local_paste(ui.ctx());
 		self.avatars.cosmetics = self.cosmetics;
 		let cosmetics_refresh = state.set_profile_cosmetics(self.cosmetics);
 		self.timeline.download.gif_favorites = state
@@ -5730,6 +5779,66 @@ impl MessagingUi {
 mod composer_tests {
 	use super::*;
 	use client_core::MAX_CONTENT;
+
+	#[test]
+	fn ctrl_v_on_the_stream_to_yourself_page_shows_the_clipboard_there_once() {
+		let ctx = egui::Context::default();
+		let mut state = edit_state();
+		let mut view = MessagingUi::default();
+		let ctrl = egui::Modifiers::CTRL;
+		let key = |pressed, modifiers| egui::Event::Key {
+			key: egui::Key::V,
+			physical_key: None,
+			pressed,
+			repeat: false,
+			modifiers,
+		};
+		let mut frame = |view: &mut MessagingUi, events: Vec<egui::Event>| {
+			view.screen.open = true;
+			view.screen.tab = screen::Tab::OnlyMe;
+			let output = ctx.run_ui(
+				egui::RawInput {
+					screen_rect: Some(egui::Rect::from_min_size(
+						egui::Pos2::ZERO,
+						egui::vec2(1000.0, 700.0),
+					)),
+					events,
+					focused: true,
+					..Default::default()
+				},
+				|ui| {
+					view.show(ui, &mut state);
+				},
+			);
+			output.drop_without_applying_deltas();
+			let pasted = view
+				.self_views
+				.requests
+				.drain(..)
+				.filter(|request| matches!(request, self_view::Request::Paste))
+				.count();
+			assert!(
+				view.attachment_paste_requested.is_none(),
+				"nothing reaches the composer"
+			);
+			pasted
+		};
+		// eframe's paste and the key release of the same press.
+		assert_eq!(
+			frame(
+				&mut view,
+				vec![egui::Event::Paste("x".into()), key(false, ctrl)]
+			),
+			1
+		);
+		// A clipboard holding only files sends the release alone.
+		assert_eq!(frame(&mut view, vec![key(false, ctrl)]), 1);
+		// Held down: repeated pastes, then the release after Ctrl went up, count once.
+		assert_eq!(frame(&mut view, vec![egui::Event::Paste("x".into())]), 1);
+		assert_eq!(frame(&mut view, vec![egui::Event::Paste("x".into())]), 0);
+		assert_eq!(frame(&mut view, vec![key(false, egui::Modifiers::NONE)]), 0);
+		assert_eq!(frame(&mut view, vec![egui::Event::Paste("x".into())]), 1);
+	}
 
 	#[test]
 	fn paste_into_an_idle_conversation_focuses_composer_without_sending() {

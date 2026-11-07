@@ -3,6 +3,8 @@ use super::egui;
 
 pub struct State {
 	pub hidden: bool,
+	/// Shown again from the tray, until the desktop takes it; quitting never counts.
+	reopened: bool,
 	exiting: bool,
 	close_after_show: bool,
 	/// Compositor IPC for Wayland sessions where winit cannot hide (Hyprland, KWin).
@@ -13,6 +15,7 @@ impl Default for State {
 	fn default() -> Self {
 		Self {
 			hidden: false,
+			reopened: false,
 			exiting: false,
 			close_after_show: false,
 			compositor: platform::compositor::Hider::detect(),
@@ -32,6 +35,7 @@ impl State {
 		}
 	}
 	pub fn show(&mut self, ctx: &egui::Context) {
+		self.reopened |= self.hidden && !self.exiting;
 		self.hidden = false;
 		if let Some(compositor) = &self.compositor {
 			compositor.show();
@@ -64,6 +68,12 @@ impl State {
 		self.exiting = true;
 		self.close_after_show = true;
 		self.show(ctx);
+	}
+	/// Whether the window came back from the tray since the last call. `tray-debug` shares
+	/// this file but has no splash to show.
+	#[allow(dead_code)]
+	pub fn take_reopened(&mut self) -> bool {
+		std::mem::take(&mut self.reopened)
 	}
 	pub fn cancel_quit(&mut self) {
 		self.exiting = false;

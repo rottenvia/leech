@@ -11,6 +11,15 @@ mod wayland;
 #[cfg(target_os = "linux")]
 mod x11;
 
+/// Lets this app's other windows (see-through Stream to yourself and picture-in-picture
+/// windows) show the desktop where they draw nothing. Call after each frame's viewports.
+pub fn clear_child_surfaces(root: &Window) {
+	#[cfg(target_os = "windows")]
+	dwm::clear_child_surfaces(root);
+	#[cfg(not(target_os = "windows"))]
+	let _ = root;
+}
+
 pub struct Blur {
 	#[cfg(target_os = "linux")]
 	wayland: Option<wayland::Blur>,

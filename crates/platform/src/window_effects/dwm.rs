@@ -115,6 +115,77 @@ pub fn extend_frame(window: &Window, extended: bool) -> Result<(), String> {
 	.map_err(|error| error.to_string())
 }
 
+/// Every other visible window of this thread (Stream to yourself and picture-in-picture
+/// windows) once: they draw with alpha through DirectComposition above their GDI redirection
+/// surface, which Windows starts white. Filling it black, which GDI writes with alpha 0 and
+/// winit's blur-behind shows as clear, lets their see-through parts show the desktop. Areas a
+/// later resize adds start clear. The root window paints opaque pixels or extends its frame.
+pub fn clear_child_surfaces(root: &Window) {
+	use std::cell::RefCell;
+	use windows::Win32::Foundation::RECT;
+	use windows::Win32::Graphics::Gdi::{
+		BLACK_BRUSH, FillRect, GetDC, GetStockObject, HBRUSH, ReleaseDC,
+	};
+	use windows::Win32::System::Threading::GetCurrentThreadId;
+	use windows::Win32::UI::WindowsAndMessaging::{
+		EnumThreadWindows, GetClassNameW, GetClientRect, IsWindowVisible,
+	};
+	use windows::core::BOOL;
+
+	thread_local! {
+		/// Windows already cleared; a destroyed one leaves the list, so a reused handle clears again.
+		static CLEARED: RefCell<Vec<isize>> = const { RefCell::new(Vec::new()) };
+	}
+	unsafe extern "system" fn each(window: HWND, found: LPARAM) -> BOOL {
+		// SAFETY: `found` is the Vec borrowed for this synchronous enumeration.
+		unsafe {
+			if IsWindowVisible(window).as_bool() {
+				(*(found.0 as *mut Vec<isize>)).push(window.0 as isize);
+			}
+		}
+		true.into()
+	}
+	let Ok(RawWindowHandle::Win32(handle)) = root.window_handle().map(|h| h.as_raw()) else {
+		return;
+	};
+	let root = handle.hwnd.get();
+	// Only winit's windows, which share the root's class: a legacy IME window on this thread
+	// paints itself with GDI and must not be touched.
+	let class = |window: isize| {
+		let mut name = [0_u16; 64];
+		// SAFETY: Fills the local buffer with a live window's class name.
+		let length = unsafe { GetClassNameW(HWND(window as _), &mut name) };
+		name[..length.max(0) as usize].to_vec()
+	};
+	let root_class = class(root);
+	let mut found: Vec<isize> = Vec::new();
+	// SAFETY: The callback only pushes into `found`, which outlives the call.
+	unsafe {
+		let _ = EnumThreadWindows(
+			GetCurrentThreadId(),
+			Some(each),
+			LPARAM(&mut found as *mut Vec<isize> as isize),
+		);
+	}
+	CLEARED.with_borrow_mut(|cleared| {
+		for &window in found.iter().filter(|window| {
+			**window != root && !cleared.contains(window) && class(**window) == root_class
+		}) {
+			let window = HWND(window as _);
+			let mut rect = RECT::default();
+			// SAFETY: A live window of this thread; the DC is released before returning.
+			unsafe {
+				let dc = GetDC(Some(window));
+				if !dc.is_invalid() && GetClientRect(window, &mut rect).is_ok() {
+					FillRect(dc, &rect, HBRUSH(GetStockObject(BLACK_BRUSH).0));
+				}
+				ReleaseDC(Some(window), dc);
+			}
+		}
+		*cleared = found;
+	});
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;

@@ -82,6 +82,7 @@ impl Settings {
 			muted_users: ui.voice_user_mutes().to_vec(),
 			cosmetics: ui.cosmetics,
 			image_cache: ui.image_cache,
+			splash_colors: self.current.splash_colors,
 		};
 		if value != self.current {
 			self.state.touched = true;

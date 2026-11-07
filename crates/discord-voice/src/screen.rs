@@ -364,7 +364,13 @@ impl LocalCapture {
 							return;
 						}
 					};
+					// A minimized window is parked so it keeps drawing; dropping the parker at
+					// the end minimizes it again.
+					let mut parker = capture::Parker::new(source);
 					while !thread_stop.load(Ordering::Acquire) {
+						if let Some(parker) = &mut parker {
+							parker.tick();
+						}
 						match raw.recv_timeout(Duration::from_millis(200)) {
 							Ok(RawFrame {
 								width,
@@ -436,6 +442,34 @@ impl LocalCapture {
 			false
 		}
 	}
+}
+
+/// Gives back windows an earlier Leech parked for Stream to yourself and never restored
+/// because it was ended. Call once at startup.
+pub fn recover_parked_windows() {
+	#[cfg(target_os = "windows")]
+	capture::recover_parked();
+}
+
+/// At exit, after the captures were dropped: gives back windows still parked, since capture
+/// threads end with the process before they finish. Waits at most `limit` for a window that
+/// does not answer; the next start gives back any left.
+pub fn give_back_parked_windows(limit: Duration) {
+	#[cfg(target_os = "windows")]
+	{
+		let (done, finished) = mpsc::sync_channel(1);
+		let spawned = std::thread::Builder::new()
+			.name("parked-windows".into())
+			.spawn(move || {
+				capture::recover_parked();
+				let _ = done.send(());
+			});
+		if spawned.is_ok() {
+			let _ = finished.recv_timeout(limit);
+		}
+	}
+	#[cfg(not(target_os = "windows"))]
+	let _ = limit;
 }
 
 impl Drop for LocalCapture {

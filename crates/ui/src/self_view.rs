@@ -4,7 +4,10 @@
 //! is sent to the call, though a shared screen shows these windows like any other.
 use crate::{
 	design,
-	voice::{PIP_INSET, PictureZoom, chrome_plate, fit_rect, paint_stretch_glyph, pip_resize},
+	voice::{
+		PIP_INSET, PictureCrop, PictureZoom, chrome_plate, fit_rect, paint_crop_glyph,
+		paint_cutout_glyph, paint_stretch_glyph, pip_resize, sized_to,
+	},
 };
 use client_core::screen::SourceId;
 
@@ -30,6 +33,11 @@ pub enum Kind {
 }
 
 impl Kind {
+	/// Images and GIFs can lose their background; screens, windows and videos keep theirs.
+	pub fn cuts_out(self) -> bool {
+		matches!(self, Self::Image | Self::Animation)
+	}
+
 	pub(crate) fn icon(self) -> crate::icons::Icon {
 		match self {
 			Self::Screen => crate::icons::Icon::Television,
@@ -49,12 +57,18 @@ pub struct View {
 	pub texture: Option<egui::load::SizedTexture>,
 	/// Over the picture when it stopped, such as a closed window; empty otherwise.
 	pub status: &'static str,
+	/// No backdrop behind an image or GIF: its transparent parts, or a plain background the
+	/// desktop cuts out, show what is under the window.
+	pub remove_background: bool,
 	/// Letterboxed at the picture's own shape instead of stretched over the window.
 	fit: bool,
 	unpinned: bool,
 	/// The first picture has resized the window to its shape.
 	sized: bool,
 	zoom: PictureZoom,
+	crop: PictureCrop,
+	/// The whole window's opacity in percent.
+	opacity: u16,
 	opened: egui::Rect,
 }
 
@@ -70,7 +84,15 @@ pub struct SelfViews {
 
 impl SelfViews {
 	/// A new window over the main one, cascaded so several never sit exactly on each other.
-	pub fn open(&mut self, ctx: &egui::Context, id: u64, name: String, kind: Kind) {
+	/// `transparent` pictures (a GIF with see-through parts) open without a backdrop.
+	pub fn open(
+		&mut self,
+		ctx: &egui::Context,
+		id: u64,
+		name: String,
+		kind: Kind,
+		transparent: bool,
+	) {
 		let parent =
 			ctx.input(|input| input.viewport().inner_rect)
 				.unwrap_or(egui::Rect::from_min_size(
@@ -89,10 +111,13 @@ impl SelfViews {
 			kind,
 			texture: None,
 			status: "",
+			remove_background: transparent && kind.cuts_out(),
 			fit: false,
 			unpinned: false,
 			sized: false,
 			zoom: PictureZoom::default(),
+			crop: PictureCrop::default(),
+			opacity: 100,
 			opened,
 		});
 	}
@@ -110,6 +135,7 @@ impl SelfViews {
 				.with_position(view.opened.min)
 				.with_inner_size(view.opened.size())
 				.with_min_inner_size([160.0, 90.0])
+				.with_transparent(true)
 				.with_decorations(false)
 				.with_taskbar(false)
 				.with_active(false)
@@ -133,7 +159,12 @@ impl View {
 	/// fading in under the pointer. Returns true when the window asks to close.
 	fn ui(&mut self, ui: &mut egui::Ui) -> bool {
 		let rect = ui.max_rect();
-		ui.painter().rect_filled(rect, 0, egui::Color32::BLACK);
+		let opacity = f32::from(self.opacity) / 100.0;
+		let backdrop = !(self.remove_background && self.kind.cuts_out());
+		if backdrop {
+			ui.painter()
+				.rect_filled(rect, 0, egui::Color32::BLACK.gamma_multiply(opacity));
+		}
 		let (maximized, mut close) = ui.input(|input| {
 			(
 				input.viewport().maximized == Some(true),
@@ -146,11 +177,7 @@ impl View {
 			&& let Some(texture) = self.texture
 		{
 			self.sized = true;
-			let aspect = (texture.size.x / texture.size.y.max(1.0)).clamp(0.25, 4.0);
-			let height = (480.0 * 270.0 / aspect).sqrt();
-			let size = egui::vec2(height * aspect, height)
-				.round()
-				.max(egui::vec2(160.0, 90.0));
+			let size = sized_to(480.0 * 270.0, texture.size);
 			if !maximized {
 				ui.ctx()
 					.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
@@ -158,12 +185,28 @@ impl View {
 		}
 		// Every window draws in one context: ids carry the window's own id.
 		let id = egui::Id::unique(("self-view", self.id));
+		if self.crop.editing()
+			&& let Some(texture) = self.texture
+		{
+			if self.crop.edit(ui, id.with("crop"), rect, texture) == Some(true) {
+				self.zoom.reset(ui);
+				if !maximized {
+					let size = sized_to(rect.area(), self.crop.size(texture.size));
+					ui.ctx()
+						.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+				}
+			}
+			if !maximized {
+				pip_resize(ui, rect);
+			}
+			return close;
+		}
 		let surface = ui.interact(rect, id.with("surface"), egui::Sense::click_and_drag());
 		let content = match self.texture {
-			Some(texture) if self.fit => fit_rect(rect, texture.size),
+			Some(texture) if self.fit => fit_rect(rect, self.crop.size(texture.size)),
 			_ => rect,
 		};
-		let uv = self.zoom.update(ui, &surface, content);
+		let uv = self.crop.uv(self.zoom.update(ui, &surface, content));
 		self.zoom.move_window(ui, &surface);
 		if surface.double_clicked() {
 			if self.zoom.zoomed() {
@@ -176,8 +219,12 @@ impl View {
 		let muted = design::palette(ui).muted;
 		match self.texture {
 			Some(texture) => {
-				ui.painter()
-					.image(texture.id, content, uv, egui::Color32::WHITE);
+				ui.painter().image(
+					texture.id,
+					content,
+					uv,
+					egui::Color32::WHITE.gamma_multiply(opacity),
+				);
 			}
 			None if self.status.is_empty() => {
 				ui.put(
@@ -240,12 +287,29 @@ impl View {
 		let shown = ui
 			.ctx()
 			.animate_bool_with_time(id.with("chrome"), hovered, 0.15);
+		if shown > 0.0 && !backdrop {
+			// A window without a backdrop shows where it is while the pointer is over it.
+			ui.painter().rect_filled(
+				rect,
+				0,
+				egui::Color32::from_black_alpha(40).gamma_multiply(shown),
+			);
+			ui.painter().rect_stroke(
+				rect.shrink(0.5),
+				0,
+				egui::Stroke::new(
+					1.0,
+					egui::Color32::from_white_alpha(70).gamma_multiply(shown),
+				),
+				egui::StrokeKind::Inside,
+			);
+		}
 		if shown > 0.0 {
 			close |= self.chrome(ui, id, rect, hovered, shown);
 		}
 		if let Some(menu) = egui::Popup::context_menu(&surface)
 			.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-			.show(|ui| self.menu(ui))
+			.show(|ui| design::window_menu(ui, |ui| self.menu(ui)))
 		{
 			close |= menu.inner;
 		}
@@ -279,10 +343,14 @@ impl View {
 			)
 		};
 		let mut close = false;
-		for (index, area) in [slot(0.0, true), slot(1.0, true), slot(0.0, false)]
-			.into_iter()
-			.enumerate()
-		{
+		let mut buttons = vec![slot(0.0, true), slot(1.0, true), slot(0.0, false)];
+		if self.texture.is_some() {
+			buttons.push(slot(1.0, false));
+			if self.kind.cuts_out() {
+				buttons.push(slot(2.0, false));
+			}
+		}
+		for (index, area) in buttons.into_iter().enumerate() {
 			let response = ui.interact(
 				area,
 				id.with(("button", index)),
@@ -295,6 +363,8 @@ impl View {
 			let on = match index {
 				1 => !self.unpinned,
 				2 => !self.fit,
+				3 => self.crop.cropped(),
+				4 => self.remove_background,
 				_ => false,
 			};
 			chrome_plate(ui, &response, on, shown);
@@ -313,7 +383,7 @@ impl View {
 						("Unpin", "Stop keeping this window above other windows")
 					}
 				}
-				_ => {
+				2 => {
 					paint_stretch_glyph(ui.painter(), glyph, color);
 					if self.fit {
 						(
@@ -324,22 +394,43 @@ impl View {
 						("Fit picture", "Show the whole picture at its own shape")
 					}
 				}
+				3 => {
+					paint_crop_glyph(ui.painter(), glyph, color);
+					("Crop", "Keep only part of the picture")
+				}
+				_ => {
+					paint_cutout_glyph(ui.painter(), glyph, color);
+					if self.remove_background {
+						("Keep background", "Show the picture on its own background")
+					} else {
+						(
+							"Remove background",
+							"Show only the picture, without its background",
+						)
+					}
+				}
 			};
 			response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
 			if response.on_hover_text(hint).clicked() {
 				match index {
 					0 => close = true,
 					1 => self.unpinned = !self.unpinned,
-					_ => self.fit = !self.fit,
+					2 => self.fit = !self.fit,
+					3 => self.crop.start(),
+					_ => self.remove_background = !self.remove_background,
 				}
 			}
 		}
 		close
 	}
 
-	/// Right-click menu: how the picture fills the window, Keep on top, and Close.
+	/// Right-click menu: opacity, how the picture fills the window, Keep on top, the whole
+	/// picture again after zooming or cropping, and Close. Crop and Remove background are
+	/// buttons on the window.
 	fn menu(&mut self, ui: &mut egui::Ui) -> bool {
 		ui.set_width(232.0);
+		design::menu_slider(ui, "Opacity", &mut self.opacity, 20..=100, "%");
+		ui.separator();
 		let mut stretched = !self.fit;
 		if design::menu_check(ui, "Stretch to fill", &mut stretched).changed() {
 			self.fit = !stretched;
@@ -348,10 +439,11 @@ impl View {
 		if design::menu_check(ui, "Keep on top", &mut on_top).changed() {
 			self.unpinned = !on_top;
 		}
-		if self.zoom.zoomed()
+		if (self.zoom.zoomed() || self.crop.cropped())
 			&& design::menu_item(ui, None, "Show the whole picture", false).clicked()
 		{
 			self.zoom.reset(ui);
+			self.crop.reset();
 			ui.close();
 		}
 		ui.separator();

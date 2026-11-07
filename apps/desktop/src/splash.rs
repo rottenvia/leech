@@ -35,10 +35,26 @@ pub struct Splash {
 	fill: f32,
 	/// UI time the fade began.
 	leaving: Option<f64>,
+	/// The theme's colours, saved by the last session; `None` paints with the context's.
+	colors: Option<local_store::SplashColors>,
+}
+
+/// The live theme's colours for the splash. The canvas is the opaque one controls use, so a
+/// theme's background image or the window's translucency never reaches the splash.
+pub fn theme_colors(ctx: &egui::Context) -> local_store::SplashColors {
+	let palette = ui::design::palette_for(ctx);
+	local_store::SplashColors {
+		accent: palette.accent.to_array(),
+		canvas: palette.canvas.to_opaque().to_array(),
+		text: palette.text_strong.to_array(),
+		raised: palette.raised.to_array(),
+		muted: palette.muted.to_array(),
+		dark: ctx.theme() == egui::Theme::Dark,
+	}
 }
 
 impl Splash {
-	pub fn new(restore_ms: u32) -> Self {
+	pub fn new(restore_ms: u32, colors: Option<local_store::SplashColors>) -> Self {
 		Self {
 			started: Instant::now(),
 			expected: if restore_ms == 0 {
@@ -49,7 +65,13 @@ impl Splash {
 			bar: 0.0,
 			fill: 0.0,
 			leaving: None,
+			colors,
 		}
+	}
+
+	/// The saved canvas, for the window's clear colour.
+	pub fn canvas(&self) -> Option<Color32> {
+		self.colors.map(|colors| color(colors.canvas))
 	}
 
 	pub fn elapsed(&self) -> Duration {
@@ -124,8 +146,29 @@ impl Splash {
 			.leaving
 			.map_or(0.0, |start| ((time - start) as f32 / FADE).clamp(0.0, 1.0));
 
-		let palette = ui::design::palette(ui);
-		let canvas = ui::design::window_palette(ui).canvas;
+		let [accent, text_strong, raised, muted, canvas] = match self.colors {
+			Some(saved) => [
+				saved.accent,
+				saved.text,
+				saved.raised,
+				saved.muted,
+				saved.canvas,
+			]
+			.map(color),
+			None => {
+				let palette = ui::design::palette(ui);
+				[
+					palette.accent,
+					palette.text_strong,
+					palette.raised,
+					palette.muted,
+					ui::design::window_palette(ui).canvas,
+				]
+			}
+		};
+		let dark = self
+			.colors
+			.map_or(ui.visuals().dark_mode, |saved| saved.dark);
 		ui::design::window_drag(ui, rect);
 		let painter = ui.painter();
 		painter.rect_filled(rect, 0, canvas);
@@ -137,9 +180,9 @@ impl Splash {
 			pos2(rect.center().x, rect.top()),
 			t,
 			updating.then_some(self.fill),
-			palette.accent,
+			accent,
 			canvas,
-			ui.visuals().dark_mode,
+			dark,
 			alpha,
 		);
 		let text = |y: f32, text: String, font: egui::FontId, color: Color32| {
@@ -156,14 +199,14 @@ impl Splash {
 			rect.top() + 232.0,
 			title.clone(),
 			egui::FontId::new(16.0, ui::design::semibold_family(ui.ctx())),
-			palette.text_strong,
+			text_strong,
 		);
 		// The bar, with a glow under its head and a light running along the fill.
 		let track = egui::Rect::from_center_size(
 			pos2(rect.center().x, rect.top() + 258.0),
 			vec2(168.0, 4.0),
 		);
-		painter.rect_filled(track, 2, palette.raised.gamma_multiply(alpha));
+		painter.rect_filled(track, 2, raised.gamma_multiply(alpha));
 		let fill = egui::Rect::from_min_max(
 			track.min,
 			pos2(track.left() + track.width() * self.bar, track.bottom()),
@@ -173,9 +216,9 @@ impl Splash {
 				painter,
 				pos2(fill.right(), fill.center().y),
 				9.0,
-				palette.accent.gamma_multiply(0.45 * alpha),
+				accent.gamma_multiply(0.45 * alpha),
 			);
-			painter.rect_filled(fill, 2, palette.accent.gamma_multiply(alpha));
+			painter.rect_filled(fill, 2, accent.gamma_multiply(alpha));
 			let run = (t % 1.6) / 1.6;
 			let x = fill.left() + (fill.width() + 60.0) * run - 30.0;
 			let mut mesh = egui::Mesh::default();
@@ -198,13 +241,13 @@ impl Splash {
 			rect.top() + 278.0,
 			detail.clone(),
 			egui::FontId::proportional(12.0),
-			palette.muted,
+			muted,
 		);
 		text(
 			rect.bottom() - 20.0,
 			format!("v{}", env!("CARGO_PKG_VERSION")),
 			egui::FontId::proportional(11.0),
-			palette.muted.gamma_multiply(0.6),
+			muted.gamma_multiply(0.6),
 		);
 		let response = ui.interact(rect, egui::Id::unique("leech-splash"), egui::Sense::hover());
 		response.widget_info(|| {
@@ -217,6 +260,10 @@ impl Splash {
 		ui.ctx().request_repaint();
 		fade >= 1.0
 	}
+}
+
+fn color([r, g, b, a]: [u8; 4]) -> Color32 {
+	Color32::from_rgba_premultiplied(r, g, b, a)
 }
 
 fn smooth(t: f32) -> f32 {
@@ -643,7 +690,7 @@ mod tests {
 		assert!(oil(CRAWL + REST + SLIP * 0.5).0 < CLIMB);
 
 		let ctx = egui::Context::default();
-		let mut splash = Splash::new(0);
+		let mut splash = Splash::new(0, None);
 		splash.started -= SHORTEST;
 		let mut finished = false;
 		for frame in 0..240 {
@@ -665,5 +712,48 @@ mod tests {
 			output.textures_delta.clear();
 		}
 		assert!(finished, "a finished splash fades out within four seconds");
+	}
+
+	#[test]
+	fn saved_theme_colours_paint_the_splash_with_an_opaque_canvas() {
+		let ctx = egui::Context::default();
+		let mut saved = theme_colors(&ctx);
+		assert_eq!(saved.canvas[3], u8::MAX);
+		saved.canvas = [239, 241, 245, 255];
+		saved.accent = [30, 102, 245, 255];
+		let mut splash = Splash::new(0, Some(saved));
+		assert_eq!(splash.canvas(), Some(Color32::from_rgb(239, 241, 245)));
+		let input = egui::RawInput {
+			screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, SIZE.into())),
+			..Default::default()
+		};
+		let output = ctx.run_ui(input, |ui| {
+			splash.show(
+				ui,
+				&Look::Starting {
+					stage: None,
+					done: false,
+				},
+			);
+		});
+		let fills: Vec<Color32> = output
+			.shapes
+			.iter()
+			.filter_map(|clipped| match &clipped.shape {
+				egui::Shape::Rect(rect) => Some(rect.fill),
+				egui::Shape::Circle(circle) => Some(circle.fill),
+				_ => None,
+			})
+			.collect();
+		// The background, and the worm's body in the accent.
+		assert!(
+			fills.contains(&Color32::from_rgb(239, 241, 245)),
+			"{fills:?}"
+		);
+		assert!(
+			fills.contains(&Color32::from_rgb(30, 102, 245)),
+			"{fills:?}"
+		);
+		output.drop_without_applying_deltas();
 	}
 }
