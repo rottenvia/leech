@@ -25,7 +25,7 @@ const CAPTURE_FPS: u32 = 30;
 /// A capture with no picture this long after it started is waiting on an app that draws
 /// nothing while hidden.
 const FIRST_PICTURE: Duration = Duration::from_secs(3);
-const MINIMIZED: &str = "This window is minimized, and it fills the screen when restored, so Leech leaves it alone: a minimized game draws nothing. It shows here again once restored.\n\n\
+const MINIMIZED: &str = "This window is minimized, and Leech leaves it alone because it fills the screen when restored, like a game, or draws its own see-through edges. Minimized, it draws nothing; it shows here again once restored.\n\n\
 	A game in exclusive fullscreen minimizes when you click away: set it to borderless or fullscreen windowed to keep it showing.";
 const NOT_DRAWING: &str = "Nothing to show yet: this app draws nothing while it is hidden. Some games and browsers stop drawing when another window covers them.\n\n\
 	Bring it to the front once, or set a game to borderless or fullscreen windowed.";
