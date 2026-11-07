@@ -88,7 +88,7 @@ pub struct Updater {
 	helper: Option<install::Prepared>,
 	close_requested: bool,
 	auto_download: bool,
-	/// Installing the checked package from the launch splash, through to the restart.
+	/// Installing the checked package from the splash, through to the restart.
 	installing: bool,
 	demo_available: bool,
 	demo_ready: bool,
@@ -128,7 +128,8 @@ impl Updater {
 	) -> bool {
 		let check = std::mem::take(&mut view.check_requested);
 		let download = std::mem::take(&mut view.download_requested);
-		let mut restart = std::mem::take(&mut view.restart_requested);
+		let restart = std::mem::take(&mut view.restart_requested);
+		let install = std::mem::take(&mut view.install_requested);
 		if self.demo {
 			if self.channel != Some(view.nightly) {
 				self.demo_available = false;
@@ -212,18 +213,20 @@ impl Updater {
 								self.log = Some(log);
 								self.etag = etag;
 								self.status = checked_status(package.as_ref());
+								self.installing &= package.is_some();
 								self.package = package;
 								// Mid-session, a new release only shows the prompt; it
-								// installs at the next launch.
-								self.auto_download = view.starting;
+								// installs at the next launch or reopening. Hidden in the
+								// tray, it downloads first.
+								self.auto_download = view.starting || view.hidden;
 							}
 							Ok(Outcome::Unchanged) => {
 								self.status = checked_status(self.package.as_ref());
+								self.auto_download |= view.hidden;
 							}
 							Ok(Outcome::Downloaded(stage)) => {
 								self.staged = Some(stage);
 								self.status = Status::new("updates-status-downloaded");
-								restart |= self.installing;
 							}
 							Ok(Outcome::Cleaned) => {}
 							Ok(Outcome::Prepared(helper)) => {
@@ -249,6 +252,10 @@ impl Updater {
 				Err(mpsc::TryRecvError::Empty) => {}
 			}
 		}
+		// Reopened from the tray: installs what is staged, downloading, or checked.
+		if install && supported && view.auto_update && self.package.is_some() {
+			self.installing = true;
+		}
 		if self.job.is_none() {
 			if let Some(stage) = self.cleanup_pending.take() {
 				let helper = self.helper.take();
@@ -263,7 +270,7 @@ impl Updater {
 					.map_err(|_| "Could not clear old update storage.".to_owned())?;
 					Ok(Outcome::Cleaned)
 				});
-			} else if restart && self.staged.is_some() && !self.armed {
+			} else if (restart || self.installing) && self.staged.is_some() && !self.armed {
 				let stage = self.staged.as_ref().expect("checked stage");
 				let directory = stage.directory.clone();
 				let installation = stage.installation.clone();
@@ -285,12 +292,15 @@ impl Updater {
 				});
 				self.status = Status::new("updates-status-preparing");
 			} else if supported
-				&& (download || (view.auto_update && self.auto_download && view.starting))
+				&& (download
+					|| self.installing
+					|| (view.auto_update && self.auto_download && (view.starting || view.hidden)))
 				&& self.package.is_some()
 				&& self.staged.is_none()
 			{
 				let package = self.package.as_ref().expect("checked package").clone();
-				self.installing = !download;
+				// Hidden in the tray it only stages; the splash installs.
+				self.installing = !download && (self.installing || view.starting);
 				let total = package
 					.archive
 					.as_ref()
@@ -395,6 +405,7 @@ impl Updater {
 
 	pub fn cancel_restart(&mut self) {
 		self.armed = false;
+		self.installing = false;
 		self.close_requested = false;
 		if let Some(job) = &self.job {
 			job.cancel.store(true, Ordering::Relaxed);
@@ -989,6 +1000,78 @@ fn stable_releases_reach_both_channels() {
 	assert!(on("v0.1.1", false, false) && on("v0.1.1", false, true));
 	assert!(on("v0.2.0-nightly.1", true, true) && !on("v0.2.0-nightly.1", true, false));
 	assert!(!on("v0.2.0-rc.1", true, true));
+}
+
+/// Hidden in the tray a release only stages; reopening installs it. The runtime is never
+/// driven, so no job touches the network or disk.
+#[test]
+fn hidden_releases_stage_and_reopening_installs_them() {
+	let runtime = tokio::runtime::Builder::new_current_thread()
+		.build()
+		.unwrap();
+	let ctx = egui::Context::default();
+	let finish = |updater: &mut Updater, result: Result<Outcome, String>| {
+		let (sender, receiver) = mpsc::sync_channel(1);
+		sender.send(result).unwrap();
+		updater.job = Some(Job {
+			receiver,
+			cancel: Arc::default(),
+			progress: Arc::default(),
+			total: 0,
+		});
+	};
+	let package = || Package {
+		version: "9.9.9".into(),
+		archive: Some(Asset {
+			name: "leech.zip".into(),
+			browser_download_url: "https://github.com/rottenvia/leech/x.zip".into(),
+			size: 1,
+		}),
+		checksums: None,
+		zsync: None,
+	};
+	let staged = || Staged {
+		directory: std::env::temp_dir().join("leech-test-stage-that-does-not-exist"),
+		installation: std::env::temp_dir().join("leech-test-installation-that-does-not-exist"),
+	};
+	for hidden in [false, true] {
+		let mut updater = Updater::new(false);
+		updater.channel = Some(false);
+		updater.next_check = Instant::now() + CHECK_INTERVAL;
+		let mut view = ui::updates::Updates {
+			hidden,
+			..Default::default()
+		};
+		finish(
+			&mut updater,
+			Ok(Outcome::Checked(Some(package()), Vec::new(), None)),
+		);
+		updater.sync(&ctx, &runtime, &mut view, true);
+		if !view.supported {
+			return;
+		}
+		// Visible mid-session it only prompts; hidden it downloads without installing.
+		assert_eq!(view.busy, hidden);
+		assert!(view.available && view.installing.is_none());
+		if !hidden {
+			continue;
+		}
+		let job = updater.job.take().unwrap();
+		assert!(job.total > 0);
+		finish(&mut updater, Ok(Outcome::Downloaded(staged())));
+		updater.sync(&ctx, &runtime, &mut view, true);
+		assert!(view.ready && !view.busy && view.installing.is_none());
+		// Opening it again restarts into the staged update from the splash.
+		view.hidden = false;
+		view.install_requested = true;
+		updater.sync(&ctx, &runtime, &mut view, true);
+		assert_eq!(view.installing.as_deref(), Some("9.9.9"));
+		assert_eq!(view.status, Status::new("updates-status-preparing"));
+		// A failed restart hands the window back to the normal splash.
+		finish(&mut updater, Err("disk".into()));
+		updater.sync(&ctx, &runtime, &mut view, true);
+		assert!(view.installing.is_none() && view.ready);
+	}
 }
 
 /// Offline checks used by the explicit demo debug path, never by release startup.

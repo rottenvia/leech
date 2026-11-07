@@ -65,6 +65,11 @@ pub struct Updates {
 	/// Set while the launch splash shows: an update found then installs right away, while
 	/// one found later only shows the update prompt.
 	pub starting: bool,
+	/// Set while the window is hidden in the tray: an update found then downloads, but only
+	/// installs once Leech is opened again.
+	pub hidden: bool,
+	/// Install the checked or staged update now, from the splash shown on reopening.
+	pub install_requested: bool,
 	/// The version installing from the launch splash.
 	pub installing: Option<String>,
 	/// This session's performance statistics in one line, for issue diagnostics.
@@ -93,6 +98,8 @@ impl Default for Updates {
 			download_requested: false,
 			restart_requested: false,
 			starting: false,
+			hidden: false,
+			install_requested: false,
 			installing: None,
 			performance: String::new(),
 			copied_diagnostics: None,
@@ -100,6 +107,17 @@ impl Default for Updates {
 			banner_dismissed: None,
 			log: Vec::new(),
 		}
+	}
+}
+impl Updates {
+	/// Whether opening Leech from the tray installs the waiting update, as a launch would.
+	/// Never during a call: the restart would end it.
+	pub fn installs_on_reopen(&self, in_call: bool) -> bool {
+		!in_call
+			&& self.auto_update
+			&& self.supported
+			&& (self.available || self.ready)
+			&& self.installing.is_none()
 	}
 }
 impl MessagingUi {
@@ -726,8 +744,33 @@ impl MessagingUi {
 
 #[cfg(test)]
 mod tests {
-	use super::Status;
+	use super::{Status, Updates};
 	use crate::{MessagingUi, State};
+
+	#[test]
+	fn reopening_installs_a_waiting_update_only_outside_calls() {
+		let mut updates = Updates {
+			supported: true,
+			ready: true,
+			..Default::default()
+		};
+		assert!(updates.installs_on_reopen(false));
+		assert!(!updates.installs_on_reopen(true), "a call is never ended");
+		updates.ready = false;
+		updates.available = true;
+		assert!(updates.installs_on_reopen(false), "downloads on the splash");
+		updates.installing = Some("1.2.3".into());
+		assert!(!updates.installs_on_reopen(false), "already installing");
+		updates.installing = None;
+		updates.auto_update = false;
+		assert!(!updates.installs_on_reopen(false), "only the prompt");
+		updates.auto_update = true;
+		updates.supported = false;
+		assert!(!updates.installs_on_reopen(false));
+		updates.supported = true;
+		updates.available = false;
+		assert!(!updates.installs_on_reopen(false), "nothing to install");
+	}
 
 	#[test]
 	fn updater_statuses_are_worded_in_every_catalog() {

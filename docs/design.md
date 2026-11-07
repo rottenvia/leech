@@ -109,7 +109,10 @@ oil that soaks away early in the next climb. Under it, a bar with the stage and 
 0.9 s, waits up to 4 s for the first update check, fades to its background and then grows into
 the saved window. An update found at launch installs there instead: the worm keeps crawling while drops fall
 onto its head and its body fills with colour, head to tail, as the download runs. A release that lands
-while Leech is open only shows the update prompt and installs at the next launch. A restore
+while Leech is open only shows the update prompt. Hidden in the tray, Leech downloads it without
+installing; opening Leech again outside a call turns the window back into the splash, which installs
+it as a launch does and grows back if that fails. The splash paints in the last theme's colours,
+saved on the device, never its background image. A restore
 still running after 12 s grows into the full restore screen, which has a way out:
 the app mark with a passing sheen, a determinate bar with a glowing head, and the stage with
 the time left under it. The estimate follows the last few restores on this device, reaches

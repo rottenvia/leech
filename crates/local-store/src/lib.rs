@@ -93,6 +93,8 @@ pub struct AppPreferences {
 	pub cosmetics: model::CosmeticPreferences,
 	/// Disk budgets and retention for downloaded images, from bounded presets.
 	pub image_cache: model::CachePreferences,
+	/// The last theme's colours for the launch splash, which shows before themes load.
+	pub splash_colors: Option<SplashColors>,
 }
 impl Default for AppPreferences {
 	fn default() -> Self {
@@ -134,6 +136,7 @@ impl Default for AppPreferences {
 			muted_users: Vec::new(),
 			cosmetics: Default::default(),
 			image_cache: Default::default(),
+			splash_colors: None,
 		}
 	}
 }
@@ -159,10 +162,25 @@ impl AppPreferences {
 			&& self.muted_users.len() <= 64
 			&& self.keybinds.is_valid()
 			&& self.image_cache.is_valid()
+			&& self
+				.splash_colors
+				.is_none_or(|colors| colors.canvas[3] == u8::MAX)
 			&& [&self.voice_input, &self.voice_output]
 				.into_iter()
 				.all(|value| value.as_ref().is_none_or(|value| value.len() <= 1024))
 	}
+}
+
+/// Theme colours as premultiplied RGBA, plus whether they are the dark set. Only colours:
+/// a theme's background image never reaches the splash, so the canvas is always opaque.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SplashColors {
+	pub accent: [u8; 4],
+	pub canvas: [u8; 4],
+	pub text: [u8; 4],
+	pub raised: [u8; 4],
+	pub muted: [u8; 4],
+	pub dark: bool,
 }
 
 /// Normal client size in logical pixels; outer position in physical desktop pixels.
@@ -2133,6 +2151,35 @@ mod tests {
 			assert_eq!(store.app_preferences().unwrap().convert_emoticons, enabled);
 		}
 		std::fs::remove_dir_all(root).unwrap();
+	}
+
+	#[test]
+	fn splash_colors_round_trip_and_older_preferences_load_without_them() {
+		let store = LocalStore::initialize(Connection::open_in_memory().unwrap()).unwrap();
+		let legacy = serde_json::to_value(AppPreferences::default()).unwrap();
+		let mut legacy = legacy.as_object().unwrap().clone();
+		legacy.remove("splash_colors");
+		let legacy: AppPreferences = serde_json::from_value(legacy.into()).unwrap();
+		assert_eq!(legacy, AppPreferences::default());
+		store.save_app_preferences(&legacy).unwrap();
+		assert_eq!(store.app_preferences().unwrap().splash_colors, None);
+		let mut value = AppPreferences {
+			splash_colors: Some(SplashColors {
+				accent: [30, 102, 245, 255],
+				canvas: [239, 241, 245, 255],
+				text: [76, 79, 105, 255],
+				raised: [230, 233, 239, 255],
+				muted: [62, 64, 80, 204],
+				dark: false,
+			}),
+			..Default::default()
+		};
+		store.save_app_preferences(&value).unwrap();
+		assert_eq!(store.app_preferences().unwrap(), value);
+		// A translucent canvas would let a theme's background through.
+		value.splash_colors.as_mut().unwrap().canvas[3] = 200;
+		assert!(store.save_app_preferences(&value).is_err());
+		assert!(store.app_preferences().unwrap().splash_colors.is_some());
 	}
 
 	#[test]

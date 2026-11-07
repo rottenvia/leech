@@ -136,7 +136,8 @@ impl MessagingUi {
 	/// clamped to 1:1–2.4:1.
 	fn voice_pip_size(&self) -> egui::Vec2 {
 		let aspect = self.voice_stream_view.map_or(16.0 / 9.0, |texture| {
-			(texture.size.x / texture.size.y.max(1.0)).clamp(1.0, 2.4)
+			let shape = self.voice_pip_crop.size(texture.size);
+			(shape.x / shape.y.max(1.0)).clamp(1.0, 2.4)
 		});
 		egui::vec2(480.0, (480.0 / aspect).round())
 	}
@@ -167,6 +168,7 @@ impl MessagingUi {
 			.with_position(placement.min)
 			.with_inner_size(placement.size())
 			.with_min_inner_size([240.0, 135.0])
+			.with_transparent(true)
 			.with_decorations(false)
 			.with_taskbar(false)
 			.with_active(false)
@@ -203,7 +205,9 @@ impl MessagingUi {
 	/// pointer is over the window.
 	fn voice_pip_ui(&mut self, ui: &mut egui::Ui) -> Option<PipAction> {
 		let rect = ui.max_rect();
-		ui.painter().rect_filled(rect, 0, egui::Color32::BLACK);
+		let opacity = f32::from(self.voice_pip_opacity.unwrap_or(100)) / 100.0;
+		ui.painter()
+			.rect_filled(rect, 0, egui::Color32::BLACK.gamma_multiply(opacity));
 		let (maximized, closed, placement, monitor) = ui.input(|input| {
 			let viewport = input.viewport();
 			(
@@ -221,16 +225,38 @@ impl MessagingUi {
 			self.voice_pip_rect = placement;
 		}
 		let streamer = self.voice_pip.map(|(user, _)| user)?;
+		self.stream_zoom(streamer);
+		if self.voice_pip_crop.editing()
+			&& let Some(texture) = self.voice_stream_view
+		{
+			let id = ui.scope_id().with("voice-pip-crop");
+			if self.voice_pip_crop.edit(ui, id, rect, texture) == Some(true) {
+				self.voice_stream_zoom.reset(ui);
+				if !maximized {
+					let size = sized_to(rect.area(), self.voice_pip_crop.size(texture.size));
+					ui.ctx()
+						.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+				}
+			}
+			if !maximized {
+				pip_resize(ui, rect);
+			}
+			return closed.then_some(PipAction::Close);
+		}
 		let surface = ui.interact(
 			rect,
 			ui.scope_id().with("voice-pip-surface"),
 			egui::Sense::click_and_drag(),
 		);
 		let content = match self.voice_stream_view {
-			Some(texture) if !self.voice_pip_stretch => fit_rect(rect, texture.size),
+			Some(texture) if !self.voice_pip_stretch => {
+				fit_rect(rect, self.voice_pip_crop.size(texture.size))
+			}
 			_ => rect,
 		};
-		let uv = self.stream_zoom(streamer).update(ui, &surface, content);
+		let uv = self
+			.voice_pip_crop
+			.uv(self.voice_stream_zoom.update(ui, &surface, content));
 		self.voice_stream_zoom.move_window(ui, &surface);
 		if surface.double_clicked() {
 			if self.voice_stream_zoom.zoomed() {
@@ -244,8 +270,12 @@ impl MessagingUi {
 			Some(texture) => {
 				// The video texture carries mipmaps and is sampled trilinearly with anisotropy,
 				// so squeezing one axis harder than the other, or zooming in, keeps it sharp.
-				ui.painter()
-					.image(texture.id, content, uv, egui::Color32::WHITE);
+				ui.painter().image(
+					texture.id,
+					content,
+					uv,
+					egui::Color32::WHITE.gamma_multiply(opacity),
+				);
 			}
 			None => {
 				let status = if self.voice_stream_status.is_empty() {
@@ -314,6 +344,7 @@ impl MessagingUi {
 				(PipButton::Pin, slot(2.0, true)),
 				(PipButton::Stretch, slot(0.0, false)),
 				(PipButton::Reset, slot(1.0, false)),
+				(PipButton::Crop, slot(2.0, false)),
 			] {
 				let response = ui.interact(
 					area,
@@ -325,7 +356,9 @@ impl MessagingUi {
 					},
 				);
 				let pinned = button == PipButton::Pin && !self.voice_pip_unpinned;
-				let on = pinned || (button == PipButton::Stretch && self.voice_pip_stretch);
+				let on = pinned
+					|| (button == PipButton::Stretch && self.voice_pip_stretch)
+					|| (button == PipButton::Crop && self.voice_pip_crop.cropped());
 				chrome_plate(ui, &response, on, shown);
 				let glyph = area.shrink(7.0);
 				let color = egui::Color32::WHITE.gamma_multiply(shown);
@@ -364,6 +397,10 @@ impl MessagingUi {
 						paint_reset_glyph(ui.painter(), glyph, color);
 						("Reset size", "Return to the normal picture-in-picture size")
 					}
+					PipButton::Crop => {
+						paint_crop_glyph(ui.painter(), glyph, color);
+						("Crop", "Keep only part of the picture")
+					}
 				};
 				response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
 				if response.on_hover_text(hint).clicked() {
@@ -372,6 +409,10 @@ impl MessagingUi {
 						PipButton::Back => action = Some(PipAction::Back),
 						PipButton::Pin => self.voice_pip_unpinned = !self.voice_pip_unpinned,
 						PipButton::Stretch => self.voice_pip_stretch = !self.voice_pip_stretch,
+						PipButton::Crop if self.voice_stream_view.is_some() => {
+							self.voice_pip_crop.start();
+						}
+						PipButton::Crop => {}
 						PipButton::Reset => {
 							let current = self.voice_pip_rect.or(placement).unwrap_or(rect);
 							let target = pip_reset_rect(current, self.voice_pip_size(), monitor);
@@ -1709,6 +1750,7 @@ impl MessagingUi {
 		if self.voice_stream_zoom_of != Some(streamer) {
 			self.voice_stream_zoom_of = Some(streamer);
 			self.voice_stream_zoom = PictureZoom::default();
+			self.voice_pip_crop = PictureCrop::default();
 		}
 		&mut self.voice_stream_zoom
 	}
@@ -2038,8 +2080,29 @@ impl MessagingUi {
 	/// where it plays, and Stop watching.
 	fn stream_menu(&mut self, ui: &mut egui::Ui, streamer: Id, in_pip: bool) -> Option<PipAction> {
 		self.stream_audio_controls(ui);
+		if in_pip {
+			design::menu_slider(
+				ui,
+				"Opacity",
+				self.voice_pip_opacity.get_or_insert(100),
+				20..=100,
+				"%",
+			);
+		}
 		ui.separator();
 		let mut action = None;
+		if in_pip && self.voice_stream_view.is_some() {
+			if design::menu_item(ui, None, "Crop…", false).clicked() {
+				self.voice_pip_crop.start();
+				ui.close();
+			}
+			if self.voice_pip_crop.cropped()
+				&& design::menu_item(ui, None, "Show the whole stream", false).clicked()
+			{
+				self.voice_pip_crop.reset();
+				ui.close();
+			}
+		}
 		if self.voice_stream_zoom.zoomed()
 			&& design::menu_item(ui, None, "Show the whole picture", false).clicked()
 		{
@@ -5763,7 +5826,10 @@ impl PictureZoom {
 			if wheel != 0.0
 				&& let Some(pointer) = pointer
 			{
-				let next = (self.scale * (wheel * 0.006).exp()).clamp(1.0, Self::MAX);
+				// A wheel notch (40 points) is a tenth: 100 %, 110 %, 120 %… A touchpad glides
+				// between them.
+				let next = (((self.scale + wheel / 400.0) * 1000.0).round() / 1000.0)
+					.clamp(1.0, Self::MAX);
 				// The texture point under the pointer stays under it.
 				let at = ((pointer - content.min) / content.size())
 					.clamp(egui::Vec2::ZERO, egui::Vec2::splat(1.0));
@@ -5884,6 +5950,422 @@ impl PictureZoom {
 		if response.clicked() {
 			self.reset(ui);
 		}
+	}
+}
+
+/// The whole picture, in texture coordinates.
+const WHOLE: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+/// The smallest kept part, as a share of each side.
+const CROP_MIN: f32 = 0.04;
+
+/// The part of a picture a window keeps, chosen on the picture itself: drag a new frame, or
+/// its edges, corners or middle. Nothing is re-encoded; drawing samples only that part of
+/// the full-resolution texture, so the kept part stays as sharp as the source.
+#[derive(Clone, Copy)]
+pub(crate) struct PictureCrop {
+	/// The kept part, in texture coordinates.
+	area: egui::Rect,
+	/// While choosing: the frame being shaped and what the current press holds.
+	editing: Option<(egui::Rect, Option<CropGrip>)>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum CropGrip {
+	Move,
+	/// A new frame from this texture point to the pointer, and the frame before it, kept when
+	/// the press was only a click.
+	New(egui::Pos2, egui::Rect),
+	/// Which sides follow the pointer: left, right, top, bottom.
+	Sides([bool; 4]),
+}
+
+impl Default for PictureCrop {
+	fn default() -> Self {
+		Self {
+			area: WHOLE,
+			editing: None,
+		}
+	}
+}
+
+impl PictureCrop {
+	pub(crate) fn cropped(&self) -> bool {
+		self.area.min.distance(WHOLE.min) + self.area.max.distance(WHOLE.max) > 1e-4
+	}
+
+	pub(crate) fn editing(&self) -> bool {
+		self.editing.is_some()
+	}
+
+	pub(crate) fn start(&mut self) {
+		self.editing = Some((self.area, None));
+	}
+
+	pub(crate) fn reset(&mut self) {
+		self.area = WHOLE;
+		self.editing = None;
+	}
+
+	/// The kept part's size in texture pixels.
+	pub(crate) fn size(&self, texture: egui::Vec2) -> egui::Vec2 {
+		texture * self.area.size()
+	}
+
+	/// `uv` (0–1 within the kept part, such as a zoom's view) in texture coordinates.
+	pub(crate) fn uv(&self, uv: egui::Rect) -> egui::Rect {
+		let at = |point: egui::Pos2| self.area.min + point.to_vec2() * self.area.size();
+		egui::Rect::from_min_max(at(uv.min), at(uv.max))
+	}
+
+	/// Choosing the kept part over the whole picture, fitted in `rect`, with Reset, Cancel
+	/// and Done under it. `Some(true)` once Done applies it (Enter), `Some(false)` once Cancel
+	/// leaves it as it was (Escape).
+	pub(crate) fn edit(
+		&mut self,
+		ui: &mut egui::Ui,
+		id: egui::Id,
+		rect: egui::Rect,
+		texture: egui::load::SizedTexture,
+	) -> Option<bool> {
+		let (mut frame, mut grip) = self.editing?;
+		ui.painter()
+			.rect_filled(rect, 0, egui::Color32::from_black_alpha(235));
+		let bar = 44.0;
+		let room = egui::Rect::from_min_max(
+			rect.min + egui::vec2(16.0, 16.0),
+			rect.max - egui::vec2(16.0, 16.0 + bar),
+		);
+		let picture = fit_rect(room, texture.size);
+		ui.painter()
+			.image(texture.id, picture, WHOLE, egui::Color32::WHITE);
+		let to_screen = |point: egui::Pos2| picture.min + point.to_vec2() * picture.size();
+		let to_texture = |point: egui::Pos2| {
+			((point - picture.min) / picture.size())
+				.clamp(egui::Vec2::ZERO, egui::Vec2::splat(1.0))
+				.to_pos2()
+		};
+		let response = ui.interact(
+			picture.expand(14.0),
+			id.with("crop-frame"),
+			egui::Sense::drag(),
+		);
+		let pointer = ui.input(|input| input.pointer.latest_pos());
+		let screen = egui::Rect::from_min_max(to_screen(frame.min), to_screen(frame.max));
+		let grip_at = move |point: egui::Pos2| {
+			let near = |a: f32, b: f32| (a - b).abs() <= 10.0;
+			let inside_x = point.x > screen.left() - 10.0 && point.x < screen.right() + 10.0;
+			let inside_y = point.y > screen.top() - 10.0 && point.y < screen.bottom() + 10.0;
+			let sides = [
+				near(point.x, screen.left()) && inside_y,
+				near(point.x, screen.right()) && inside_y,
+				near(point.y, screen.top()) && inside_x,
+				near(point.y, screen.bottom()) && inside_x,
+			];
+			if sides.iter().any(|side| *side) {
+				CropGrip::Sides(sides)
+			} else if screen.contains(point) {
+				CropGrip::Move
+			} else {
+				CropGrip::New(to_texture(point), frame)
+			}
+		};
+		if response.drag_started()
+			&& let Some(pointer) = pointer
+		{
+			grip = Some(grip_at(pointer));
+		}
+		if response.dragged()
+			&& let (Some(held), Some(pointer)) = (grip, pointer)
+		{
+			let at = to_texture(pointer);
+			frame = match held {
+				CropGrip::Move => {
+					let delta = response.drag_delta() / picture.size();
+					let moved = frame.translate(delta);
+					let shift = egui::vec2(
+						(-moved.min.x).max(0.0) - (moved.max.x - 1.0).max(0.0),
+						(-moved.min.y).max(0.0) - (moved.max.y - 1.0).max(0.0),
+					);
+					moved.translate(shift)
+				}
+				CropGrip::New(anchor, _) => egui::Rect::from_two_pos(anchor, at),
+				CropGrip::Sides([left, right, top, bottom]) => {
+					let mut shaped = frame;
+					if left {
+						shaped.min.x = at.x.min(shaped.max.x - CROP_MIN);
+					}
+					if right {
+						shaped.max.x = at.x.max(shaped.min.x + CROP_MIN);
+					}
+					if top {
+						shaped.min.y = at.y.min(shaped.max.y - CROP_MIN);
+					}
+					if bottom {
+						shaped.max.y = at.y.max(shaped.min.y + CROP_MIN);
+					}
+					shaped
+				}
+			};
+		}
+		if !response.dragged() {
+			// A new frame too small to keep (a click) leaves the one before it.
+			if let Some(CropGrip::New(_, before)) = grip
+				&& (frame.width() < CROP_MIN || frame.height() < CROP_MIN)
+			{
+				frame = before;
+			}
+			grip = None;
+		}
+		let hover_grip = grip.or_else(|| {
+			pointer
+				.filter(|pointer| response.rect.contains(*pointer))
+				.map(grip_at)
+		});
+		if let Some(shown) = hover_grip {
+			ui.ctx().set_cursor_icon(match shown {
+				CropGrip::Move => egui::CursorIcon::Move,
+				CropGrip::New(..) => egui::CursorIcon::Crosshair,
+				CropGrip::Sides([left, right, top, bottom]) => match (left || right, top || bottom)
+				{
+					(true, true) if (left && top) || (right && bottom) => {
+						egui::CursorIcon::ResizeNwSe
+					}
+					(true, true) => egui::CursorIcon::ResizeNeSw,
+					(true, false) => egui::CursorIcon::ResizeHorizontal,
+					_ => egui::CursorIcon::ResizeVertical,
+				},
+			});
+		}
+		// Outside the frame dims; thirds and corner handles mark it.
+		let screen = egui::Rect::from_min_max(to_screen(frame.min), to_screen(frame.max));
+		let shade = egui::Color32::from_black_alpha(160);
+		let painter = ui.painter();
+		for part in [
+			egui::Rect::from_min_max(picture.min, egui::pos2(picture.right(), screen.top())),
+			egui::Rect::from_min_max(egui::pos2(picture.left(), screen.bottom()), picture.max),
+			egui::Rect::from_min_max(
+				egui::pos2(picture.left(), screen.top()),
+				egui::pos2(screen.left(), screen.bottom()),
+			),
+			egui::Rect::from_min_max(
+				egui::pos2(screen.right(), screen.top()),
+				egui::pos2(picture.right(), screen.bottom()),
+			),
+		] {
+			if part.is_positive() {
+				painter.rect_filled(part, 0, shade);
+			}
+		}
+		let thirds = egui::Stroke::new(1.0, egui::Color32::from_white_alpha(70));
+		for third in [1.0 / 3.0, 2.0 / 3.0] {
+			let x = screen.left() + screen.width() * third;
+			let y = screen.top() + screen.height() * third;
+			painter.line_segment(
+				[egui::pos2(x, screen.top()), egui::pos2(x, screen.bottom())],
+				thirds,
+			);
+			painter.line_segment(
+				[egui::pos2(screen.left(), y), egui::pos2(screen.right(), y)],
+				thirds,
+			);
+		}
+		painter.rect_stroke(
+			screen,
+			0,
+			egui::Stroke::new(1.5, egui::Color32::WHITE),
+			egui::StrokeKind::Middle,
+		);
+		let handle = 14.0_f32
+			.min(screen.width() * 0.5)
+			.min(screen.height() * 0.5);
+		let heavy = egui::Stroke::new(3.0, egui::Color32::WHITE);
+		for (corner, dx, dy) in [
+			(screen.left_top(), 1.0, 1.0),
+			(screen.right_top(), -1.0, 1.0),
+			(screen.left_bottom(), 1.0, -1.0),
+			(screen.right_bottom(), -1.0, -1.0),
+		] {
+			painter.add(egui::Shape::line(
+				vec![
+					corner + egui::vec2(dx * handle, 0.0),
+					corner,
+					corner + egui::vec2(0.0, dy * handle),
+				],
+				heavy,
+			));
+		}
+		// The kept size in source pixels, under the frame while it changes.
+		if grip.is_some() {
+			let size = self.size_label(frame, texture.size);
+			let galley = painter.layout_no_wrap(
+				size,
+				egui::FontId::proportional(12.0),
+				egui::Color32::WHITE,
+			);
+			let pill = egui::Rect::from_center_size(
+				egui::pos2(
+					screen.center().x,
+					(screen.bottom() + 16.0).min(room.bottom() - 10.0),
+				),
+				galley.size() + egui::vec2(16.0, 6.0),
+			);
+			painter.rect_filled(pill, 10, egui::Color32::from_black_alpha(200));
+			painter.galley(
+				pill.center() - galley.size() * 0.5,
+				galley,
+				egui::Color32::WHITE,
+			);
+		}
+		// Reset, Cancel and Done, centred under the picture.
+		let mut outcome = None;
+		let font = egui::FontId::new(13.0, design::medium_family(ui.ctx()));
+		let labels = [("Reset", 0), ("Cancel", 1), ("Done", 2)];
+		let galleys: Vec<_> = labels
+			.iter()
+			.map(|(label, _)| {
+				ui.painter()
+					.layout_no_wrap((*label).to_owned(), font.clone(), egui::Color32::WHITE)
+			})
+			.collect();
+		let widths: Vec<f32> = galleys
+			.iter()
+			.map(|galley| galley.size().x + 28.0)
+			.collect();
+		let total = widths.iter().sum::<f32>() + 8.0 * (widths.len() - 1) as f32;
+		let mut x = rect.center().x - total * 0.5;
+		let accent = design::palette(ui).accent;
+		for ((galley, (label, index)), width) in galleys.into_iter().zip(labels).zip(widths) {
+			let button = egui::Rect::from_min_size(
+				egui::pos2(x, rect.bottom() - bar + 4.0),
+				egui::vec2(width, 30.0),
+			);
+			x += width + 8.0;
+			let response = ui.interact(
+				button,
+				id.with(("crop-button", index)),
+				egui::Sense::click(),
+			);
+			let fill = match (index, response.hovered()) {
+				(2, false) => accent,
+				(2, true) => design::mix(accent.to_opaque(), egui::Color32::WHITE, 0.15),
+				(_, false) => egui::Color32::from_white_alpha(30),
+				(_, true) => egui::Color32::from_white_alpha(50),
+			};
+			ui.painter().rect_filled(button, 15, fill);
+			ui.painter().galley(
+				button.center() - galley.size() * 0.5,
+				galley,
+				egui::Color32::WHITE,
+			);
+			response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+			if response.clicked() {
+				match index {
+					0 => frame = WHOLE,
+					1 => outcome = Some(false),
+					_ => outcome = Some(true),
+				}
+			}
+		}
+		let (enter, escape) = ui.input(|input| {
+			(
+				input.key_pressed(egui::Key::Enter),
+				input.key_pressed(egui::Key::Escape),
+			)
+		});
+		if enter {
+			outcome = Some(true);
+		} else if escape {
+			outcome = Some(false);
+		}
+		match outcome {
+			Some(true) => {
+				self.area = frame;
+				self.editing = None;
+			}
+			Some(false) => self.editing = None,
+			None => self.editing = Some((frame, grip)),
+		}
+		outcome
+	}
+
+	fn size_label(&self, frame: egui::Rect, texture: egui::Vec2) -> String {
+		let size = texture * frame.size();
+		format!("{:.0} × {:.0}", size.x, size.y)
+	}
+}
+
+/// A window size of about `area` points at the kept part's shape, for after a crop.
+pub(crate) fn sized_to(area: f32, shape: egui::Vec2) -> egui::Vec2 {
+	let aspect = (shape.x / shape.y.max(1.0)).clamp(0.25, 4.0);
+	let height = (area / aspect).sqrt();
+	egui::vec2(height * aspect, height)
+		.round()
+		.max(egui::vec2(160.0, 90.0))
+}
+
+/// Crop: Phosphor's crop, two right angles crossing at opposite corners.
+pub(crate) fn paint_crop_glyph(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+	paint_grid_lines(
+		painter,
+		rect,
+		color,
+		&[
+			&[[64.0, 24.0], [64.0, 192.0], [232.0, 192.0]],
+			&[[24.0, 64.0], [192.0, 64.0], [192.0, 232.0]],
+		],
+	);
+}
+
+/// Remove background: a cut-out subject inside the corners of a selection.
+pub(crate) fn paint_cutout_glyph(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+	paint_grid_lines(
+		painter,
+		rect,
+		color,
+		&[
+			&[[32.0, 80.0], [32.0, 32.0], [80.0, 32.0]],
+			&[[176.0, 32.0], [224.0, 32.0], [224.0, 80.0]],
+			&[[224.0, 176.0], [224.0, 224.0], [176.0, 224.0]],
+			&[[80.0, 224.0], [32.0, 224.0], [32.0, 176.0]],
+		],
+	);
+	let unit = rect.width() * 56.0 / 64.0 / 256.0;
+	let origin = rect.min + egui::Vec2::splat(rect.width() * 4.0 / 64.0);
+	painter.circle_filled(origin + egui::vec2(128.0, 104.0) * unit, 30.0 * unit, color);
+	painter.add(egui::Shape::convex_polygon(
+		vec![
+			origin + egui::vec2(72.0, 184.0) * unit,
+			origin + egui::vec2(96.0, 148.0) * unit,
+			origin + egui::vec2(160.0, 148.0) * unit,
+			origin + egui::vec2(184.0, 184.0) * unit,
+		],
+		color,
+		egui::Stroke::NONE,
+	));
+}
+
+#[cfg(test)]
+mod crop_tests {
+	use super::*;
+
+	#[test]
+	fn a_crop_maps_zoomed_views_inside_the_kept_part() {
+		let mut crop = PictureCrop::default();
+		assert!(!crop.cropped());
+		crop.area = egui::Rect::from_min_max(egui::pos2(0.25, 0.5), egui::pos2(0.75, 1.0));
+		assert!(crop.cropped());
+		assert_eq!(crop.uv(WHOLE), crop.area);
+		let half = egui::Rect::from_min_max(egui::pos2(0.5, 0.0), egui::pos2(1.0, 0.5));
+		assert_eq!(
+			crop.uv(half),
+			egui::Rect::from_min_max(egui::pos2(0.5, 0.5), egui::pos2(0.75, 0.75))
+		);
+		assert_eq!(
+			crop.size(egui::vec2(1920.0, 1080.0)),
+			egui::vec2(960.0, 540.0)
+		);
+		let window = sized_to(480.0 * 270.0, crop.size(egui::vec2(1920.0, 1080.0)));
+		assert!((window.x / window.y - 16.0 / 9.0).abs() < 0.02);
 	}
 }
 
@@ -6640,6 +7122,7 @@ enum PipButton {
 	Pin,
 	Stretch,
 	Reset,
+	Crop,
 }
 
 /// Gap between the picture-in-picture window's edge and its buttons; the resize corners

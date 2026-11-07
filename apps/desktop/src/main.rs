@@ -471,6 +471,8 @@ fn main() -> eframe::Result {
 		demo_check_updates();
 		return Ok(());
 	}
+	// Windows a crashed or killed Leech left parked for Stream to yourself come back first.
+	discord_voice::screen::recover_parked_windows();
 	// Native GPU/window capabilities are selected before the first window exists.
 	let preferences = if demo {
 		Ok(local_store::AppPreferences::default())
@@ -493,6 +495,10 @@ fn main() -> eframe::Result {
 	let transparency_available =
 		transparency_available || demo && std::env::args().any(|arg| arg == "--demo-transparency");
 	let restore_ms = preferences.as_ref().map_or(0, |value| value.restore_ms);
+	let splash_colors = preferences
+		.as_ref()
+		.ok()
+		.and_then(|value| value.splash_colors);
 	// Windows opens as the compact splash unless it starts in the tray. Fixtures open straight
 	// into the app, except `--demo-splash[=update|grow]`.
 	let splash = cfg!(target_os = "windows")
@@ -505,7 +511,10 @@ fn main() -> eframe::Result {
 	let options = eframe::NativeOptions {
 		viewport: {
 			let builder = egui::ViewportBuilder::default()
-				.with_transparent(transparency_available)
+				// On Windows every window can carry alpha (Stream to yourself windows show
+				// transparent GIFs and fade); the main window still paints opaque pixels unless
+				// its own transparency is on.
+				.with_transparent(transparency_available || cfg!(target_os = "windows"))
 				.with_active(!start_minimized)
 				.with_app_id("io.github.rottenvia.leech");
 			let builder = if splash {
@@ -553,10 +562,9 @@ fn main() -> eframe::Result {
 						descriptor.backends = eframe::wgpu::Backends::from_env()
 							.unwrap_or(eframe::wgpu::Backends::DX12);
 						// An HWND swapchain is always opaque; only a DirectComposition one carries
-						// alpha to the desktop and its acrylic backdrop. The env override still wins.
-						if transparency_available
-							&& eframe::wgpu::Dx12SwapchainKind::from_env().is_none()
-						{
+						// alpha to the desktop, the acrylic backdrop and see-through Stream to
+						// yourself windows. The env override still wins.
+						if eframe::wgpu::Dx12SwapchainKind::from_env().is_none() {
 							descriptor.backend_options.dx12.presentation_system =
 								eframe::wgpu::Dx12SwapchainKind::DxgiFromVisual;
 						}
@@ -600,7 +608,10 @@ fn main() -> eframe::Result {
 			);
 			desktop.instance = instance;
 			if splash {
-				desktop.splash = Some((splash::Splash::new(restore_ms), window_geometry));
+				desktop.splash = Some((
+					splash::Splash::new(restore_ms, splash_colors),
+					window_geometry,
+				));
 			} else if let Some(geometry) = window_geometry {
 				app_settings::restore_window_geometry(&desktop.window, geometry);
 			}
@@ -2910,9 +2921,15 @@ impl Desktop {
 		}
 		false
 	}
-	fn save_app_preferences(&mut self) {
+	fn save_app_preferences(&mut self, ctx: &egui::Context) {
 		if self.fixture_only || self.state.demo {
 			return;
+		}
+		// The next launch's splash shows before the theme loads, so it keeps its colours.
+		let colors = Some(splash::theme_colors(ctx));
+		if self.app_settings.current.splash_colors != colors {
+			self.app_settings.current.splash_colors = colors;
+			self.app_settings.state.dirty = true;
 		}
 		self.app_settings.observe(&self.messaging);
 		self.cache_pending += usize::from(
@@ -4711,7 +4728,8 @@ impl Desktop {
 		};
 		let elapsed = splash.elapsed();
 		let stage = self.restoring();
-		if stage.is_some() {
+		// The splash shown on reopening runs over a live session, which is not a restore.
+		if stage.is_some() && self.state.user.is_none() {
 			// Times the restore for the next launch's estimate, as the restore screen does.
 			self.restore_started
 				.get_or_insert_with(std::time::Instant::now);
@@ -4803,6 +4821,76 @@ impl Desktop {
 			window,
 			local_store::WindowGeometry { size, position },
 		);
+	}
+	/// Opening Leech from the tray installs a waiting update as a launch does: the window
+	/// turns back into the splash, centred where it was, and grows back if the install fails.
+	/// Never during a call or over unsaved work, which a restart would end.
+	fn reopen_splash(&mut self, ctx: &egui::Context) {
+		if !cfg!(target_os = "windows")
+			|| self.splash.is_some()
+			|| !self
+				.messaging
+				.updates
+				.installs_on_reopen(self.state.voice.active.is_some())
+			|| self.close_needs_confirmation()
+			|| self.downloads.is_active()
+		{
+			return;
+		}
+		self.messaging.updates.install_requested = true;
+		let window = &self.window;
+		// A minimized window reports a parking spot far off screen.
+		let was = window
+			.outer_position()
+			.ok()
+			.filter(|_| window.is_minimized() != Some(true))
+			.map(|at| (at, window.outer_size()));
+		window.set_fullscreen(None);
+		window.set_maximized(false);
+		window.set_decorations(false);
+		#[cfg(target_os = "windows")]
+		align_undecorated_surface(window);
+		window.set_resizable(false);
+		let size = winit::dpi::LogicalSize::new(splash::SIZE[0], splash::SIZE[1]);
+		window.set_min_inner_size(Some(size));
+		let _ = window.request_inner_size(size);
+		if let Some((at, outer)) = was {
+			let splash = size.to_physical::<u32>(window.scale_factor());
+			window.set_outer_position(winit::dpi::PhysicalPosition::new(
+				at.x + (outer.width as i32 - splash.width as i32) / 2,
+				at.y + (outer.height as i32 - splash.height as i32) / 2,
+			));
+		}
+		self.splash = Some((
+			splash::Splash::new(self.messaging.restore_ms, Some(splash::theme_colors(ctx))),
+			self.app_settings.current.window_geometry,
+		));
+	}
+	/// Unsaved or unsent work that closing must ask about first.
+	fn close_needs_confirmation(&self) -> bool {
+		(self.state.demo && self.state.has_unsent())
+			|| self
+				.state
+				.pending
+				.iter()
+				.any(|p| p.delivery != Delivery::Confirmed)
+			|| self.messaging.has_edit()
+			|| self.messaging.has_server_settings_changes()
+			|| self.messaging.extensions.theme_editor_dirty()
+			|| self.state.server_settings.pending
+			|| self.state.server_admin.pending
+			|| self.uploads.has_unsent()
+			|| self.messaging.external_upload.has_unsent()
+			|| self.forgetting
+			|| self.messaging.startup_busy
+			|| self.avatar_cleanup.is_some()
+			|| self.cache_pending > 0
+			|| self.cache_clears.pending()
+			|| (!self.fixture_only && self.app_settings.state.needs_attention())
+			|| (!self.fixture_only && self.reading.needs_attention())
+			|| (!self.fixture_only && self.game_activity.needs_attention())
+			|| (!self.fixture_only && self.tray_setting.needs_attention())
+			|| self.cache_error
 	}
 	/// Restore screen for returning accounts: no sign-in controls, just the stage,
 	/// an indeterminate bar and a way out to the welcome screen.
@@ -6650,6 +6738,9 @@ impl eframe::App for Desktop {
 	fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
 		if self.window_transparent {
 			egui::Color32::TRANSPARENT.to_normalized_gamma_f32()
+		} else if let Some(canvas) = self.splash.as_ref().and_then(|(splash, _)| splash.canvas()) {
+			// The splash paints the saved theme before the theme itself loads.
+			canvas.to_normalized_gamma_f32()
 		} else {
 			// Opaque windows need opaque pixels too, including uncovered panel corners.
 			visuals.panel_fill.to_opaque().to_normalized_gamma_f32()
@@ -6781,6 +6872,7 @@ impl eframe::App for Desktop {
 			}
 		}
 		self.messaging.updates.starting = self.splash.is_some();
+		self.messaging.updates.hidden = self.tray_window.hidden;
 		let focused = ctx.input(|input| input.focused);
 		if focused && !self.focused {
 			self.updater.nudge();
@@ -7001,6 +7093,10 @@ impl eframe::App for Desktop {
 			self.voice.stop();
 		}
 		self.sync_tray(ctx);
+		// After every way of showing the window, while it is still hidden.
+		if self.tray_window.take_reopened() {
+			self.reopen_splash(ctx);
+		}
 		if self.state.voice.active.is_some() {
 			// Speaking, notices, remote video, devices, hotkeys and deadlines each wake the UI
 			// themselves; this heartbeat only bounds a missed wake, so a call does not repaint at 20 Hz.
@@ -7282,32 +7378,7 @@ impl eframe::App for Desktop {
 			self.messaging.accept_server_sticker(&ctx, scope, result);
 		}
 		self.messaging.voice_available = true;
-		if close_requested
-			&& !self.close_approved
-			&& ((self.state.demo && self.state.has_unsent())
-				|| self
-					.state
-					.pending
-					.iter()
-					.any(|p| p.delivery != Delivery::Confirmed)
-				|| self.messaging.has_edit()
-				|| self.messaging.has_server_settings_changes()
-				|| self.messaging.extensions.theme_editor_dirty()
-				|| self.state.server_settings.pending
-				|| self.state.server_admin.pending
-				|| self.uploads.has_unsent()
-				|| self.messaging.external_upload.has_unsent()
-				|| self.forgetting
-				|| self.messaging.startup_busy
-				|| self.avatar_cleanup.is_some()
-				|| self.cache_pending > 0
-				|| self.cache_clears.pending()
-				|| (!self.fixture_only && self.app_settings.state.needs_attention())
-				|| (!self.fixture_only && self.reading.needs_attention())
-				|| (!self.fixture_only && self.game_activity.needs_attention())
-				|| (!self.fixture_only && self.tray_setting.needs_attention())
-				|| self.cache_error)
-		{
+		if close_requested && !self.close_approved && self.close_needs_confirmation() {
 			ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
 			self.confirming_close = true;
 		}
@@ -7939,7 +8010,7 @@ impl eframe::App for Desktop {
 			frame.set_traffic_lights_position(&ctx, egui::Rangef::new(0.0, title_bar_height), 12.0);
 		}
 		self.sync_customization(&ctx);
-		self.save_app_preferences();
+		self.save_app_preferences(&ctx);
 		self.messaging.updates_save_failed = self.app_settings.state.failed;
 		self.save_reading_preferences(&ctx);
 		self.sync_own_presence(&ctx);

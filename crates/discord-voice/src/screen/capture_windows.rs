@@ -9,14 +9,23 @@ use std::sync::{
 	mpsc::SyncSender,
 };
 use std::time::{Duration, Instant};
-use windows::Win32::Foundation::{HWND, POINT, RECT};
+use windows::Win32::Foundation::{COLORREF, HANDLE, HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D};
 use windows::Win32::Graphics::Gdi::{
-	GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONULL, MONITORINFO, MonitorFromWindow,
+	GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTONULL, MONITORINFO,
+	MonitorFromRect, MonitorFromWindow, RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE,
+	RedrawWindow,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-	GA_ROOT, GetAncestor, GetClassNameW, GetWindowRect, IsIconic, IsWindow, WindowFromPoint,
+	EnumWindows, GA_ROOT, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetForegroundWindow,
+	GetLayeredWindowAttributes, GetPropW, GetWindowLongPtrW, GetWindowPlacement, GetWindowRect,
+	HWND_NOTOPMOST, HWND_TOPMOST, IsIconic, IsWindow, LAYERED_WINDOW_ATTRIBUTES_FLAGS, LWA_ALPHA,
+	RemovePropW, SW_MAXIMIZE, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_ASYNCWINDOWPOS,
+	SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetLayeredWindowAttributes, SetPropW,
+	SetWindowLongPtrW, SetWindowPlacement, SetWindowPos, ShowWindowAsync, WINDOWPLACEMENT,
+	WPF_RESTORETOMAXIMIZED, WS_EX_LAYERED, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WindowFromPoint,
 };
+use windows::core::{BOOL, PCWSTR, w};
 use windows_capture::{
 	capture::{CaptureControl, Context, GraphicsCaptureApiHandler},
 	dxgi_duplication_api::{DxgiDuplicationApi, DxgiDuplicationFormat, Error as DuplicationError},
@@ -491,12 +500,260 @@ fn fills_display(window: HWND) -> Option<HMONITOR> {
 /// exclusive fullscreen minimizes when it loses focus), so capture gets no pictures until it
 /// is restored.
 #[allow(unsafe_code)] // Win32 window query.
+/// A minimized window Leech cannot keep drawing (see [`Parker`]), so it shows nothing.
 pub(crate) fn minimized(source: SourceId) -> bool {
 	match source {
-		// SAFETY: A plain query of a window handle that may already be gone.
-		SourceId::Window(id) => unsafe { IsIconic(HWND(id as usize as *mut _)) }.as_bool(),
+		SourceId::Window(id) => {
+			let window = HWND(id as usize as *mut _);
+			// SAFETY: A plain query of a window handle that may already be gone.
+			unsafe { IsIconic(window) }.as_bool() && !parkable(window)
+		}
 		_ => false,
 	}
+}
+
+/// Marks a window Leech parked, holding its own extended style (with a set top bit, so a
+/// style of 0 still reads as present), for giving it back after Leech ended without doing so.
+const PARKED_STYLE: PCWSTR = w!("LeechParkedStyle");
+/// The window's own layered alpha plus one; absent when it was not layered.
+const PARKED_ALPHA: PCWSTR = w!("LeechParkedAlpha");
+const PRESENT: usize = 1 << (usize::BITS - 2);
+
+/// A minimized window shown in a Stream to yourself window keeps drawing while parked:
+/// restored without activation, see-through (alpha 1 of 255) and click-through, above other
+/// windows, so apps that pause while minimized or covered (browsers, Spotify) keep painting
+/// and capture keeps getting pictures. Activating it (taskbar, Alt+Tab) gives it back as it
+/// was; minimizing it again parks it again. Ending the capture minimizes it again. A window
+/// that fills a display when restored (a game) is never parked: restoring an exclusive
+/// fullscreen game could switch the display mode under whatever the user is doing.
+pub(crate) struct Parker {
+	window: HWND,
+	parked: Option<Parked>,
+}
+
+struct Parked {
+	style: isize,
+	layered: Layered,
+	placement: WINDOWPLACEMENT,
+}
+
+#[allow(unsafe_code)] // Win32 window state of another process's window.
+impl Parker {
+	pub(crate) fn new(source: SourceId) -> Option<Self> {
+		match source {
+			SourceId::Window(id) => Some(Self {
+				window: HWND(id as usize as *mut _),
+				parked: None,
+			}),
+			_ => None,
+		}
+	}
+
+	/// Parks the window while it is minimized, and lets go once the user brings it up.
+	pub(crate) fn tick(&mut self) {
+		// SAFETY: Plain queries of a window handle that may already be gone.
+		let (gone, foreground, minimized) = unsafe {
+			(
+				!IsWindow(Some(self.window)).as_bool(),
+				GetForegroundWindow() == self.window,
+				IsIconic(self.window).as_bool(),
+			)
+		};
+		if gone {
+			self.parked = None;
+		} else if self.parked.is_some() {
+			if foreground {
+				self.release(false);
+			}
+		} else if minimized && parkable(self.window) {
+			self.park();
+		}
+	}
+
+	fn park(&mut self) {
+		let window = self.window;
+		let mut placement = WINDOWPLACEMENT {
+			length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+			..Default::default()
+		};
+		// SAFETY: Queries into owned locals.
+		let style = unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) };
+		// SAFETY: As above.
+		if unsafe { GetWindowPlacement(window, &mut placement) }.is_err() {
+			return;
+		}
+		let Ok(layered) = layered_attributes(window, style) else {
+			return;
+		};
+		// SAFETY: Style and position changes on a live window; the props let a later Leech
+		// undo them. Async calls never wait on a window that stopped answering.
+		unsafe {
+			let _ = SetPropW(
+				window,
+				PARKED_STYLE,
+				Some(HANDLE((style as usize | PRESENT) as *mut _)),
+			);
+			if let Some((_, alpha, _)) = layered {
+				let _ = SetPropW(
+					window,
+					PARKED_ALPHA,
+					Some(HANDLE((usize::from(alpha) + 1) as *mut _)),
+				);
+			}
+			SetWindowLongPtrW(
+				window,
+				GWL_EXSTYLE,
+				style | (WS_EX_LAYERED | WS_EX_TRANSPARENT).0 as isize,
+			);
+			let _ = SetLayeredWindowAttributes(window, COLORREF(0), 1, LWA_ALPHA);
+			let _ = SetWindowPos(
+				window,
+				Some(HWND_TOPMOST),
+				0,
+				0,
+				0,
+				0,
+				SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+			);
+			let _ = ShowWindowAsync(window, SW_SHOWNOACTIVATE);
+		}
+		self.parked = Some(Parked {
+			style,
+			layered,
+			placement,
+		});
+	}
+
+	/// Gives the window its own look back: minimized again with its old placement when the
+	/// capture ends, or as it is when the user brought it up.
+	fn release(&mut self, minimize: bool) {
+		let Some(parked) = self.parked.take() else {
+			return;
+		};
+		let window = self.window;
+		// SAFETY: Restores what `park` saved on a window that may already be gone.
+		unsafe {
+			if minimize {
+				// Minimized while still invisible, with its old placement (maximized or not).
+				let mut placement = parked.placement;
+				placement.showCmd = SW_SHOWMINNOACTIVE.0 as u32;
+				let _ = SetWindowPlacement(window, &placement);
+			}
+			restore_style(window, parked.style, parked.layered);
+			if !minimize && parked.placement.flags.0 & WPF_RESTORETOMAXIMIZED.0 != 0 {
+				// The user activated it; it was maximized before it was minimized.
+				let _ = ShowWindowAsync(window, SW_MAXIMIZE);
+			}
+		}
+	}
+}
+
+impl Drop for Parker {
+	fn drop(&mut self) {
+		self.release(true);
+	}
+}
+
+/// Puts back a parked window's style, layered attributes and z-order, and drops the marks.
+#[allow(unsafe_code)] // Win32 window state of another process's window.
+fn restore_style(window: HWND, style: isize, layered: Layered) {
+	// SAFETY: Style and position changes on a window that may already be gone.
+	unsafe {
+		SetWindowLongPtrW(window, GWL_EXSTYLE, style);
+		if let Some((key, alpha, flags)) = layered {
+			let _ = SetLayeredWindowAttributes(window, key, alpha, flags);
+		}
+		if style & WS_EX_TOPMOST.0 as isize == 0 {
+			let _ = SetWindowPos(
+				window,
+				Some(HWND_NOTOPMOST),
+				0,
+				0,
+				0,
+				0,
+				SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+			);
+		}
+		// A window that leaves the layered style repaints from scratch.
+		let _ = RedrawWindow(
+			Some(window),
+			None,
+			None,
+			RDW_ERASE | RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN,
+		);
+		let _ = RemovePropW(window, PARKED_STYLE);
+		let _ = RemovePropW(window, PARKED_ALPHA);
+	}
+}
+
+/// Gives back windows an earlier Leech parked and never restored because it was ended.
+#[allow(unsafe_code)] // Win32 window enumeration.
+pub(crate) fn recover_parked() {
+	unsafe extern "system" fn each(window: HWND, _: LPARAM) -> BOOL {
+		// SAFETY: Reads this window's props; restores it when Leech marked it.
+		unsafe {
+			let style = GetPropW(window, PARKED_STYLE).0 as usize;
+			if style & PRESENT != 0 {
+				let alpha = GetPropW(window, PARKED_ALPHA).0 as usize;
+				let _ = ShowWindowAsync(window, SW_SHOWMINNOACTIVE);
+				restore_style(
+					window,
+					(style & !PRESENT) as isize,
+					(alpha > 0).then(|| (COLORREF(0), (alpha - 1) as u8, LWA_ALPHA)),
+				);
+			}
+		}
+		true.into()
+	}
+	// SAFETY: The callback only touches the window it is given.
+	let _ = unsafe { EnumWindows(Some(each), LPARAM(0)) };
+}
+
+type Layered = Option<(COLORREF, u8, LAYERED_WINDOW_ATTRIBUTES_FLAGS)>;
+
+/// A layered window's own attributes, `Ok(None)` for a window that is not layered, and `Err`
+/// for one drawing its own per-pixel alpha: it has no attributes, and changing its style
+/// would break it, so it is never parked.
+#[allow(unsafe_code)] // Win32 window query.
+fn layered_attributes(window: HWND, style: isize) -> Result<Layered, ()> {
+	if style & WS_EX_LAYERED.0 as isize == 0 {
+		return Ok(None);
+	}
+	let (mut key, mut alpha, mut flags) = (COLORREF(0), 0_u8, LAYERED_WINDOW_ATTRIBUTES_FLAGS(0));
+	// SAFETY: Queries into owned locals of a window that may already be gone.
+	unsafe {
+		GetLayeredWindowAttributes(window, Some(&mut key), Some(&mut alpha), Some(&mut flags))
+	}
+	.map(|()| Some((key, alpha, flags)))
+	.map_err(|_| ())
+}
+
+/// Whether a minimized `window` can be parked to keep drawing.
+#[allow(unsafe_code)] // Win32 window query.
+fn parkable(window: HWND) -> bool {
+	// SAFETY: A plain query of a window handle that may already be gone.
+	let style = unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) };
+	!fullscreen_when_restored(window) && layered_attributes(window, style).is_ok()
+}
+
+/// Whether `window` fills its display when restored: a game, which is never parked.
+#[allow(unsafe_code)] // Win32 window and display queries.
+fn fullscreen_when_restored(window: HWND) -> bool {
+	let mut placement = WINDOWPLACEMENT {
+		length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+		..Default::default()
+	};
+	// SAFETY: Queries into owned locals.
+	if unsafe { GetWindowPlacement(window, &mut placement) }.is_err() {
+		return false;
+	}
+	let normal = placement.rcNormalPosition;
+	// SAFETY: As above.
+	let monitor = unsafe { MonitorFromRect(&normal, MONITOR_DEFAULTTONEAREST) };
+	monitor_rect(monitor).is_some_and(|display| {
+		normal.right - normal.left >= display.right - display.left
+			&& normal.bottom - normal.top >= display.bottom - display.top
+	})
 }
 
 /// The display to duplicate instead of capturing: the one a fullscreen window fills while it
@@ -921,6 +1178,87 @@ mod tests {
 				*median < Duration::from_millis(30),
 				"encoding waits for the duplication: median {median:?}"
 			);
+		}
+	}
+}
+
+#[cfg(test)]
+#[allow(unsafe_code)]
+mod parking {
+	use super::*;
+	use windows::Win32::UI::WindowsAndMessaging::{
+		CreateWindowExW, DestroyWindow, ES_MULTILINE, WINDOW_EX_STYLE, WINDOW_STYLE,
+		WS_OVERLAPPEDWINDOW,
+	};
+
+	fn settle() {
+		// Async window calls land on this thread's window when it pumps messages.
+		use windows::Win32::UI::WindowsAndMessaging::{
+			DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+		};
+		for _ in 0..10 {
+			let mut message = MSG::default();
+			// SAFETY: A message pump for the test's own window.
+			unsafe {
+				while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+					let _ = TranslateMessage(&message);
+					DispatchMessageW(&message);
+				}
+			}
+			std::thread::sleep(Duration::from_millis(20));
+		}
+	}
+
+	#[test]
+	#[ignore = "creates a minimized window; run by hand on Windows"]
+	fn a_minimized_window_parks_invisibly_and_goes_back_minimized_as_it_was() {
+		// SAFETY: A window this test owns.
+		let window = unsafe {
+			CreateWindowExW(
+				WINDOW_EX_STYLE(0),
+				w!("EDIT"),
+				w!("Leech parking test"),
+				WS_OVERLAPPEDWINDOW | WINDOW_STYLE(ES_MULTILINE as u32),
+				200,
+				200,
+				480,
+				270,
+				None,
+				None,
+				None,
+				None,
+			)
+		}
+		.unwrap();
+		// SAFETY: As above.
+		let _ = unsafe { ShowWindowAsync(window, SW_SHOWMINNOACTIVE) };
+		settle();
+		let style = unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) };
+		let mut parker = Parker::new(SourceId::Window(window.0 as usize as u64)).unwrap();
+		parker.tick();
+		settle();
+		// SAFETY: Queries of the test's window.
+		unsafe {
+			assert!(!IsIconic(window).as_bool(), "parked windows are restored");
+			let parked = GetWindowLongPtrW(window, GWL_EXSTYLE);
+			assert_ne!(
+				parked & WS_EX_TRANSPARENT.0 as isize,
+				0,
+				"and click-through"
+			);
+			assert_ne!(GetPropW(window, PARKED_STYLE).0 as usize & PRESENT, 0);
+		}
+		drop(parker);
+		settle();
+		// SAFETY: As above.
+		unsafe {
+			assert!(
+				IsIconic(window).as_bool(),
+				"ending the view minimizes it again"
+			);
+			assert_eq!(GetWindowLongPtrW(window, GWL_EXSTYLE), style);
+			assert!(GetPropW(window, PARKED_STYLE).is_invalid());
+			let _ = DestroyWindow(window);
 		}
 	}
 }
