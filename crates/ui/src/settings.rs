@@ -1121,6 +1121,8 @@ impl MessagingUi {
 						}
 					},
 				);
+				design::card_divider(ui);
+				self.loading_color_settings(ui);
 			},
 		);
 		design::group(
@@ -1157,6 +1159,76 @@ impl MessagingUi {
 		);
 		self.cosmetic_settings(ui);
 		self.layout_settings(ui, demo);
+	}
+
+	/// The splash and upload progress: the theme's two main colours, or two of the user's.
+	fn loading_color_settings(&mut self, ui: &mut egui::Ui) {
+		design::row(
+			ui,
+			"settings-appearance-settings-loading-colors",
+			Some("settings-appearance-settings-loading-colors-description"),
+			|ui| {
+				if let Some(choice) = design::segmented(
+					ui,
+					&[
+						"settings-appearance-settings-loading-colors-theme",
+						"settings-appearance-settings-loading-colors-custom",
+					],
+					usize::from(self.loading_colors.is_some()),
+				) {
+					// Custom starts from what loading looks like now.
+					self.loading_colors = (choice == 1).then(|| {
+						let colors = design::palette(ui);
+						crate::loading::pair()
+							.unwrap_or([colors.canvas.to_opaque(), colors.accent])
+							.map(|color| [color.r(), color.g(), color.b()])
+					});
+				}
+			},
+		);
+		let Some(pair) = &mut self.loading_colors else {
+			return;
+		};
+		for (index, (title, detail, hover)) in [
+			(
+				"settings-appearance-settings-loading-colors-background",
+				"settings-appearance-settings-loading-colors-background-description",
+				"settings-appearance-settings-loading-colors-choose-background",
+			),
+			(
+				"settings-appearance-settings-loading-colors-bar",
+				"settings-appearance-settings-loading-colors-bar-description",
+				"settings-appearance-settings-loading-colors-choose-bar",
+			),
+		]
+		.into_iter()
+		.enumerate()
+		{
+			design::card_divider(ui);
+			design::row(ui, title, Some(detail), |ui| {
+				design::color_edit(ui, &mut pair[index])
+					.on_hover_text(crate::i18n::translate(hover));
+			});
+		}
+		let [surface, bar] = pair.map(|[r, g, b]| egui::Color32::from_rgb(r, g, b));
+		if crate::loading::readable(surface, bar).is_none() {
+			// The warning hue marks it; text in it would be too faint on the light card.
+			let colors = design::palette(ui);
+			ui.horizontal_top(|ui| {
+				ui.spacing_mut().item_spacing.x = 6.0;
+				icons::inline(ui, icons::Icon::ShieldWarning, 16.0, colors.warning);
+				ui.add(
+					egui::Label::new(
+						RichText::new(crate::i18n::translate(
+							"settings-appearance-settings-loading-colors-too-close",
+						))
+						.size(13.0)
+						.color(colors.text),
+					)
+					.wrap(),
+				);
+			});
+		}
 	}
 
 	/// Device-local switches for profile cosmetics. Hidden ones are neither drawn nor loaded.

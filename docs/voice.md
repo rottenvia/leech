@@ -506,8 +506,9 @@ The picture is stretched to the window unless fitted, and is zoomed by holding t
 button and scrolling. At most 8 windows show at once.
 
 Nothing is encoded or sent. Screens and windows are captured in memory at up to 30 fps
-through the share capture path without its encoder or system audio; only the newest
-picture is kept. Videos play silently on a loop on their own thread (audio is decoded only
+through the share capture path without its encoder, system audio or the mouse pointer
+(from November 8, 2026; Go Live keeps its own cursor setting); only the newest picture is
+kept. Videos play silently on a loop on their own thread (audio is decoded only
 so the reader does not queue it). Animations keep at most 1,200 frames and 192 MB decoded,
 and are scaled down until they fit. Stills keep at most a 3840 px edge. A shared screen
 shows these windows like any other window, so on one monitor they work as an overlay.
@@ -525,6 +526,23 @@ From 0.1.21 (November 7, 2026):
   display when restored (a game) and one drawing its own per-pixel alpha are never parked
   and say so instead. Parked windows carry window properties, so a Leech that crashed gives
   them back at its next start.
+
+  Fixed on November 8, 2026: in 0.1.21 any other Leech starting or ending (a restart, an
+  update, a second build) gave back every parked window, including ones a running Leech still
+  showed, and a parked window minimized again (that, Show desktop, the app itself) was never
+  parked again, so the picture froze until the window was brought up. The marks now name the
+  parking process (id and start time) and only windows of this process or of a Leech that has
+  ended are given back; a parked window minimized again, or whose see-through style was undone,
+  is parked again within 200 ms. A minimized window that is still the active one waits until
+  another window is active, so its taskbar button keeps showing it. A parked window is also
+  no-activate, with its taskbar button kept (`WS_EX_APPWINDOW`, unowned windows only): as the
+  topmost window, 0.1.21's was the one Windows activated when the user minimized the active
+  window with nothing under it, which gave it back onto the screen. The taskbar, a dock or
+  Alt+Tab still give it back (`SetForegroundWindow`/`SwitchToThisWindow` measured; Alt+Tab
+  itself unverified), with its own extended style restored exactly. Measured on a Chromium
+  (Thorium 138) window drawing every frame: 30 changed pictures a second while minimized,
+  through Show desktop, another Leech starting and its style being undone; 0.1.21 froze at
+  the first of these.
 - **Crop** (chrome button and menu) keeps part of the picture, chosen over the whole one
   with corner and side handles; the texture is only sampled differently, so nothing is
   rescaled. Picture-in-picture streams crop the same way.
@@ -542,6 +560,72 @@ From 0.1.21 (November 7, 2026):
   Giphy page link becomes its GIF, and other pages give their `og:image`/`og:video`. One
   download at a time, at most 96 MB (2 MB for a page), 30 s and 5 redirects.
 - **Zoom** moves a tenth per wheel notch (100 %, 110 %, 120 %…), in shares too.
+
+## Remote control — November 8, 2026
+
+From 0.1.22 one Leech user can control another's PC while both are in the same call. The
+call bar has a remote control button between screen share and More. Left click offers
+**ACCESS** (ask to control their PC) and **CONTROL** (let them control yours), and asks who
+when more than two people are in the call.
+
+**Signalling.** The two Leech clients trade connection offers through their direct
+message: silent messages (`@silent`) carrying a marker (`U+2063 lr1 <kind> <session> <offer>`)
+that Leech never shows, never notifies and never counts as unread
+(`client-core/src/remote.rs`). Each sender deletes its own signal as soon as Discord confirms
+it, so other clients may show it for a moment. Signals are accepted only from someone in this
+device's connected call, through their one-to-one DM; a missing DM is opened without
+navigating to it. Kinds: `ask`, `give`, `yes` (with the responder's offer) and `no`.
+
+**Flow.** Access: the asker's waiting window animates while the other side gets Leech's own
+notification (bottom right, always on top, a 15 second countdown ring; it declines when the
+countdown ends, the × declines too). A click opens the answer in Leech. Accepting connects at
+once and opens the setup: keyboard only, mouse only or full control, whether the PC's sound
+goes along, and one pause key, then a warning to remember it ("don't warn me again" skips
+it next time). Finish starts control. Control: the one offering sets up first, then the other
+side answers the same notification. The asker gives up after 60 seconds.
+
+**While controlled.** The pause key works from anywhere (a low-level keyboard hook) and
+pauses or resumes the controller at once; the controller is told. Left click on the button
+ends control; right click opens Access, where the permission changes live or Disable ends
+control, audio switches, and Pause/Resume sits next to End control.
+
+**Controlling.** The other screen opens fullscreen on this monitor with nothing over it but a
+small label at the top right ("Full control · Name's PC"), which a key chosen with right
+click on the button hides. The picture keeps the other screen's shape: a smaller monitor here
+sees it scaled down, the encoder's black bars never show, and the pointer maps exactly onto
+the other screen. Escape gives Leech back and shrinks the view to a window that only
+shows; a double-click returns to control. Shift+Escape sends Escape. The Windows key stops
+control. While a game there hides its pointer, raw motion drives it and this pointer is
+confined and hidden (after a quarter second, so typing does not flicker it).
+
+**Transport** (`discord-voice/src/remote/`). Direct UDP between the two PCs: each offer
+carries a session id, an X25519 key and candidate addresses (the STUN-mapped public address
+from `stun.l.google.com:19302` / `stun.cloudflare.com:3478`, plus local and VPN addresses).
+Both sides punch every 50 ms for up to 10 s; the first authenticated packet picks the path.
+Keys per direction come from the shared secret and session id (ChaCha20-Poly1305, counter
+nonces, replay window of 64). Keepalives every second; 6 s of silence ends the session.
+
+- **Video:** the primary display, captured and encoded like a Go Live share (1080p60, or
+  720p60 for smaller displays, low-latency CBR without B-frames, no cursor drawn: the
+  controller's own pointer is the cursor). Frames go in datagrams of at most 1200 bytes,
+  keyframes paced 32 fragments per millisecond. An incomplete frame is dropped after 150 ms
+  or when a newer one completes, then frames wait for a keyframe, asked at most every 300 ms.
+  Loss reports every 500 ms scale the bitrate ×0.75 above 3 % loss and ×1.08 below 1 %,
+  between 1 Mbps and the share cap, from 8 Mbps.
+- **Audio:** the PC's sound as 20 ms Opus frames, only while allowed; the controller plays it
+  on the default output with a 60 ms prefill and drops above 200 ms.
+- **Input:** batched per frame, each datagram sent twice and repeating the previous batch;
+  the controlled PC applies batches once, in order, through `SendInput` (scan codes, so games
+  see keys; absolute moves over the virtual desktop that reach every edge pixel; relative
+  moves while its pointer is hidden). Every 100 ms the controller sends what it holds, so a
+  lost key-up never leaves a key down. Pausing, a permission change and the end release
+  everything held.
+- Media and input run on the link's own thread and runtime with the 1 ms timer and MMCSS
+  priority, like calls, so a game's load does not delay them.
+
+Not verified on real networks yet: NAT traversal beyond loopback, behaviour under real loss.
+Windows only for being controlled; injection cannot reach elevated windows, the UAC prompt
+or the lock screen unless Leech itself is elevated.
 
 ## Screen sharing
 

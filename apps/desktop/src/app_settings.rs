@@ -83,6 +83,22 @@ impl Settings {
 			cosmetics: ui.cosmetics,
 			image_cache: ui.image_cache,
 			splash_colors: self.current.splash_colors,
+			remote_keys: local_store::RemoteKeys {
+				pause: ui
+					.remote
+					.keys
+					.pause
+					.as_ref()
+					.map(|key| (key.scan, key.extended)),
+				overlay: ui
+					.remote
+					.keys
+					.overlay
+					.as_ref()
+					.map(|key| (key.scan, key.extended)),
+				skip_warning: ui.remote.keys.skip_warning,
+			},
+			loading_colors: ui.loading_colors,
 		};
 		if value != self.current {
 			self.state.touched = true;
@@ -110,6 +126,7 @@ impl Settings {
 		ui.gpu_preference = value.gpu_preference;
 		ui.primary_color = value.primary_color;
 		ui.call_color = value.call_color;
+		ui.loading_colors = value.loading_colors;
 		ui.call_grid = value.call_grid;
 		ui.call_hide_own_camera = value.call_hide_own_camera;
 		ui.call_hide_non_video = value.call_hide_non_video;
@@ -134,6 +151,16 @@ impl Settings {
 		ui.set_voice_user_mutes(&value.muted_users);
 		ui.cosmetics = value.cosmetics;
 		ui.image_cache = value.image_cache;
+		let key = |(scan, extended): (u16, bool)| ui::remote::Key {
+			scan,
+			extended,
+			name: platform::keyboard_hook::key_name(scan, extended),
+		};
+		ui.remote.keys = ui::remote::Keys {
+			pause: value.remote_keys.pause.map(key),
+			overlay: value.remote_keys.overlay.map(key),
+			skip_warning: value.remote_keys.skip_warning,
+		};
 	}
 }
 

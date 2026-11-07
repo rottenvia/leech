@@ -1,0 +1,894 @@
+//! Remote control on the desktop: signals through hidden direct messages, the connection
+//! and media through `discord_voice::remote`, and the keyboard through one low-level hook.
+//! The interface in `ui::remote` draws each [`Phase`]; this module moves it along.
+use crate::{egui, gpu_video::VideoTexture};
+use client_core::{
+	Command, State,
+	remote::{Kind, Received, Signal},
+};
+use discord_voice::remote::{self as net, End, Endpoint, Host, HostConfig, Link, Offer, Viewer};
+use model::Id;
+use platform::keyboard_hook::{Hook, KeyEvent};
+use std::{
+	sync::{Arc, Mutex, mpsc},
+	time::{Duration, Instant},
+};
+use ui::remote::{Grant, MouseButton, MouseInput, Permission, Phase, Request, Viewing};
+
+/// How long hole punching may take.
+const CONNECT: Duration = Duration::from_secs(10);
+/// How often the controller tells the other PC what it holds.
+const HELD_EVERY: Duration = Duration::from_millis(100);
+
+const VK_ESCAPE: u16 = 0x1B;
+const VK_LWIN: u16 = 0x5B;
+const VK_RWIN: u16 = 0x5C;
+/// Left and right Shift scan codes.
+const SHIFTS: [(u16, bool); 2] = [(0x2A, false), (0x36, false)];
+
+type Gathered = mpsc::Receiver<Result<Endpoint, &'static str>>;
+type Connected = mpsc::Receiver<Result<Link, &'static str>>;
+
+/// What a session waits on.
+enum Stage {
+	/// The request or offer came in; nothing is gathered until it is accepted.
+	Asked,
+	Gathering(Gathered),
+	/// This side's offer is out; the other side's is still to come.
+	Ready(Endpoint),
+	Connecting(Connected),
+	/// Connected while the host's setup is still open.
+	Linked(Link),
+	Hosting(Host),
+	/// Locked: the hook thread sends keys through it too.
+	Viewing(Arc<Mutex<Viewer>>),
+}
+
+struct Session {
+	id: u64,
+	peer: Id,
+	name: String,
+	/// This PC is the one controlled.
+	host: bool,
+	stage: Stage,
+	/// The signal this side sends once its offer is gathered.
+	announce: Kind,
+	theirs: Option<Offer>,
+	/// The host's setup finished with this grant.
+	grant: Option<Grant>,
+	texture: VideoTexture,
+	held_at: Instant,
+}
+
+#[derive(Default)]
+enum Mode {
+	#[default]
+	Pass,
+	/// The next key binds.
+	Bind,
+	/// This PC is controlled: the pause key pauses.
+	Host { pause: Option<(u16, bool)> },
+	/// This PC controls: keys go to the other one.
+	View {
+		viewer: Arc<Mutex<Viewer>>,
+		overlay: Option<(u16, bool)>,
+		keyboard: bool,
+	},
+}
+
+enum Caught {
+	Bound(u16, bool),
+	CancelBind,
+	Pause,
+	Minimize,
+	Stop,
+	Overlay,
+}
+
+/// Shared between the hook thread and the interface.
+#[derive(Default)]
+struct Shared {
+	mode: Mode,
+	/// Keys swallowed on the way down, whose ups are swallowed too.
+	swallowed: Vec<(u16, bool)>,
+	/// Keys pressed on the other PC.
+	forwarded: Vec<(u16, bool)>,
+	caught: Vec<Caught>,
+}
+
+#[derive(Default)]
+pub struct Remote {
+	session: Option<Session>,
+	hook: Option<Hook>,
+	shared: Arc<Mutex<Shared>>,
+	/// The hook could not start; it is not retried every frame.
+	hook_failed: bool,
+	#[cfg(feature = "demo")]
+	demo: Option<egui::TextureHandle>,
+}
+
+/// What the desktop does for the remote control besides sending commands.
+#[derive(Default)]
+pub struct Outcome {
+	pub commands: Vec<Command>,
+	/// Bring the main window forward.
+	pub focus: bool,
+}
+
+impl Remote {
+	pub fn poll(
+		&mut self,
+		ui: &mut ui::MessagingUi,
+		state: &mut State,
+		ctx: &egui::Context,
+		runtime: &tokio::runtime::Handle,
+	) -> Outcome {
+		let mut out = Outcome::default();
+		let (received, commands) = state.take_remote();
+		out.commands = commands;
+		for received in received {
+			self.received(ui, state, received, ctx, &mut out);
+		}
+		for request in std::mem::take(&mut ui.remote.requests) {
+			self.request(ui, state, request, ctx, runtime, &mut out);
+		}
+		self.advance(ui, state, ctx, runtime, &mut out);
+		// Someone leaving the call ends what they were part of.
+		if let Some(session) = &self.session
+			&& !state.remote_peers().contains(&session.peer)
+		{
+			let name = session.name.clone();
+			self.finish(ui, state, &mut out, false);
+			ui.toasts.push(
+				ui::design::Level::Info,
+				format!("Remote control ended: {name} is no longer in the call"),
+			);
+		}
+		self.sync_hook(ui, ctx, state.demo);
+		#[cfg(feature = "demo")]
+		self.demo(ui, state, ctx);
+		out
+	}
+
+	fn received(
+		&mut self,
+		ui: &mut ui::MessagingUi,
+		state: &mut State,
+		Received { from, signal }: Received,
+		ctx: &egui::Context,
+		out: &mut Outcome,
+	) {
+		let now = ctx.input(|input| input.time);
+		let name = peer_name(state, from);
+		match signal.kind {
+			Kind::Ask | Kind::Give => {
+				let offer = Offer::from_token(&signal.token);
+				if self.session.is_some() || ui.remote.active() || offer.is_none() {
+					// Busy: one session at a time.
+					out.commands.extend(state.send_remote_signal(
+						from,
+						Signal {
+							kind: Kind::No,
+							session: signal.session,
+							token: String::new(),
+						},
+					));
+					return;
+				}
+				let give = signal.kind == Kind::Give;
+				self.session = Some(Session {
+					id: signal.session,
+					peer: from,
+					name: name.clone(),
+					host: !give,
+					stage: Stage::Asked,
+					announce: Kind::Yes,
+					theirs: offer,
+					grant: None,
+					texture: VideoTexture::default(),
+					held_at: Instant::now(),
+				});
+				ui.remote.phase = Phase::Incoming {
+					peer: from,
+					name,
+					give,
+					since: now,
+					opened: false,
+				};
+				ctx.request_repaint();
+			}
+			Kind::Yes => {
+				let Some(session) = self
+					.session
+					.as_mut()
+					.filter(|session| session.id == signal.session && session.peer == from)
+				else {
+					return;
+				};
+				if session.theirs.is_none() {
+					session.theirs = Offer::from_token(&signal.token);
+				}
+				if let Phase::Waiting { connecting, .. } = &mut ui.remote.phase {
+					*connecting = true;
+				}
+			}
+			Kind::No => {
+				if self
+					.session
+					.as_ref()
+					.is_some_and(|session| session.id == signal.session && session.peer == from)
+				{
+					let waiting = matches!(ui.remote.phase, Phase::Waiting { .. });
+					self.finish(ui, state, out, false);
+					ui.toasts.push(
+						ui::design::Level::Info,
+						if waiting {
+							format!("{name} declined remote control")
+						} else {
+							format!("{name} cancelled remote control")
+						},
+					);
+				}
+			}
+		}
+	}
+
+	fn request(
+		&mut self,
+		ui: &mut ui::MessagingUi,
+		state: &mut State,
+		request: Request,
+		ctx: &egui::Context,
+		runtime: &tokio::runtime::Handle,
+		out: &mut Outcome,
+	) {
+		match request {
+			Request::Ask(peer) | Request::Give(peer, _) if self.session.is_none() => {
+				let mut id = [0; 8];
+				if getrandom::fill(&mut id).is_err() {
+					return;
+				}
+				let id = u64::from_le_bytes(id);
+				let (host, announce, grant) = match request {
+					Request::Give(_, grant) => (true, Kind::Give, Some(grant)),
+					_ => (false, Kind::Ask, None),
+				};
+				self.session = Some(Session {
+					id,
+					peer,
+					name: peer_name(state, peer),
+					host,
+					stage: Stage::Gathering(gather(id, ctx, runtime)),
+					announce,
+					theirs: None,
+					grant,
+					texture: VideoTexture::default(),
+					held_at: Instant::now(),
+				});
+			}
+			Request::Answer(true) => {
+				if let Some(session) = &mut self.session
+					&& matches!(session.stage, Stage::Asked)
+				{
+					session.stage = Stage::Gathering(gather(session.id, ctx, runtime));
+				}
+			}
+			Request::Start(grant) => {
+				if let Some(session) = &mut self.session {
+					session.grant = Some(grant);
+				}
+			}
+			Request::Change(grant) => {
+				if let Some(Session {
+					stage: Stage::Hosting(host),
+					grant: current,
+					..
+				}) = &mut self.session
+				{
+					*current = Some(grant);
+					host.set(config(grant));
+				}
+			}
+			Request::Answer(false) | Request::Cancel | Request::End => {
+				self.finish(ui, state, out, true);
+			}
+			Request::Focus => out.focus = true,
+			Request::Ask(_) | Request::Give(..) => {}
+		}
+	}
+
+	/// Moves the session to its next stage and mirrors it in the interface.
+	fn advance(
+		&mut self,
+		ui: &mut ui::MessagingUi,
+		state: &mut State,
+		ctx: &egui::Context,
+		runtime: &tokio::runtime::Handle,
+		out: &mut Outcome,
+	) {
+		let Some(session) = &mut self.session else {
+			return;
+		};
+		let mut failed = None;
+		session.stage = match std::mem::replace(&mut session.stage, Stage::Asked) {
+			Stage::Gathering(receive) => match receive.try_recv() {
+				Ok(Ok(endpoint)) => {
+					out.commands.extend(state.send_remote_signal(
+						session.peer,
+						Signal {
+							kind: session.announce,
+							session: session.id,
+							token: endpoint.offer().to_token(),
+						},
+					));
+					Stage::Ready(endpoint)
+				}
+				Ok(Err(error)) => {
+					failed = Some(error);
+					Stage::Asked
+				}
+				Err(mpsc::TryRecvError::Empty) => Stage::Gathering(receive),
+				Err(mpsc::TryRecvError::Disconnected) => {
+					failed = Some("Remote control could not start");
+					Stage::Asked
+				}
+			},
+			Stage::Ready(endpoint) => match session.theirs.clone() {
+				Some(theirs) => {
+					let (send, receive) = mpsc::sync_channel(1);
+					let wake = ctx.clone();
+					let host = session.host;
+					runtime.spawn(async move {
+						let _ = send.send(endpoint.connect(&theirs, host, CONNECT).await);
+						wake.request_repaint();
+					});
+					Stage::Connecting(receive)
+				}
+				None => Stage::Ready(endpoint),
+			},
+			Stage::Connecting(receive) => match receive.try_recv() {
+				Ok(Ok(link)) if session.host => Stage::Linked(link),
+				Ok(Ok(link)) => {
+					let wake = ctx.clone();
+					match Viewer::start(link, runtime, move || wake.request_repaint()) {
+						Ok(viewer) => {
+							if !matches!(ui.remote.phase, Phase::Viewing(_)) {
+								ui.remote.phase = Phase::Viewing(Box::new(Viewing::new(
+									session.peer,
+									session.name.clone(),
+								)));
+							}
+							Stage::Viewing(Arc::new(Mutex::new(viewer)))
+						}
+						Err(error) => {
+							failed = Some(error);
+							Stage::Asked
+						}
+					}
+				}
+				Ok(Err(error)) => {
+					failed = Some(error);
+					Stage::Asked
+				}
+				Err(mpsc::TryRecvError::Empty) => Stage::Connecting(receive),
+				Err(mpsc::TryRecvError::Disconnected) => {
+					failed = Some("Remote control could not connect");
+					Stage::Asked
+				}
+			},
+			Stage::Linked(link) if link.ended().is_some() => {
+				failed = link.ended().map(|end| end_text(end, true));
+				Stage::Linked(link)
+			}
+			Stage::Linked(link) => match session.grant {
+				Some(grant) => {
+					let wake = ctx.clone();
+					match Host::start(link, config(grant), runtime, move || wake.request_repaint())
+					{
+						Ok(host) => {
+							ui.remote.phase = Phase::Hosting {
+								peer: session.peer,
+								name: session.name.clone(),
+								grant,
+								connected: true,
+							};
+							Stage::Hosting(host)
+						}
+						Err(error) => {
+							failed = Some(error);
+							Stage::Asked
+						}
+					}
+				}
+				None => Stage::Linked(link),
+			},
+			Stage::Hosting(host) => {
+				let status = host.status();
+				if let Some(end) = status.ended {
+					failed = Some(end_text(end, true));
+				} else if let Phase::Hosting { connected, .. } = &mut ui.remote.phase {
+					*connected = status.connected;
+				}
+				Stage::Hosting(host)
+			}
+			Stage::Viewing(viewer) => {
+				// The hook thread takes the same lock for keys: hold it only for a moment, and
+				// always after the shared state, as the hook does.
+				let keys = (session.held_at.elapsed() >= HELD_EVERY)
+					.then(|| lock(&self.shared).forwarded.clone());
+				let (status, picture) = {
+					let viewer = lock(&viewer);
+					(viewer.status(), viewer.take_picture())
+				};
+				if let Some(end) = status.ended {
+					failed = Some(end_text(end, false));
+				} else if let Phase::Viewing(viewing) = &mut ui.remote.phase {
+					if let Some(picture) = picture {
+						viewing.texture = session.texture.upload(
+							ctx,
+							"remote-control",
+							picture.with_data(picture.data.as_slice()),
+						);
+					}
+					viewing.connected = status.connected;
+					viewing.started = status.started;
+					viewing.permission = status.permission.map(|permission| match permission {
+						net::Permission::Keyboard => Permission::Keyboard,
+						net::Permission::Mouse => Permission::Mouse,
+						net::Permission::Full => Permission::Full,
+					});
+					viewing.paused = status.paused;
+					viewing.audio = status.audio;
+					viewing.screen = [status.screen.0, status.screen.1];
+					viewing.relative = status.relative_mouse;
+					viewing.rtt_ms = status.rtt_ms;
+					viewing.content = status.content;
+					let inputs = std::mem::take(&mut viewing.inputs)
+						.into_iter()
+						.map(input)
+						.collect::<Vec<_>>();
+					if !inputs.is_empty() {
+						lock(&viewer).send(&inputs);
+					}
+					if let Some(keys) = keys {
+						session.held_at = Instant::now();
+						let buttons = viewing.held.iter().copied().map(button).collect::<Vec<_>>();
+						lock(&viewer).held(&keys, &buttons);
+					}
+					ctx.request_repaint_after(HELD_EVERY);
+				}
+				Stage::Viewing(viewer)
+			}
+			stage => stage,
+		};
+		if let Some(error) = failed {
+			let name = session.name.clone();
+			self.finish(ui, state, out, false);
+			ui.toasts
+				.push(ui::design::Level::Info, error.replace("{name}", &name));
+		}
+	}
+
+	/// Ends the session: `tell` says the other side has to hear it (it did not end it).
+	fn finish(
+		&mut self,
+		ui: &mut ui::MessagingUi,
+		state: &mut State,
+		out: &mut Outcome,
+		tell: bool,
+	) {
+		if let Some(session) = self.session.take() {
+			match session.stage {
+				Stage::Hosting(host) => host.end(),
+				Stage::Viewing(viewer) => lock(&viewer).end(),
+				Stage::Linked(link) => link.decline(),
+				_ if tell => out.commands.extend(state.send_remote_signal(
+					session.peer,
+					Signal {
+						kind: Kind::No,
+						session: session.id,
+						token: String::new(),
+					},
+				)),
+				_ => {}
+			}
+		}
+		ui.remote.phase = Phase::Idle;
+		ui.remote.binding = None;
+		let mut shared = lock(&self.shared);
+		shared.forwarded.clear();
+		shared.mode = Mode::Pass;
+	}
+
+	/// Keeps one keyboard hook while anything needs it, in the mode the phase calls for, and
+	/// takes what it caught.
+	fn sync_hook(&mut self, ui: &mut ui::MessagingUi, ctx: &egui::Context, demo: bool) {
+		let remote = &mut ui.remote;
+		let key = |key: &Option<ui::remote::Key>| key.as_ref().map(|key| (key.scan, key.extended));
+		let mode = match (&remote.phase, &self.session) {
+			_ if remote.binding.is_some() => Mode::Bind,
+			(Phase::Hosting { .. }, _) => Mode::Host {
+				pause: key(&remote.keys.pause),
+			},
+			(
+				Phase::Viewing(viewing),
+				Some(Session {
+					stage: Stage::Viewing(viewer),
+					..
+				}),
+			) if viewing.capturing => Mode::View {
+				viewer: viewer.clone(),
+				overlay: key(&remote.keys.overlay),
+				keyboard: matches!(
+					viewing.permission,
+					Some(Permission::Keyboard | Permission::Full)
+				),
+			},
+			_ => Mode::Pass,
+		};
+		// The offline preview never hooks the keyboard: it runs beside other work.
+		let needed = !demo
+			&& (remote.binding.is_some()
+				|| matches!(remote.phase, Phase::Hosting { .. } | Phase::Viewing(_)));
+		let caught = {
+			let mut shared = lock(&self.shared);
+			// Leaving control lifts every key the other PC holds.
+			let still_viewing = matches!(mode, Mode::View { keyboard: true, .. });
+			if !still_viewing && !shared.forwarded.is_empty() {
+				if let Mode::View { viewer, .. } = &shared.mode {
+					let ups = shared
+						.forwarded
+						.iter()
+						.map(|&(scan, extended)| net::Input::Key {
+							scan,
+							extended,
+							down: false,
+						})
+						.collect::<Vec<_>>();
+					lock(viewer).send(&ups);
+				}
+				shared.forwarded.clear();
+			}
+			// Binding switches itself off after the first key; do not switch it back on.
+			if !(matches!(mode, Mode::Bind)
+				&& shared
+					.caught
+					.iter()
+					.any(|caught| matches!(caught, Caught::Bound(..) | Caught::CancelBind)))
+			{
+				shared.mode = mode;
+			}
+			std::mem::take(&mut shared.caught)
+		};
+		if needed && self.hook.is_none() && !self.hook_failed {
+			let shared = self.shared.clone();
+			let wake = ctx.clone();
+			match Hook::start(move |event| filter(&shared, &wake, event)) {
+				Ok(hook) => self.hook = Some(hook),
+				Err(_) => self.hook_failed = true,
+			}
+		} else if !needed && self.hook.is_some() {
+			self.hook = None;
+			lock(&self.shared).swallowed.clear();
+		}
+		for caught in caught {
+			match caught {
+				Caught::Bound(scan, extended) => remote.bound(ui::remote::Key {
+					scan,
+					extended,
+					name: platform::keyboard_hook::key_name(scan, extended),
+				}),
+				Caught::CancelBind => remote.binding = None,
+				Caught::Pause => {
+					if let Phase::Hosting { grant, name, .. } = &mut remote.phase {
+						grant.paused = !grant.paused;
+						let grant = *grant;
+						let text = if grant.paused {
+							format!("{name}'s control is paused")
+						} else {
+							format!("{name}'s control resumed")
+						};
+						remote.requests.push(Request::Change(grant));
+						ui.toasts.push(ui::design::Level::Info, text);
+					}
+				}
+				Caught::Minimize => {
+					if let Some(viewing) = remote.viewing() {
+						viewing.full = false;
+					}
+					ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+				}
+				Caught::Stop => remote.requests.push(Request::End),
+				Caught::Overlay => remote.overlay_hidden = !remote.overlay_hidden,
+			}
+		}
+	}
+}
+
+#[cfg(feature = "demo")]
+impl Remote {
+	/// `--demo --demo-call --demo-remote=<phase>`: one phase with the call's peer, for
+	/// screenshots, without any signal, connection or hook.
+	fn demo(&mut self, ui: &mut ui::MessagingUi, state: &State, ctx: &egui::Context) {
+		use ui::remote::{Sheet, Step};
+		if !state.demo || self.demo.is_some() {
+			return;
+		}
+		let Some(which) =
+			std::env::args().find_map(|arg| arg.strip_prefix("--demo-remote=").map(str::to_owned))
+		else {
+			return;
+		};
+		// A synthetic desktop: a gradient with a taskbar and a window.
+		let (width, height) = (1920usize, 1080usize);
+		let mut pixels = vec![egui::Color32::BLACK; width * height];
+		for (i, pixel) in pixels.iter_mut().enumerate() {
+			let (x, y) = (i % width, i / width);
+			let window = (400..1500).contains(&x) && (180..820).contains(&y);
+			*pixel = if y >= height - 48 {
+				egui::Color32::from_rgb(24, 26, 32)
+			} else if window && y < 220 {
+				egui::Color32::from_rgb(44, 48, 58)
+			} else if window {
+				egui::Color32::from_rgb(232, 234, 240)
+			} else {
+				egui::Color32::from_rgb(
+					(30 + x * 60 / width) as u8,
+					(60 + y * 50 / height) as u8,
+					(120 + x * 80 / width) as u8,
+				)
+			};
+		}
+		let texture = ctx.load_texture(
+			"remote-demo",
+			egui::ColorImage::new([width, height], pixels),
+			egui::TextureOptions::LINEAR,
+		);
+		let peer = Id(2);
+		let name = peer_name(state, peer);
+		let now = ctx.input(|input| input.time);
+		let grant = Grant::default();
+		let setup = |step| Phase::Setup {
+			peer,
+			name: name.clone(),
+			give: false,
+			step,
+			grant,
+		};
+		let viewing = |paused: bool, started: bool, full: bool| {
+			let mut viewing = Viewing::new(peer, name.clone());
+			viewing.texture = Some(egui::load::SizedTexture::from_handle(&texture));
+			viewing.screen = [1920, 1080];
+			viewing.connected = true;
+			viewing.started = started;
+			viewing.paused = paused;
+			viewing.full = full;
+			viewing.permission = Some(Permission::Full);
+			Phase::Viewing(Box::new(viewing))
+		};
+		let (phase, sheet) = match which.as_str() {
+			"waiting" => (
+				Phase::Waiting {
+					peer,
+					name: name.clone(),
+					give: false,
+					since: now,
+					connecting: false,
+				},
+				Sheet::Phase,
+			),
+			"incoming" | "answer" => (
+				Phase::Incoming {
+					peer,
+					name: name.clone(),
+					give: false,
+					since: now,
+					opened: which == "answer",
+				},
+				Sheet::Phase,
+			),
+			"setup" => (setup(Step::Permission), Sheet::Phase),
+			"key" => (setup(Step::Key), Sheet::Phase),
+			"warning" => (setup(Step::Warning), Sheet::Phase),
+			"hosting" | "access" => (
+				Phase::Hosting {
+					peer,
+					name: name.clone(),
+					grant,
+					connected: true,
+				},
+				if which == "access" {
+					Sheet::Access
+				} else {
+					Sheet::None
+				},
+			),
+			"keys" => (Phase::Idle, Sheet::Keys),
+			"viewing" => (viewing(false, true, true), Sheet::None),
+			"paused" => (viewing(true, true, true), Sheet::None),
+			"starting" => (viewing(false, false, true), Sheet::None),
+			"window" => (viewing(false, true, false), Sheet::None),
+			_ => return,
+		};
+		if which == "key" || which == "warning" {
+			ui.remote.keys.pause = Some(ui::remote::Key {
+				scan: 0x42,
+				extended: false,
+				name: "F8".into(),
+			});
+		}
+		ui.remote.phase = phase;
+		ui.remote.sheet = sheet;
+		ui.remote.windowed = true;
+		self.demo = Some(texture);
+	}
+}
+
+/// Runs on the hook thread for every key: decides fast whether the key is this feature's.
+fn filter(shared: &Mutex<Shared>, wake: &egui::Context, event: KeyEvent) -> bool {
+	let mut shared = lock(shared);
+	let key = (event.scan, event.extended);
+	if !event.down {
+		let Some(index) = shared.swallowed.iter().position(|held| *held == key) else {
+			return false;
+		};
+		shared.swallowed.swap_remove(index);
+		if let Some(index) = shared.forwarded.iter().position(|held| *held == key) {
+			shared.forwarded.swap_remove(index);
+			if let Mode::View { viewer, .. } = &shared.mode {
+				lock(viewer).send(&[net::Input::Key {
+					scan: key.0,
+					extended: key.1,
+					down: false,
+				}]);
+			}
+		}
+		return true;
+	}
+	if event.injected {
+		return false;
+	}
+	let repeat = shared.swallowed.contains(&key);
+	let caught = match &shared.mode {
+		Mode::Pass => return false,
+		Mode::Bind => {
+			shared.mode = Mode::Pass;
+			Some(if event.vk == VK_ESCAPE {
+				Caught::CancelBind
+			} else {
+				Caught::Bound(key.0, key.1)
+			})
+		}
+		Mode::Host { pause } => {
+			if *pause != Some(key) {
+				return false;
+			}
+			(!repeat).then_some(Caught::Pause)
+		}
+		Mode::View {
+			viewer,
+			overlay,
+			keyboard,
+		} => {
+			let shifted = SHIFTS.iter().any(|shift| shared.forwarded.contains(shift));
+			if event.vk == VK_LWIN || event.vk == VK_RWIN {
+				(!repeat).then_some(Caught::Stop)
+			} else if event.vk == VK_ESCAPE && !shifted {
+				(!repeat).then_some(Caught::Minimize)
+			} else if *overlay == Some(key) {
+				(!repeat).then_some(Caught::Overlay)
+			} else if *keyboard {
+				lock(viewer).send(&[net::Input::Key {
+					scan: key.0,
+					extended: key.1,
+					down: true,
+				}]);
+				if !shared.forwarded.contains(&key) {
+					shared.forwarded.push(key);
+				}
+				None
+			} else {
+				return false;
+			}
+		}
+	};
+	if !repeat && shared.swallowed.len() < 64 {
+		shared.swallowed.push(key);
+	}
+	if let Some(caught) = caught {
+		shared.caught.push(caught);
+		wake.request_repaint();
+	}
+	true
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+	mutex
+		.lock()
+		.unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn gather(id: u64, ctx: &egui::Context, runtime: &tokio::runtime::Handle) -> Gathered {
+	let (send, receive) = mpsc::sync_channel(1);
+	let wake = ctx.clone();
+	runtime.spawn(async move {
+		let _ = send.send(Endpoint::gather(id).await);
+		wake.request_repaint();
+	});
+	receive
+}
+
+fn config(grant: Grant) -> HostConfig {
+	HostConfig {
+		permission: grant.permission.map(|permission| match permission {
+			Permission::Keyboard => net::Permission::Keyboard,
+			Permission::Mouse => net::Permission::Mouse,
+			Permission::Full => net::Permission::Full,
+		}),
+		paused: grant.paused,
+		audio: grant.audio,
+	}
+}
+
+fn button(button: MouseButton) -> net::MouseButton {
+	match button {
+		MouseButton::Left => net::MouseButton::Left,
+		MouseButton::Right => net::MouseButton::Right,
+		MouseButton::Middle => net::MouseButton::Middle,
+		MouseButton::Back => net::MouseButton::Back,
+		MouseButton::Forward => net::MouseButton::Forward,
+	}
+}
+
+fn input(input: MouseInput) -> net::Input {
+	match input {
+		MouseInput::Move { x, y, dx, dy } => net::Input::Move { x, y, dx, dy },
+		MouseInput::Button {
+			button: pressed,
+			down,
+		} => net::Input::Button {
+			button: button(pressed),
+			down,
+		},
+		// winit inverts Windows' sideways wheel (left is positive there); upward agrees.
+		MouseInput::Wheel { dx, dy } => net::Input::Wheel { dx: -dx, dy },
+	}
+}
+
+/// Why a running session ended, for a toast; `{name}` is the other person.
+fn end_text(end: End, host: bool) -> &'static str {
+	match (end, host) {
+		(End::ByHost, true) | (End::ByViewer, false) => "Remote control ended",
+		(End::ByHost, false) => "{name} ended remote control",
+		(End::ByViewer, true) => "{name} stopped controlling your PC",
+		(End::Declined, _) => "{name} declined remote control",
+		(End::Lost, _) => "Remote control lost the connection to {name}",
+		(End::Failed(error), _) => error,
+	}
+}
+
+fn peer_name(state: &State, user: Id) -> String {
+	let Some(call) = state.voice.active.as_ref() else {
+		return "Someone".to_owned();
+	};
+	state
+		.channels
+		.iter()
+		.find(|channel| channel.id == call.channel)
+		.and_then(|channel| {
+			channel
+				.recipients
+				.iter()
+				.find(|recipient| recipient.id == user)
+		})
+		.or_else(|| {
+			state
+				.voice
+				.roster
+				.iter()
+				.find(|entry| entry.channel == call.channel && entry.participant.user == user)
+				.and_then(|entry| entry.member.as_ref())
+				.map(|member| &member.user)
+		})
+		.map_or_else(|| "Someone".to_owned(), |user| user.name.clone())
+}

@@ -19,6 +19,11 @@ tracing = { version = "0.1", default-features = false, features = ["max_level_of
 davey = { version = "=0.1.4", default-features = false }
 openmls = { version = "=0.8.1", default-features = false }
 chacha20poly1305 = { version = "=0.10.1", default-features = false, features = ["alloc"] }
+# Remote control: key agreement, key derivation, offer tokens and socket buffers.
+x25519-dalek = { version = "=2.0.1", default-features = false, features = ["static_secrets", "zeroize"] }
+sha2 = "=0.10.9"
+base64 = "=0.22.1"
+socket2 = "=0.6.5"
 opus2 = { version = "=0.4.0", default-features = false, features = ["backend-libopus", "static", "bundled"] }
 rtrb = "=0.4.0"
 cpal = { version = "=0.18.2", default-features = false }

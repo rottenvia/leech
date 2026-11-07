@@ -3953,6 +3953,7 @@ impl MessagingUi {
 		if actions_shown {
 			pill(&mut row, actions, |ui| {
 				self.screen_share_control(ui, state);
+				self.remote_control(ui, state);
 				let more = control(
 					ui,
 					crate::icons::Icon::More,
@@ -5598,14 +5599,14 @@ fn split_chevron(
 /// The call stage's tones. Like Discord's, the stage is dark in every appearance, so it takes
 /// the active theme's dark palette: a theme recolours the stage, its tiles, pills and icons.
 #[derive(Clone, Copy)]
-struct Stage {
+pub(crate) struct Stage {
 	fill: egui::Color32,
 	tile: egui::Color32,
 	pill: egui::Color32,
-	text: egui::Color32,
-	muted: egui::Color32,
+	pub(crate) text: egui::Color32,
+	pub(crate) muted: egui::Color32,
 }
-fn stage_tones() -> Stage {
+pub(crate) fn stage_tones() -> Stage {
 	let p = design::control_colors(true, design::variant());
 	Stage {
 		fill: p.base.lerp_to_gamma(egui::Color32::BLACK, 0.35),
@@ -5642,7 +5643,7 @@ const JOIN_WIDTH: f32 = 64.0;
 const MIN_STRIP: f32 = 64.0;
 const MIN_FOCUS: f32 = 80.0;
 /// Height shared by every control, pill and the hang-up button in the call bar.
-const CONTROL_HEIGHT: f32 = 48.0;
+pub(crate) const CONTROL_HEIGHT: f32 = 48.0;
 const HANG_UP: f32 = 72.0;
 const BAR_GAP: f32 = 12.0;
 

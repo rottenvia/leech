@@ -2634,3 +2634,74 @@ mod tests {
 		assert!(state.pending.is_empty());
 	}
 }
+
+#[cfg(test)]
+mod remote_signal_tests {
+	use super::*;
+	use client_core::{
+		Command,
+		remote::{Kind, Received, Signal},
+	};
+
+	#[test]
+	fn signals_reach_the_call_peer_unseen_and_own_ones_are_deleted() {
+		let mut state = call_demo_state();
+		let signal = Signal {
+			kind: Kind::Ask,
+			session: 9,
+			token: "abc".into(),
+		};
+		// Only people in the call, through their direct message.
+		assert!(state.send_remote_signal(Id(99), signal.clone()).is_none());
+		let Some(Command::Send {
+			channel,
+			content,
+			nonce,
+			..
+		}) = state.send_remote_signal(Id(2), signal.clone())
+		else {
+			panic!("no signal sent");
+		};
+		assert_eq!(channel, Id(22));
+		assert!(content.starts_with("@silent "));
+		// Their signal never reaches the timeline, and arrives for the desktop.
+		let shown = state.timeline.iter().count();
+		let mut theirs = message(901, Id(22));
+		theirs.content = signal.encode();
+		state.apply(Envelope {
+			generation: state.generation,
+			event: Event::Message(theirs),
+		});
+		assert_eq!(state.timeline.iter().count(), shown);
+		let (received, commands) = state.take_remote();
+		assert_eq!(
+			received,
+			vec![Received {
+				from: Id(2),
+				signal: signal.clone(),
+			}]
+		);
+		assert!(commands.is_empty());
+		let before = state.timeline.iter().count();
+		// This device's own signal is deleted once Discord confirms it, and stays unseen.
+		let mut own = message(902, Id(22));
+		own.content = signal.encode();
+		state.apply(Envelope {
+			generation: state.generation,
+			event: Event::SendResult {
+				nonce,
+				result: Ok(own),
+			},
+		});
+		assert_eq!(state.timeline.iter().count(), before);
+		let (received, commands) = state.take_remote();
+		assert!(received.is_empty());
+		assert!(matches!(
+			commands.as_slice(),
+			[Command::Delete {
+				channel: Id(22),
+				message: Id(902),
+			}]
+		));
+	}
+}

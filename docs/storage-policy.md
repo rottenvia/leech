@@ -685,7 +685,9 @@ two logical size integers (1..=16,384) and an optional physical position pair
 (-131,072..=131,072). It survives account logout and introduces no new file or table.
 The launch splash paints before themes load, so the same record keeps the last theme's splash
 colours: five premultiplied RGBA values and a dark flag, with an opaque canvas. A theme's
-background image is never stored there.
+background image is never stored there. The same record holds the optional custom loading
+colours (two RGB triples) and the remote control keys: two optional (scan code, extended)
+pairs and the dismissed pause-key warning flag.
 Notification opt-in, hidden-channel visibility, primary RGB color, audio devices (up to 1,024 bytes each),
 input profile/custom processing, push-to-talk, gain, keyboard and mouse-button bindings and the global-keybind
 switch (enabled by default) are saved in the device-wide `app_preferences`
