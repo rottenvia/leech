@@ -1044,24 +1044,25 @@ const WAITING_WORDS: [&str; 6] = [
 fn waiting_scene(ui: &mut egui::Ui, name: &str, elapsed: f64, connecting: bool, give: bool) {
 	let colors = design::palette(ui);
 	let (rect, _) = ui.allocate_exact_size(
-		egui::vec2(ui.available_width(), 132.0),
+		egui::vec2(ui.available_width(), 158.0),
 		egui::Sense::hover(),
 	);
 	let t = elapsed as f32;
-	let center = rect.center() - egui::vec2(0.0, 6.0);
+	// Screens on top, then the phrase, then the detail: rings never reach the words.
+	let center = egui::pos2(rect.center().x, rect.top() + 54.0);
 	let left = center - egui::vec2(92.0, 0.0);
 	let right = center + egui::vec2(92.0, 0.0);
-	// Rings breathe out from the screen being asked.
-	let target = if give { left } else { right };
+	// You on the left, them on the right: the ask travels across and rings at their screen.
+	let target = right;
 	for ring in 0..3 {
 		let phase = ((t / 2.4) + ring as f32 / 3.0).fract();
 		ui.painter().circle_stroke(
 			target,
-			26.0 + 34.0 * phase,
+			26.0 + 24.0 * phase,
 			egui::Stroke::new(1.5, colors.accent.gamma_multiply(0.45 * (1.0 - phase))),
 		);
 	}
-	for (at, them) in [(left, !give), (right, give)] {
+	for (at, them) in [(left, false), (right, true)] {
 		let screen = egui::Rect::from_center_size(at, egui::vec2(58.0, 40.0));
 		ui.painter().rect(
 			screen,
@@ -1121,10 +1122,7 @@ fn waiting_scene(ui: &mut egui::Ui, name: &str, elapsed: f64, connecting: bool, 
 	let galley = ui
 		.painter()
 		.layout_no_wrap(text.clone(), font.clone(), colors.muted);
-	let origin = egui::pos2(
-		rect.center().x - galley.size().x * 0.5,
-		rect.bottom() - 22.0,
-	);
+	let origin = egui::pos2(rect.center().x - galley.size().x * 0.5, rect.top() + 114.0);
 	let width = galley.size().x;
 	ui.painter().galley(origin, galley, colors.muted);
 	let sweep = ((t / 1.8).fract() * 1.6 - 0.3) * width;
@@ -1144,8 +1142,8 @@ fn waiting_scene(ui: &mut egui::Ui, name: &str, elapsed: f64, connecting: bool, 
 		format!("{name} has to accept · {}s", elapsed as u32)
 	};
 	ui.painter().text(
-		egui::pos2(rect.center().x, rect.bottom() - 2.0),
-		egui::Align2::CENTER_BOTTOM,
+		egui::pos2(rect.center().x, rect.top() + 138.0),
+		egui::Align2::CENTER_TOP,
 		detail,
 		egui::FontId::proportional(11.5),
 		colors.muted.gamma_multiply(0.8),
