@@ -128,7 +128,7 @@ pub fn clear_child_surfaces(root: &Window) {
 	};
 	use windows::Win32::System::Threading::GetCurrentThreadId;
 	use windows::Win32::UI::WindowsAndMessaging::{
-		EnumThreadWindows, GetClientRect, IsWindowVisible,
+		EnumThreadWindows, GetClassNameW, GetClientRect, IsWindowVisible,
 	};
 	use windows::core::BOOL;
 
@@ -149,6 +149,15 @@ pub fn clear_child_surfaces(root: &Window) {
 		return;
 	};
 	let root = handle.hwnd.get();
+	// Only winit's windows, which share the root's class: a legacy IME window on this thread
+	// paints itself with GDI and must not be touched.
+	let class = |window: isize| {
+		let mut name = [0_u16; 64];
+		// SAFETY: Fills the local buffer with a live window's class name.
+		let length = unsafe { GetClassNameW(HWND(window as _), &mut name) };
+		name[..length.max(0) as usize].to_vec()
+	};
+	let root_class = class(root);
 	let mut found: Vec<isize> = Vec::new();
 	// SAFETY: The callback only pushes into `found`, which outlives the call.
 	unsafe {
@@ -159,10 +168,9 @@ pub fn clear_child_surfaces(root: &Window) {
 		);
 	}
 	CLEARED.with_borrow_mut(|cleared| {
-		for &window in found
-			.iter()
-			.filter(|window| **window != root && !cleared.contains(window))
-		{
+		for &window in found.iter().filter(|window| {
+			**window != root && !cleared.contains(window) && class(**window) == root_class
+		}) {
 			let window = HWND(window as _);
 			let mut rect = RECT::default();
 			// SAFETY: A live window of this thread; the DC is released before returning.

@@ -1258,6 +1258,22 @@ mod parking {
 			);
 			assert_eq!(GetWindowLongPtrW(window, GWL_EXSTYLE), style);
 			assert!(GetPropW(window, PARKED_STYLE).is_invalid());
+		}
+		// A Leech that ended while parked: the marks alone give the window back.
+		let mut parker = Parker::new(SourceId::Window(window.0 as usize as u64)).unwrap();
+		parker.tick();
+		settle();
+		std::mem::forget(parker);
+		recover_parked();
+		settle();
+		// SAFETY: As above.
+		unsafe {
+			assert!(
+				IsIconic(window).as_bool(),
+				"recovered windows are minimized"
+			);
+			assert_eq!(GetWindowLongPtrW(window, GWL_EXSTYLE), style);
+			assert!(GetPropW(window, PARKED_STYLE).is_invalid());
 			let _ = DestroyWindow(window);
 		}
 	}

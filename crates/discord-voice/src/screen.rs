@@ -451,6 +451,27 @@ pub fn recover_parked_windows() {
 	capture::recover_parked();
 }
 
+/// At exit, after the captures were dropped: gives back windows still parked, since capture
+/// threads end with the process before they finish. Waits at most `limit` for a window that
+/// does not answer; the next start gives back any left.
+pub fn give_back_parked_windows(limit: Duration) {
+	#[cfg(target_os = "windows")]
+	{
+		let (done, finished) = mpsc::sync_channel(1);
+		let spawned = std::thread::Builder::new()
+			.name("parked-windows".into())
+			.spawn(move || {
+				capture::recover_parked();
+				let _ = done.send(());
+			});
+		if spawned.is_ok() {
+			let _ = finished.recv_timeout(limit);
+		}
+	}
+	#[cfg(not(target_os = "windows"))]
+	let _ = limit;
+}
+
 impl Drop for LocalCapture {
 	/// The capture thread notices within one wait and ends the capture there, so closing a
 	/// window never waits on it.

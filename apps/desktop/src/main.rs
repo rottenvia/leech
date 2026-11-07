@@ -6815,6 +6815,9 @@ impl eframe::App for Desktop {
 		}
 	}
 	fn on_exit(&mut self) {
+		// Windows parked so Stream to yourself sees them go back before the process ends.
+		self.self_views = Default::default();
+		discord_voice::screen::give_back_parked_windows(std::time::Duration::from_secs(1));
 		if self.messaging.performance_stats {
 			self.perf_stats
 				.write(&self.messaging.gpu_adapter, self.monitor_period, true);
