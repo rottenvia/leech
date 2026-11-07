@@ -1810,11 +1810,14 @@ fn viewer_ui(
 	}
 	if viewing.full && !overlay_hidden {
 		// What this control allows, small at the top right.
-		let text = format!(
-			"{} · {}'s PC",
-			viewing.permission.map_or("No control", Permission::label),
-			viewing.name
-		);
+		let what = if !viewing.started {
+			"Starting"
+		} else if viewing.paused {
+			"Paused"
+		} else {
+			viewing.permission.map_or("No control", Permission::label)
+		};
+		let text = format!("{what} · {}'s PC", viewing.name);
 		let galley = ui.painter().layout_no_wrap(
 			text,
 			egui::FontId::new(12.0, design::medium_family(ui.ctx())),
@@ -1832,7 +1835,7 @@ fn viewer_ui(
 		ui.painter().circle_filled(
 			pill.left_center() + egui::vec2(10.0, 0.0),
 			3.0,
-			if viewing.paused {
+			if viewing.paused || !viewing.started {
 				colors.warning
 			} else {
 				colors.positive
