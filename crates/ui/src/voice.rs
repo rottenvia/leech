@@ -316,13 +316,9 @@ impl MessagingUi {
 				.animate_bool_with_time(ui.scope_id().with("voice-pip-chrome"), hovered, 0.15);
 		let mut action = closed.then_some(PipAction::Close);
 		// The same menu as the share's tile in the call.
-		if let Some(menu) = egui::Popup::context_menu(&surface)
+		egui::Popup::context_menu(&surface)
 			.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-			.show(|ui| self.stream_menu(ui, streamer, true))
-			&& let Some(chosen) = menu.inner
-		{
-			action = Some(chosen);
-		}
+			.show(|ui| design::window_menu(ui, |ui| self.stream_menu(ui, streamer, true)));
 		if shown > 0.0 {
 			let size = 32.0;
 			// Window actions sit in the top-right corner, picture actions in the top-left.
@@ -2078,7 +2074,7 @@ impl MessagingUi {
 
 	/// Right-click menu of a watched share, in the call and in picture-in-picture: its audio,
 	/// where it plays, and Stop watching.
-	fn stream_menu(&mut self, ui: &mut egui::Ui, streamer: Id, in_pip: bool) -> Option<PipAction> {
+	fn stream_menu(&mut self, ui: &mut egui::Ui, streamer: Id, in_pip: bool) {
 		self.stream_audio_controls(ui);
 		if in_pip {
 			design::menu_slider(
@@ -2090,31 +2086,19 @@ impl MessagingUi {
 			);
 		}
 		ui.separator();
-		let mut action = None;
-		if in_pip && self.voice_stream_view.is_some() {
-			if design::menu_item(ui, None, "Crop…", false).clicked() {
-				self.voice_pip_crop.start();
-				ui.close();
-			}
-			if self.voice_pip_crop.cropped()
-				&& design::menu_item(ui, None, "Show the whole stream", false).clicked()
-			{
-				self.voice_pip_crop.reset();
-				ui.close();
-			}
-		}
-		if self.voice_stream_zoom.zoomed()
+		let cropped = in_pip && self.voice_pip_crop.cropped();
+		if (cropped || self.voice_stream_zoom.zoomed())
 			&& design::menu_item(ui, None, "Show the whole picture", false).clicked()
 		{
+			if in_pip {
+				self.voice_pip_crop.reset();
+			}
 			self.voice_stream_zoom.reset(ui);
 			ui.close();
 		}
-		if in_pip {
-			if design::menu_item(ui, None, "Back to Leech", false).clicked() {
-				action = Some(PipAction::Back);
-				ui.close();
-			}
-		} else if design::menu_item(ui, None, "Picture-in-picture", false).clicked() {
+		// Picture-in-picture goes back to Leech with its own button, which keeps this menu
+		// inside the window's default size.
+		if !in_pip && design::menu_item(ui, None, "Picture-in-picture", false).clicked() {
 			self.open_voice_pip(ui.ctx(), streamer);
 			ui.close();
 		}
@@ -2122,7 +2106,6 @@ impl MessagingUi {
 			self.watch_request = Some(None);
 			ui.close();
 		}
-		action
 	}
 
 	/// Apply a tile's watch click once the stage has mutable state again.

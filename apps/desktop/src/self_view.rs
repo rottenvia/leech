@@ -511,14 +511,15 @@ fn link_name(url: &url::Url) -> String {
 		.unwrap_or_else(|| "Link".to_owned())
 }
 
-/// A copied Giphy page link as its GIF; other links stay as they are.
+/// A copied Giphy page, sticker or embed link as its GIF (Giphy pages name no picture of
+/// their own); other links stay as they are.
 fn giphy_media(url: &url::Url) -> Option<url::Url> {
 	let host = url.host_str()?;
 	if host != "giphy.com" && host != "www.giphy.com" {
 		return None;
 	}
 	let mut segments = url.path_segments()?;
-	if segments.next()? != "gifs" {
+	if !matches!(segments.next()?, "gifs" | "stickers" | "embed") {
 		return None;
 	}
 	let id = segments.next()?.rsplit('-').next()?;
@@ -1223,6 +1224,16 @@ mod tests {
 			giphy_media(&page).unwrap().as_str(),
 			"https://i.giphy.com/media/3o7TKSjRrfIPjeiVyM/giphy.gif"
 		);
+		let sticker =
+			url::Url::parse("https://giphy.com/stickers/kitty-l0MYt5jPR6QX5pnqM").unwrap();
+		assert!(
+			giphy_media(&sticker)
+				.unwrap()
+				.as_str()
+				.contains("/l0MYt5jPR6QX5pnqM/")
+		);
+		let other = url::Url::parse("https://giphy.com/explore/cats").unwrap();
+		assert!(giphy_media(&other).is_none());
 		let html = r#"<html><body><img alt="x" src="https://media2.giphy.com/media/abc/giphy.gif?cid=1&amp;rid=giphy.gif"></body>"#;
 		assert_eq!(
 			image_source(html).unwrap().as_str(),
@@ -1231,6 +1242,44 @@ mod tests {
 		let tenor = r#"<meta property="og:image" content="https://media.tenor.com/a/b.png"><meta property="og:image" content="https://media.tenor.com/a/b.gif">"#;
 		assert_eq!(page_media(tenor).unwrap().path(), "/a/b.gif");
 		assert!(image_source(r#"<img src="data:image/png;base64,AAAA">"#).is_none());
+	}
+
+	#[test]
+	fn a_transparent_gif_keeps_its_see_through_pixels() {
+		// Two frames of a pink dot on a transparent background, like a sticker GIF.
+		let dot = |radius: u32| {
+			image::RgbaImage::from_fn(32, 32, |x, y| {
+				let (dx, dy) = (x as i32 - 16, y as i32 - 16);
+				if (dx * dx + dy * dy) as u32 <= radius * radius {
+					image::Rgba([255, 120, 190, 255])
+				} else {
+					image::Rgba([0, 0, 0, 0])
+				}
+			})
+		};
+		let mut gif = Vec::new();
+		{
+			let mut encoder = image::codecs::gif::GifEncoder::new(&mut gif);
+			encoder
+				.set_repeat(image::codecs::gif::Repeat::Infinite)
+				.unwrap();
+			for radius in [8, 12] {
+				let frame = image::Frame::from_parts(
+					dot(radius),
+					0,
+					0,
+					image::Delay::from_numer_denom_ms(100, 1),
+				);
+				encoder.encode_frame(frame).unwrap();
+			}
+		}
+		let decoded = decode_image(&gif).expect("decodes");
+		assert_eq!(decoded.len(), 2);
+		assert_eq!(decoded[0].1.rgba[3], 0, "the corner stays see-through");
+		let Source::Frames { opaque, .. } = frames(decoded) else {
+			unreachable!()
+		};
+		assert!(!opaque, "opens without a backdrop");
 	}
 
 	#[test]

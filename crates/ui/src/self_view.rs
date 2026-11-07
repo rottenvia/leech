@@ -309,7 +309,7 @@ impl View {
 		}
 		if let Some(menu) = egui::Popup::context_menu(&surface)
 			.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-			.show(|ui| self.menu(ui))
+			.show(|ui| design::window_menu(ui, |ui| self.menu(ui)))
 		{
 			close |= menu.inner;
 		}
@@ -424,8 +424,9 @@ impl View {
 		close
 	}
 
-	/// Right-click menu: opacity, how the picture fills the window, its part and background,
-	/// Keep on top, and Close.
+	/// Right-click menu: opacity, how the picture fills the window, Keep on top, the whole
+	/// picture again after zooming or cropping, and Close. Crop and Remove background are
+	/// buttons on the window.
 	fn menu(&mut self, ui: &mut egui::Ui) -> bool {
 		ui.set_width(232.0);
 		design::menu_slider(ui, "Opacity", &mut self.opacity, 20..=100, "%");
@@ -437,13 +438,6 @@ impl View {
 		let mut on_top = !self.unpinned;
 		if design::menu_check(ui, "Keep on top", &mut on_top).changed() {
 			self.unpinned = !on_top;
-		}
-		if self.kind.cuts_out() {
-			design::menu_check(ui, "Remove background", &mut self.remove_background);
-		}
-		if self.texture.is_some() && design::menu_item(ui, None, "Crop…", false).clicked() {
-			self.crop.start();
-			ui.close();
 		}
 		if (self.zoom.zoomed() || self.crop.cropped())
 			&& design::menu_item(ui, None, "Show the whole picture", false).clicked()

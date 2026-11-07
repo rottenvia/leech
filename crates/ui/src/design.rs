@@ -3280,6 +3280,17 @@ pub fn menu_check(ui: &mut egui::Ui, label: &str, checked: &mut bool) -> egui::R
 /// Menu row with a level slider, like Discord's "User Volume": the label and its value share
 /// the first line at the row's text insets, and the track spans the row under them, so the
 /// knob's travel lines up with the text above it. Drag, click, arrow keys or the wheel set it.
+/// A menu inside a small window (Stream to yourself, picture-in-picture) scrolls instead of
+/// running past the window's edge, where it would be cut off.
+pub fn window_menu<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+	let frame = ui.style().spacing.menu_margin.sum().y + 12.0;
+	let room = (ui.ctx().content_rect().height() - frame).max(48.0);
+	egui::ScrollArea::vertical()
+		.max_height(room)
+		.show(ui, add)
+		.inner
+}
+
 pub fn menu_slider(
 	ui: &mut egui::Ui,
 	label: &str,

@@ -5781,6 +5781,66 @@ mod composer_tests {
 	use client_core::MAX_CONTENT;
 
 	#[test]
+	fn ctrl_v_on_the_stream_to_yourself_page_shows_the_clipboard_there_once() {
+		let ctx = egui::Context::default();
+		let mut state = edit_state();
+		let mut view = MessagingUi::default();
+		let ctrl = egui::Modifiers::CTRL;
+		let key = |pressed, modifiers| egui::Event::Key {
+			key: egui::Key::V,
+			physical_key: None,
+			pressed,
+			repeat: false,
+			modifiers,
+		};
+		let mut frame = |view: &mut MessagingUi, events: Vec<egui::Event>| {
+			view.screen.open = true;
+			view.screen.tab = screen::Tab::OnlyMe;
+			let output = ctx.run_ui(
+				egui::RawInput {
+					screen_rect: Some(egui::Rect::from_min_size(
+						egui::Pos2::ZERO,
+						egui::vec2(1000.0, 700.0),
+					)),
+					events,
+					focused: true,
+					..Default::default()
+				},
+				|ui| {
+					view.show(ui, &mut state);
+				},
+			);
+			output.drop_without_applying_deltas();
+			let pasted = view
+				.self_views
+				.requests
+				.drain(..)
+				.filter(|request| matches!(request, self_view::Request::Paste))
+				.count();
+			assert!(
+				view.attachment_paste_requested.is_none(),
+				"nothing reaches the composer"
+			);
+			pasted
+		};
+		// eframe's paste and the key release of the same press.
+		assert_eq!(
+			frame(
+				&mut view,
+				vec![egui::Event::Paste("x".into()), key(false, ctrl)]
+			),
+			1
+		);
+		// A clipboard holding only files sends the release alone.
+		assert_eq!(frame(&mut view, vec![key(false, ctrl)]), 1);
+		// Held down: repeated pastes, then the release after Ctrl went up, count once.
+		assert_eq!(frame(&mut view, vec![egui::Event::Paste("x".into())]), 1);
+		assert_eq!(frame(&mut view, vec![egui::Event::Paste("x".into())]), 0);
+		assert_eq!(frame(&mut view, vec![key(false, egui::Modifiers::NONE)]), 0);
+		assert_eq!(frame(&mut view, vec![egui::Event::Paste("x".into())]), 1);
+	}
+
+	#[test]
 	fn paste_into_an_idle_conversation_focuses_composer_without_sending() {
 		let ctx = egui::Context::default();
 		let mut state = edit_state();

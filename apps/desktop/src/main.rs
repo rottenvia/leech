@@ -8011,6 +8011,8 @@ impl eframe::App for Desktop {
 		}
 		self.sync_customization(&ctx);
 		self.save_app_preferences(&ctx);
+		// Windows opened this frame (Stream to yourself, picture-in-picture) see through.
+		platform::window_effects::clear_child_surfaces(&self.window);
 		self.messaging.updates_save_failed = self.app_settings.state.failed;
 		self.save_reading_preferences(&ctx);
 		self.sync_own_presence(&ctx);
