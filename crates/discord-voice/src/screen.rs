@@ -342,7 +342,8 @@ impl LocalCapture {
 							width: 1920,
 							height: 1080,
 							fps: fps.clamp(1, 60),
-							cursor: true,
+							// The user's own pointer would only cover what they watch.
+							cursor: false,
 							audio: false,
 						},
 						send,

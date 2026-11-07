@@ -506,8 +506,9 @@ The picture is stretched to the window unless fitted, and is zoomed by holding t
 button and scrolling. At most 8 windows show at once.
 
 Nothing is encoded or sent. Screens and windows are captured in memory at up to 30 fps
-through the share capture path without its encoder or system audio; only the newest
-picture is kept. Videos play silently on a loop on their own thread (audio is decoded only
+through the share capture path without its encoder, system audio or the mouse pointer
+(from November 8, 2026; Go Live keeps its own cursor setting); only the newest picture is
+kept. Videos play silently on a loop on their own thread (audio is decoded only
 so the reader does not queue it). Animations keep at most 1,200 frames and 192 MB decoded,
 and are scaled down until they fit. Stills keep at most a 3840 px edge. A shared screen
 shows these windows like any other window, so on one monitor they work as an overlay.
@@ -525,6 +526,23 @@ From 0.1.21 (November 7, 2026):
   display when restored (a game) and one drawing its own per-pixel alpha are never parked
   and say so instead. Parked windows carry window properties, so a Leech that crashed gives
   them back at its next start.
+
+  Fixed on November 8, 2026: in 0.1.21 any other Leech starting or ending (a restart, an
+  update, a second build) gave back every parked window, including ones a running Leech still
+  showed, and a parked window minimized again (that, Show desktop, the app itself) was never
+  parked again, so the picture froze until the window was brought up. The marks now name the
+  parking process (id and start time) and only windows of this process or of a Leech that has
+  ended are given back; a parked window minimized again, or whose see-through style was undone,
+  is parked again within 200 ms. A minimized window that is still the active one waits until
+  another window is active, so its taskbar button keeps showing it. A parked window is also
+  no-activate, with its taskbar button kept (`WS_EX_APPWINDOW`, unowned windows only): as the
+  topmost window, 0.1.21's was the one Windows activated when the user minimized the active
+  window with nothing under it, which gave it back onto the screen. The taskbar, a dock or
+  Alt+Tab still give it back (`SetForegroundWindow`/`SwitchToThisWindow` measured; Alt+Tab
+  itself unverified), with its own extended style restored exactly. Measured on a Chromium
+  (Thorium 138) window drawing every frame: 30 changed pictures a second while minimized,
+  through Show desktop, another Leech starting and its style being undone; 0.1.21 froze at
+  the first of these.
 - **Crop** (chrome button and menu) keeps part of the picture, chosen over the whole one
   with corner and side handles; the texture is only sampled differently, so nothing is
   rescaled. Picture-in-picture streams crop the same way.
