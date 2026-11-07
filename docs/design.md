@@ -112,7 +112,12 @@ onto its head and its body fills with colour, head to tail, as the download runs
 while Leech is open only shows the update prompt. Hidden in the tray, Leech downloads it without
 installing; opening Leech again outside a call turns the window back into the splash, which installs
 it as a launch does and grows back if that fails. The splash paints in the last theme's colours,
-saved on the device, never its background image. A restore
+saved on the device, never its background image. A theme with a background picture gives the
+splash and the upload progress the picture's two main colours instead (`crates/ui/src/loading.rs`:
+a 64 by 64 sample, k-means, the most common colour and the most common one that contrasts with
+it; the darker is the surface, the lighter the bar and worm, text kept at 4.5:1). Settings →
+Appearance → Loading colors can set both by hand. Uploading pictures grow from a third of
+their size to full as the bytes go, on a critically damped spring. A restore
 still running after 12 s grows into the full restore screen, which has a way out:
 the app mark with a passing sheen, a determinate bar with a glowing head, and the stage with
 the time left under it. The estimate follows the last few restores on this device, reaches
