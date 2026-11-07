@@ -487,6 +487,18 @@ fn fills_display(window: HWND) -> Option<HMONITOR> {
 	covers(window_rect(window)?, monitor_rect(monitor)?).then_some(monitor)
 }
 
+/// Whether `source` is a minimized window. Windows draws nothing for one (a game in
+/// exclusive fullscreen minimizes when it loses focus), so capture gets no pictures until it
+/// is restored.
+#[allow(unsafe_code)] // Win32 window query.
+pub(crate) fn minimized(source: SourceId) -> bool {
+	match source {
+		// SAFETY: A plain query of a window handle that may already be gone.
+		SourceId::Window(id) => unsafe { IsIconic(HWND(id as usize as *mut _)) }.as_bool(),
+		_ => false,
+	}
+}
+
 /// The display to duplicate instead of capturing: the one a fullscreen window fills while it
 /// is the window on top there. A shared window that is minimized or covered never qualifies,
 /// so duplication never shows anything the user did not choose to share.
