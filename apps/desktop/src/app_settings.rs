@@ -83,6 +83,7 @@ impl Settings {
 			cosmetics: ui.cosmetics,
 			image_cache: ui.image_cache,
 			splash_colors: self.current.splash_colors,
+			loading_colors: ui.loading_colors,
 		};
 		if value != self.current {
 			self.state.touched = true;
@@ -110,6 +111,7 @@ impl Settings {
 		ui.gpu_preference = value.gpu_preference;
 		ui.primary_color = value.primary_color;
 		ui.call_color = value.call_color;
+		ui.loading_colors = value.loading_colors;
 		ui.call_grid = value.call_grid;
 		ui.call_hide_own_camera = value.call_hide_own_camera;
 		ui.call_hide_non_video = value.call_hide_non_video;

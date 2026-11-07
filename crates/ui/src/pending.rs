@@ -25,7 +25,11 @@ impl Upload {
 
 /// Attachment tile width and overall card width follow the confirmed-message layout.
 const MAX_WIDTH: f32 = 432.0;
+/// Smallest the thumbnail area may get and still hold the bar and the cancel button.
+const OVERLAY_MIN: egui::Vec2 = egui::vec2(64.0, 48.0);
 
+/// Returns whether the row is still changing size, so the timeline can follow it smoothly
+/// instead of re-measuring every frame.
 pub fn show(
 	ui: &mut egui::Ui,
 	pending: &Pending,
@@ -41,9 +45,10 @@ pub fn show(
 	),
 	upload: Option<&Upload>,
 	(restore, cancel): (&mut Option<String>, &mut bool),
-) {
+) -> bool {
 	let colors = design::palette(ui);
 	let (avatars, opening, profile, channel, formats) = media;
+	let mut growing = false;
 	let compact = compact || irc;
 	let upload = upload.filter(|upload| upload.nonce == pending.nonce);
 	let sending = pending.delivery == Delivery::Sending;
@@ -215,26 +220,36 @@ pub fn show(
 							avatars.sticker_image(ui, sticker, egui::Vec2::splat(edge), state.demo);
 						});
 					}
+					// Pictures alone carry their progress on the image; any file card keeps the strip.
+					let pictures_only = upload.is_some_and(|upload| {
+						upload.files.len() == pending.attachments.len()
+							&& upload.files.iter().all(|file| file.preview.is_some())
+					});
+					// They grow from small to full size as the upload goes.
+					let progress = (sending && !artwork && pictures_only)
+						.then(|| eased_progress(ui, &pending.nonce, upload));
 					let mut gallery = None;
 					if !pending.attachments.is_empty() {
 						ui.scope(|ui| {
 							ui.set_max_width(ui.available_width().min(MAX_WIDTH));
 							// Discord fades the optimistic row until the server echoes it.
 							ui.set_opacity(if sending { 0.6 } else { 1.0 });
-							gallery = files(ui, pending, upload);
+							gallery = files(ui, pending, upload, progress.map(|(at, _)| at));
 						});
 					}
-					// Pictures alone carry their progress on the image; any file card keeps the strip.
-					let pictures_only = upload.is_some_and(|upload| {
-						upload.files.len() == pending.attachments.len()
-							&& upload.files.iter().all(|file| file.preview.is_some())
-					});
 					if sending && !artwork {
 						// The bar and the cancel button need room; a tiny picture keeps the strip.
 						if let Some(gallery) = gallery.filter(|gallery| {
-							pictures_only && gallery.width() >= 64.0 && gallery.height() >= 48.0
+							pictures_only
+								&& gallery.width() >= OVERLAY_MIN.x
+								&& gallery.height() >= OVERLAY_MIN.y
 						}) {
-							upload_overlay(ui, gallery, upload, cancel);
+							let (at, moving) = progress.unwrap_or_default();
+							if moving {
+								growing = true;
+								ui.ctx().request_repaint();
+							}
+							upload_overlay(ui, gallery, at, upload.is_some(), cancel);
 						} else if !pending.attachments.is_empty() {
 							ui.add_space(2.0);
 							ui.scope(|ui| {
@@ -269,11 +284,45 @@ pub fn show(
 				});
 			});
 		});
+	growing
+}
+
+/// How far an upload looks along, and whether that is still moving: a critically damped
+/// spring toward the bytes sent, so progress arriving in chunks never jumps the bar or the
+/// growing pictures, and finishing settles exactly on full.
+fn eased_progress(ui: &egui::Ui, nonce: &str, upload: Option<&Upload>) -> (f32, bool) {
+	/// Settles a step in about half a second.
+	const RATE: f32 = 11.0;
+	let target = match upload.and_then(|upload| upload.progress) {
+		Some((sent, total)) if total > 0 => (sent as f32 / total as f32).clamp(0.0, 1.0),
+		_ => 0.0,
+	};
+	let id = egui::Id::unique(("upload-progress", nonce));
+	let now = ui.input(|input| input.time);
+	let (mut at, mut speed, then) = ui
+		.data(|data| data.get_temp::<(f32, f32, f64)>(id))
+		.unwrap_or((0.0, 0.0, now));
+	// By the clock, so a discarded pass that runs the frame again does not step it twice.
+	let dt = ((now - then) as f32).clamp(0.0, 0.05);
+	speed += (RATE * RATE * (target - at) - 2.0 * RATE * speed) * dt;
+	at = (at + speed * dt).clamp(0.0, 1.0);
+	let moving = (target - at).abs() > 0.001 || speed.abs() > 0.01;
+	if !moving {
+		(at, speed) = (target, 0.0);
+	}
+	ui.data_mut(|data| data.insert_temp(id, (at, speed, now)));
+	(at, moving)
 }
 
 /// Image thumbnails in the confirmed-message grid, then one card per other file. Returns the
-/// area the thumbnails cover.
-fn files(ui: &mut egui::Ui, pending: &Pending, upload: Option<&Upload>) -> Option<egui::Rect> {
+/// area the thumbnails cover. While `progress` is given the thumbnails grow with it, from
+/// small to their full size.
+fn files(
+	ui: &mut egui::Ui,
+	pending: &Pending,
+	upload: Option<&Upload>,
+	progress: Option<f32>,
+) -> Option<egui::Rect> {
 	let colors = design::palette(ui);
 	let file = |index: usize| upload.and_then(|upload| upload.files.get(index));
 	let images: Vec<(&str, &egui::TextureHandle)> = pending
@@ -288,28 +337,57 @@ fn files(ui: &mut egui::Ui, pending: &Pending, upload: Option<&Upload>) -> Optio
 		.collect();
 	let mut gallery: Option<egui::Rect> = None;
 	if !images.is_empty() {
+		const GAP: f32 = 6.0;
 		let (columns, size) = attachments::image_layout(images.len(), ui.available_width());
-		ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-		for row in images.chunks(columns) {
+		// Each tile at full size, with the scale that fits its picture into a grid cell.
+		let tiles: Vec<(egui::Vec2, f32)> = images
+			.iter()
+			.map(|(filename, texture)| {
+				let source = texture.size_vec2();
+				let fit = (size.x / source.x).min(size.y / source.y);
+				let tile = if let Some(edge) = attachments::artwork_edge(filename) {
+					egui::Vec2::splat(edge.min(size.x).min(size.y))
+				} else if images.len() > 1 {
+					// Grid tiles share one height so rows stay aligned, like Discord.
+					size
+				} else {
+					source * fit.clamp(f32::EPSILON, 1.0)
+				};
+				(tile, fit)
+			})
+			.collect();
+		let full = tiles.chunks(columns).fold(egui::Vec2::ZERO, |area, row| {
+			let width =
+				row.iter().map(|(tile, _)| tile.x).sum::<f32>() + GAP * (row.len() - 1) as f32;
+			let height = row.iter().map(|(tile, _)| tile.y).fold(0.0, f32::max);
+			let gap = if area.y > 0.0 { GAP } else { 0.0 };
+			egui::vec2(area.x.max(width), area.y + gap + height)
+		});
+		// Growing starts at a third of the size, never too small for the bar and the button.
+		let grow = match progress {
+			Some(at) if full.x >= OVERLAY_MIN.x && full.y >= OVERLAY_MIN.y => {
+				let least = (1.0f32 / 3.0)
+					.max((OVERLAY_MIN.x + 0.5) / full.x)
+					.max((OVERLAY_MIN.y + 0.5) / full.y)
+					.min(1.0);
+				least + (1.0 - least) * at
+			}
+			_ => 1.0,
+		};
+		ui.spacing_mut().item_spacing = egui::Vec2::splat(GAP * grow);
+		for (row, tiles) in images.chunks(columns).zip(tiles.chunks(columns)) {
 			ui.horizontal_top(|ui| {
-				for (filename, texture) in row {
-					let source = texture.size_vec2();
-					let scale = (size.x / source.x).min(size.y / source.y);
-					let artwork = attachments::artwork_edge(filename);
-					let fitted = if let Some(edge) = artwork {
-						egui::Vec2::splat(edge.min(size.x).min(size.y))
-					} else if images.len() > 1 {
-						// Grid tiles share one height so rows stay aligned, like Discord.
-						egui::vec2(size.x, size.y)
-					} else {
-						source * scale.clamp(f32::EPSILON, 1.0)
-					};
-					let (rect, _) = ui.allocate_exact_size(fitted, egui::Sense::hover());
-					if artwork.is_none() {
+				for ((filename, texture), (tile, fit)) in row.iter().zip(tiles) {
+					let (rect, _) = ui.allocate_exact_size(*tile * grow, egui::Sense::hover());
+					if attachments::artwork_edge(filename).is_none() {
 						ui.painter().rect_filled(rect, 8, colors.raised);
 					}
 					let shown = if images.len() > 1 {
-						egui::Rect::from_center_size(rect.center(), source * scale).intersect(rect)
+						egui::Rect::from_center_size(
+							rect.center(),
+							texture.size_vec2() * *fit * grow,
+						)
+						.intersect(rect)
 					} else {
 						rect
 					};
@@ -366,48 +444,75 @@ fn files(ui: &mut egui::Ui, pending: &Pending, upload: Option<&Upload>) -> Optio
 	gallery
 }
 
+/// The veil under the overlay's bar and button, the bar's fill and the button's glyph: the
+/// loading colours when the theme has them, else a dark veil with the accent.
+fn overlay_colors(ui: &egui::Ui) -> (egui::Color32, egui::Color32, egui::Color32) {
+	match crate::loading::colors() {
+		Some(loading) => (
+			loading.surface.gamma_multiply(0.72),
+			loading.bar,
+			loading.text,
+		),
+		None => (
+			egui::Color32::from_black_alpha(140),
+			design::palette(ui).accent,
+			egui::Color32::WHITE,
+		),
+	}
+}
+
 /// Progress for an upload of pictures only: a thin bar along the bottom of the thumbnails and a
 /// cancel button in their corner, instead of a separate strip.
 fn upload_overlay(
 	ui: &mut egui::Ui,
 	gallery: egui::Rect,
-	upload: Option<&Upload>,
+	fraction: f32,
+	cancellable: bool,
 	cancel: &mut bool,
 ) {
-	let colors = design::palette(ui);
-	let fraction = match upload.and_then(|upload| upload.progress) {
-		Some((sent, total)) if total > 0 => (sent as f32 / total as f32).clamp(0.0, 1.0),
-		_ => 0.0,
-	};
+	let (shade, bar, glyph) = overlay_colors(ui);
 	let track = egui::Rect::from_min_max(
 		egui::pos2(gallery.left() + 8.0, gallery.bottom() - 12.0),
 		egui::pos2(gallery.right() - 8.0, gallery.bottom() - 8.0),
 	);
 	let painter = ui.painter();
-	painter.rect_filled(track, 2, egui::Color32::from_black_alpha(140));
+	painter.rect_filled(track, 2, shade);
 	if fraction > 0.0 {
 		let fill = egui::Rect::from_min_size(
 			track.min,
 			egui::vec2((track.width() * fraction).max(4.0), track.height()),
 		);
-		painter.rect_filled(fill, 2, colors.accent);
+		painter.rect_filled(fill, 2, bar);
 	}
-	if upload.is_some() {
+	if cancellable {
 		let button = egui::Rect::from_min_size(
 			egui::pos2(gallery.right() - 32.0, gallery.top() + 8.0),
 			egui::Vec2::splat(24.0),
 		);
-		ui.painter()
-			.circle_filled(button.center(), 12.0, egui::Color32::from_black_alpha(140));
-		if ui
-			.put(button, |ui: &mut egui::Ui| {
-				icons::button(
-					ui,
-					icons::Icon::Close,
-					24.0,
-					&crate::i18n::translate("pending-upload-strip-cancel-upload"),
-				)
-			})
+		let label = crate::i18n::translate("pending-upload-strip-cancel-upload");
+		let response = ui.interact(
+			button,
+			ui.scope_id().with("cancel-upload"),
+			egui::Sense::click(),
+		);
+		response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
+		// Painted here rather than as an icon button, whose glyph follows the light theme's
+		// dark text and would vanish on the dark veil.
+		let hover = design::hover_motion(ui, &response);
+		let press = design::press_motion(ui, &response);
+		let painter = ui.painter();
+		painter.circle_filled(
+			button.center(),
+			12.0,
+			design::mix(shade, glyph.gamma_multiply(0.9), 0.14 * hover),
+		);
+		icons::paint(
+			painter,
+			icons::Icon::Close,
+			design::pressed_rect(button.shrink(4.8), press),
+			glyph.gamma_multiply(0.8 + 0.2 * hover),
+		);
+		if response
 			.on_hover_text(crate::i18n::translate(
 				"pending-upload-strip-the-message-may-already-have-reached-discord-check-the-conversation",
 			))
@@ -497,13 +602,18 @@ fn upload_strip(ui: &mut egui::Ui, pending: &Pending, upload: Option<&Upload>, c
 			});
 			let (bar, _) =
 				ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::hover());
-			ui.painter().rect_filled(bar, 3, colors.hover);
+			// The loading colours carry their own contrast, so the bar reads on any card.
+			let (track, fill_color) = crate::loading::colors()
+				.map_or((colors.hover, colors.accent), |loading| {
+					(loading.surface, loading.bar)
+				});
+			ui.painter().rect_filled(bar, 3, track);
 			if fraction > 0.0 {
 				let fill = egui::Rect::from_min_size(
 					bar.min,
 					egui::vec2((bar.width() * fraction).max(6.0), bar.height()),
 				);
-				ui.painter().rect_filled(fill, 3, colors.accent);
+				ui.painter().rect_filled(fill, 3, fill_color);
 			}
 		});
 }
@@ -627,36 +737,26 @@ mod tests {
 		pending.attachments = vec!["photo.png".into()];
 		upload.files.remove(0);
 		pending.delivery = Delivery::Sending;
-		upload.progress = Some((25, 100));
+		upload.progress = None;
 		let shade = egui::Color32::from_black_alpha(140);
 		let mut profile = crate::profiles::ProfileSession::default();
 		let mut cancel = false;
-		let mut button = None;
-		for frame in 0..6 {
-			let pointer = button.map(|center: egui::Pos2| {
-				let pressed = |pressed| egui::Event::PointerButton {
-					pos: center,
-					button: egui::PointerButton::Primary,
-					pressed,
-					modifiers: egui::Modifiers::NONE,
-				};
-				match frame {
-					3 => vec![egui::Event::PointerMoved(center)],
-					4 => vec![pressed(true), pressed(false)],
-					_ => vec![],
-				}
-			});
+		// One 60 Hz frame: the bar's track, its fill, the cancel button, and whether the row
+		// is still growing.
+		let mut frame = |upload: &Upload, events: Vec<egui::Event>, cancel: &mut bool| {
+			let mut growing = false;
 			let output = ctx.run_ui(
 				egui::RawInput {
 					screen_rect: Some(egui::Rect::from_min_size(
 						egui::Pos2::ZERO,
 						egui::vec2(260.0, 900.0),
 					)),
-					events: pointer.unwrap_or_default(),
+					events,
+					predicted_dt: 1.0 / 60.0,
 					..Default::default()
 				},
 				|ui| {
-					show(
+					growing = show(
 						ui,
 						&pending,
 						(true, 10, false),
@@ -668,8 +768,8 @@ mod tests {
 							&mut None,
 							&mut crate::markdown::FormatCache::default(),
 						),
-						Some(&upload),
-						(&mut None, &mut cancel),
+						Some(upload),
+						(&mut None, cancel),
 					);
 				},
 			);
@@ -681,35 +781,92 @@ mod tests {
 			}
 			output.drop_without_applying_deltas();
 			assert!(!painted.contains("Uploading"), "{painted}");
-			assert!(!painted.contains("25%"), "{painted}");
-			let track = shapes.iter().find_map(|shape| match shape {
-				egui::Shape::Rect(rect) if rect.fill == shade && rect.rect.height() == 4.0 => {
-					Some(rect.rect)
-				}
-				_ => None,
-			});
+			assert!(!painted.contains('%'), "{painted}");
+			let track = shapes
+				.iter()
+				.find_map(|shape| match shape {
+					egui::Shape::Rect(rect) if rect.fill == shade && rect.rect.height() == 4.0 => {
+						Some(rect.rect)
+					}
+					_ => None,
+				})
+				.expect("progress track");
 			let fill = shapes.iter().find_map(|shape| match shape {
-				egui::Shape::Rect(rect)
-					if rect.fill != shade
-						&& track.is_some_and(|track| track.min == rect.rect.min) =>
-				{
+				egui::Shape::Rect(rect) if rect.fill != shade && rect.rect.min == track.min => {
 					Some(rect.rect)
 				}
 				_ => None,
 			});
-			let (track, fill) = (track.expect("progress track"), fill.expect("progress fill"));
-			assert!((fill.width() - track.width() * 0.25).abs() < 0.5);
-			button = shapes.iter().find_map(|shape| match shape {
-				egui::Shape::Circle(circle) if circle.fill == shade && circle.radius == 12.0 => {
-					Some(circle.center)
-				}
-				_ => None,
-			});
-			let center = button.expect("cancel button");
 			// The button sits in the picture's top-right corner, above the bar.
-			assert!(center.x > track.right() - 24.0 && center.y < track.top());
+			let button = shapes
+				.iter()
+				.find_map(|shape| match shape {
+					egui::Shape::Circle(circle)
+						if circle.radius == 12.0
+							&& circle.center.x > track.right() - 24.0
+							&& circle.center.y < track.top() =>
+					{
+						Some(circle.center)
+					}
+					_ => None,
+				})
+				.expect("cancel button");
+			(track, fill, button, growing)
+		};
+		// Before any bytes go, the picture shows at its smallest, standing still.
+		let (start, fill, _, growing) = frame(&upload, vec![], &mut cancel);
+		assert!(fill.is_none() && !growing);
+		// A chunk of progress eases the bar and the picture along, never jumping.
+		upload.progress = Some((25, 100));
+		let mut previous = start;
+		let mut settled = None;
+		for index in 0..90 {
+			let (track, fill, button, growing) = frame(&upload, vec![], &mut cancel);
+			assert!(track.width() >= previous.width() - 0.01, "frame {index}");
+			assert!(
+				track.width() - previous.width() < 4.0,
+				"frame {index} jumped"
+			);
+			assert!(growing || index > 0, "a new chunk starts it moving");
+			previous = track;
+			if growing {
+				assert!(settled.is_none(), "once settled it stays still");
+			} else {
+				let fill = fill.expect("progress fill");
+				assert!((fill.width() - track.width() * 0.25).abs() < 0.5);
+				settled.get_or_insert(button);
+			}
+		}
+		let center = settled.expect("the spring settles within 1.5 s");
+		for events in [
+			vec![egui::Event::PointerMoved(center)],
+			[true, false]
+				.map(|pressed| egui::Event::PointerButton {
+					pos: center,
+					button: egui::PointerButton::Primary,
+					pressed,
+					modifiers: egui::Modifiers::NONE,
+				})
+				.into(),
+			vec![],
+		] {
+			frame(&upload, events, &mut cancel);
 		}
 		assert!(cancel, "the corner button cancels the upload");
+		// Finishing reaches the picture's full size, from about half of it here.
+		upload.progress = Some((100, 100));
+		let mut last = (previous, true);
+		for _ in 0..90 {
+			let (track, _, _, growing) = frame(&upload, vec![], &mut cancel);
+			last = (track, growing);
+		}
+		let (full, growing) = last;
+		assert!(!growing);
+		assert!(
+			start.width() + 16.0 < (full.width() + 16.0) * 0.55,
+			"{start:?} {full:?}"
+		);
+		assert!(previous.width() > start.width() && previous.width() < full.width());
 		// A picture too small for the overlay keeps the strip.
 		upload.files[0].preview = Some(ctx.load_texture(
 			"tiny-photo",

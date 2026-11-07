@@ -68,6 +68,7 @@ mod guild_folders;
 mod highlight;
 pub mod icons;
 mod invites;
+pub mod loading;
 mod local_time;
 mod markdown;
 mod member_search;
@@ -458,6 +459,8 @@ pub struct MessagingUi {
 	pub voice_ring_epoch: Option<f64>,
 	/// Custom colour of call rings and halos; unset lifts the theme accent for the dark stage.
 	pub call_color: Option<[u8; 3]>,
+	/// Custom loading colours, background then bar; unset takes the theme's.
+	pub loading_colors: Option<[[u8; 3]; 2]>,
 	/// The call options' view choices, as in Discord: every tile the same size even while
 	/// watching, this device's own camera hidden from itself, and people without video
 	/// hidden while someone shows some.
@@ -986,6 +989,15 @@ impl MessagingUi {
 				let bytes = upload.bytes();
 				upload.progress = Some((bytes * 42 / 100, bytes));
 			}
+		}
+	}
+	/// Fixture-only: the staged upload's progress as a share of its bytes.
+	#[cfg(feature = "demo")]
+	pub fn preview_upload_progress(&mut self, share: f32) {
+		if let Some(upload) = &mut self.pending_upload {
+			let bytes = upload.bytes();
+			let sent = (bytes as f64 * f64::from(share.clamp(0.0, 1.0))) as u64;
+			upload.progress = Some((sent, bytes));
 		}
 	}
 	/// Byte counts describe data supplied to HTTP, never message delivery.

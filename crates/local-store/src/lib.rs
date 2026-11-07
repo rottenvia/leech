@@ -95,6 +95,9 @@ pub struct AppPreferences {
 	pub image_cache: model::CachePreferences,
 	/// The last theme's colours for the launch splash, which shows before themes load.
 	pub splash_colors: Option<SplashColors>,
+	/// Custom colours of the splash and upload progress, background then bar; `None` takes
+	/// them from the theme. Every colour is valid, so there is nothing to reject.
+	pub loading_colors: Option<[[u8; 3]; 2]>,
 }
 impl Default for AppPreferences {
 	fn default() -> Self {
@@ -137,6 +140,7 @@ impl Default for AppPreferences {
 			cosmetics: Default::default(),
 			image_cache: Default::default(),
 			splash_colors: None,
+			loading_colors: None,
 		}
 	}
 }
@@ -2154,16 +2158,19 @@ mod tests {
 	}
 
 	#[test]
-	fn splash_colors_round_trip_and_older_preferences_load_without_them() {
+	fn splash_and_loading_colors_round_trip_and_older_preferences_load_without_them() {
 		let store = LocalStore::initialize(Connection::open_in_memory().unwrap()).unwrap();
 		let legacy = serde_json::to_value(AppPreferences::default()).unwrap();
 		let mut legacy = legacy.as_object().unwrap().clone();
 		legacy.remove("splash_colors");
+		legacy.remove("loading_colors");
 		let legacy: AppPreferences = serde_json::from_value(legacy.into()).unwrap();
 		assert_eq!(legacy, AppPreferences::default());
 		store.save_app_preferences(&legacy).unwrap();
 		assert_eq!(store.app_preferences().unwrap().splash_colors, None);
+		assert_eq!(store.app_preferences().unwrap().loading_colors, None);
 		let mut value = AppPreferences {
+			loading_colors: Some([[16, 16, 16], [236, 236, 236]]),
 			splash_colors: Some(SplashColors {
 				accent: [30, 102, 245, 255],
 				canvas: [239, 241, 245, 255],

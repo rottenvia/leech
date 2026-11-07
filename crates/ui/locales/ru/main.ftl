@@ -3470,6 +3470,28 @@ settings-appearance-settings-call-color-description = Кольца и свече
 # Context: appearance_settings
 settings-appearance-settings-choose-call-color = Выберите цвет анимации звонка
 # Context: appearance_settings
+settings-appearance-settings-loading-colors = Цвета загрузки
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-description = Экран запуска и ход загрузки файлов. «Из темы» берёт два главных цвета фоновой картинки темы.
+# Context: appearance_settings; segmented choice
+settings-appearance-settings-loading-colors-theme = Из темы
+# Context: appearance_settings; segmented choice
+settings-appearance-settings-loading-colors-custom = Свои
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-background = Фон загрузки
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-bar = Полоса прогресса
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-background-description = Фон экрана запуска и подложка полос прогресса.
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-bar-description = Сама полоса и червяк на экране запуска.
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-choose-background = Выберите цвет фона загрузки
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-choose-bar = Выберите цвет полосы прогресса
+# Context: appearance_settings
+settings-appearance-settings-loading-colors-too-close = Эти два цвета слишком похожи и плохо читаются вместе, поэтому загрузка остаётся в цветах темы.
+# Context: appearance_settings
 # Context: appearance_settings
 settings-appearance-settings-primary-color = Основной цвет
 # Context: appearance_settings

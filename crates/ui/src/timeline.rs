@@ -4338,10 +4338,12 @@ impl TimelineView {
 						),
 						upload,
 						(&mut self.restore_pending, &mut self.cancel_upload),
-					);
+					)
 				});
 				let measured = response.response.rect.height();
-				if (measured - height).abs() > 1.0 {
+				// A growing upload changes height every frame; following it a frame late only
+				// shifts its edge into the end padding, so it needs no second pass.
+				if (measured - height).abs() > 1.0 && !response.inner {
 					ui.ctx().request_discard("Pending message height settled");
 					ui.ctx().request_repaint();
 				}
