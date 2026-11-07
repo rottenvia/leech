@@ -218,6 +218,12 @@ impl View {
 			{
 				galley = layout(reason);
 			}
+			// A panel keeps the note readable over a busy picture.
+			ui.painter().rect_filled(
+				egui::Rect::from_center_size(rect.center(), galley.size() + egui::vec2(28.0, 20.0)),
+				8,
+				egui::Color32::from_black_alpha(190),
+			);
 			// Centred rows sit around x = 0, so place the galley by its own rect.
 			ui.painter().galley(
 				rect.center() - galley.rect.center().to_vec2(),
