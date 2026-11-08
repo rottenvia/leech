@@ -9,6 +9,8 @@ pub struct KeyEvent {
 	pub vk: u16,
 	pub down: bool,
 	pub injected: bool,
+	/// The injector's tag; [`crate::remote_input::INJECTED_MARK`] marks Leech's own input.
+	pub extra: usize,
 }
 
 #[cfg(target_os = "windows")]
@@ -137,6 +139,7 @@ mod windows_hook {
 				vk: info.vkCode as u16,
 				down: info.flags.0 & LLKHF_UP.0 == 0,
 				injected: info.flags.0 & LLKHF_INJECTED.0 != 0,
+				extra: info.dwExtraInfo,
 			};
 			// A panic must not unwind into Windows; the key then passes through.
 			let swallow = FILTER.with_borrow(|filter| {

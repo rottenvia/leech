@@ -1,9 +1,12 @@
 //! Remote control: one Leech user controls another's PC while both are in the same call.
 //!
-//! **Access** asks to control someone's PC; **Control** lets someone control yours. The person
-//! asked sees a notification of their own with a 15 second countdown, answers in Leech, and
-//! the one giving control picks keyboard, mouse or both, whether their PC's sound goes along,
-//! and one pause key. The controller's window opens fullscreen on the other PC's screen.
+//! The call bar button offers **Access**: ask someone in the call to control their PC. They
+//! see a notification of their own with a 15 second countdown, answer in Leech, and choose
+//! keyboard, mouse or both, whether their PC's sound goes along, and one pause key. The one
+//! in control then sees the other screen fullscreen over Leech, like a watched screen share.
+//! Escape gives them Leech back without pausing anyone; the screen stays in the call, and a
+//! double-click on it takes control again. A left click on the button ends control on either
+//! side; a right click holds the keys and, for the one controlled, what the other may do.
 //!
 //! The interface only draws; the desktop signals, connects, captures, injects and fills in
 //! [`Phase`] as the session moves on.
@@ -81,15 +84,13 @@ pub enum Bind {
 pub enum Request {
 	/// Ask to control this person's PC.
 	Ask(Id),
-	/// Let this person control this PC, as set up.
-	Give(Id, Grant),
 	/// Stop waiting for an answer.
 	Cancel,
-	/// Answer the request or offer that came in.
+	/// Answer the request (or an older Leech's offer) that came in.
 	Answer(bool),
 	/// The setup after accepting a request is done.
 	Start(Grant),
-	/// The one in control changes what the controller may do.
+	/// The one controlled changes what the controller may do.
 	Change(Grant),
 	/// End the session, from either side.
 	End,
@@ -138,7 +139,7 @@ pub enum MouseInput {
 pub struct Viewing {
 	pub peer: Id,
 	pub name: String,
-	/// Fullscreen and in control; otherwise a small window that only shows the screen.
+	/// Fullscreen over Leech and in control; otherwise the screen only shows in the call.
 	pub full: bool,
 	pub texture: Option<egui::load::SizedTexture>,
 	/// The other screen in pixels.
@@ -157,12 +158,16 @@ pub struct Viewing {
 	pub content: [f32; 4],
 	/// Pointer input this pass, taken by the desktop.
 	pub inputs: Vec<MouseInput>,
-	/// Buttons held down in the window now.
+	/// Buttons held down on the screen now.
 	pub held: Vec<MouseButton>,
-	/// The window is fullscreen, focused and allowed to steer: the keyboard goes there too.
+	/// Fullscreen, focused and allowed to steer: the keyboard goes there too.
 	pub capturing: bool,
-	shown_full: Option<bool>,
-	opened_at: f64,
+	/// When the session began, for the waiting dialog's seconds.
+	since: f64,
+	/// When control last went fullscreen, for the hint that fades out.
+	full_since: f64,
+	/// The call stage enlarged this screen once.
+	staged: bool,
 }
 
 impl Viewing {
@@ -170,7 +175,7 @@ impl Viewing {
 		Self {
 			peer,
 			name,
-			full: true,
+			full: false,
 			texture: None,
 			screen: [0, 0],
 			connected: false,
@@ -184,8 +189,20 @@ impl Viewing {
 			inputs: Vec::new(),
 			held: Vec::new(),
 			capturing: false,
-			shown_full: None,
-			opened_at: f64::NAN,
+			since: f64::NAN,
+			full_since: f64::NAN,
+			staged: false,
+		}
+	}
+
+	/// Not steering: nothing is captured and every button held there goes up.
+	fn release(&mut self) {
+		self.capturing = false;
+		for button in std::mem::take(&mut self.held) {
+			self.inputs.push(MouseInput::Button {
+				button,
+				down: false,
+			});
 		}
 	}
 }
@@ -194,16 +211,15 @@ impl Viewing {
 pub enum Phase {
 	#[default]
 	Idle,
-	/// Waiting for `peer` to answer: an Access request, or (`give`) a Control offer.
+	/// Waiting for `peer` to answer an Access request.
 	Waiting {
 		peer: Id,
 		name: String,
-		give: bool,
 		since: f64,
 		/// They said yes; the connection is being made.
 		connecting: bool,
 	},
-	/// Someone asks for access, or (`give`) offers control of their PC.
+	/// Someone asks for access, or (`give`, from an older Leech) offers control of their PC.
 	Incoming {
 		peer: Id,
 		name: String,
@@ -212,12 +228,10 @@ pub enum Phase {
 		/// The notification was clicked: the answer shows in Leech.
 		opened: bool,
 	},
-	/// The one giving control chooses what to allow, before `Start` (they were asked) or
-	/// `Give` (they offer).
+	/// The one asked chooses what to allow before control starts.
 	Setup {
 		peer: Id,
 		name: String,
-		give: bool,
 		step: Step,
 		grant: Grant,
 	},
@@ -231,16 +245,17 @@ pub enum Phase {
 	Viewing(Box<Viewing>),
 }
 
+/// The call bar button's popover.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub enum Sheet {
+pub enum Menu {
 	#[default]
 	None,
-	/// The current phase's own dialog (waiting, answer, setup).
-	Phase,
-	/// The one in control manages access.
+	/// Left click: the Access choice.
 	Access,
-	/// The keys this device remembers.
-	Keys,
+	/// After Access with more than one other person in the call: whose PC.
+	Who,
+	/// Right click: pause and access for the one controlled, and the keys.
+	Manage,
 }
 
 #[derive(Default)]
@@ -252,14 +267,20 @@ pub struct Remote {
 	pub keys_changed: bool,
 	/// A key is being bound; the desktop's keyboard hook answers through [`Remote::bound`].
 	pub binding: Option<Bind>,
+	/// A key pressed in Leech while binding, as (scan code, extended), for the desktop to
+	/// name and bind: it arrives here when the keyboard hook did not catch it.
+	pub typed: Option<(u16, bool)>,
 	/// The label over the controlled screen is hidden.
 	pub overlay_hidden: bool,
-	/// The dialog shown in the main window.
-	pub sheet: Sheet,
-	/// The person the Access and Control menu acts on.
-	chosen: Option<Id>,
-	/// The controller's view never goes fullscreen (the offline preview's screenshots).
+	/// The current phase's dialog (waiting, answer, setup) shows in the main window.
+	pub dialog: bool,
+	pub menu: Menu,
+	/// The controller's view never makes the window fullscreen (the offline preview).
 	pub windowed: bool,
+	/// The window's fullscreen state before the controlled screen filled it.
+	fullscreen_from: Option<bool>,
+	/// The controller's pointer is confined and hidden over the controlled screen.
+	pointer_locked: bool,
 }
 
 impl Remote {
@@ -267,12 +288,9 @@ impl Remote {
 		!matches!(self.phase, Phase::Idle)
 	}
 
-	/// A window of its own is up: the notification or the controller's view.
+	/// A window of its own is up: the notification.
 	pub fn shows_windows(&self) -> bool {
-		matches!(
-			self.phase,
-			Phase::Incoming { opened: false, .. } | Phase::Viewing(_)
-		)
+		matches!(self.phase, Phase::Incoming { opened: false, .. })
 	}
 
 	/// The hook caught a key for the binding in progress.
@@ -285,11 +303,6 @@ impl Remote {
 		self.keys_changed = true;
 	}
 
-	/// A new phase from the desktop opens its dialog, as clicks do.
-	pub fn open_phase_sheet(&mut self) {
-		self.sheet = Sheet::Phase;
-	}
-
 	pub fn viewing(&mut self) -> Option<&mut Viewing> {
 		match &mut self.phase {
 			Phase::Viewing(viewing) => Some(viewing),
@@ -297,11 +310,56 @@ impl Remote {
 		}
 	}
 
+	/// Whose screen this device shows in the call while it controls one.
+	pub(crate) fn viewing_peer(&self) -> Option<Id> {
+		match &self.phase {
+			Phase::Viewing(viewing) => Some(viewing.peer),
+			_ => None,
+		}
+	}
+
+	/// The pause key on the controlled PC: pauses or resumes the controller, and says which.
+	pub fn toggle_pause(&mut self) -> Option<String> {
+		let Phase::Hosting { grant, name, .. } = &mut self.phase else {
+			return None;
+		};
+		grant.paused = !grant.paused;
+		let grant = *grant;
+		let text = if grant.paused {
+			format!("{name}'s control is paused")
+		} else {
+			format!("{name}'s control resumed")
+		};
+		self.requests.push(Request::Change(grant));
+		Some(text)
+	}
+
+	fn ask(&mut self, peer: Id, name: String, now: f64) {
+		self.requests.push(Request::Ask(peer));
+		self.phase = Phase::Waiting {
+			peer,
+			name,
+			since: now,
+			connecting: false,
+		};
+		self.menu = Menu::None;
+		self.dialog = true;
+	}
+
 	fn end(&mut self, request: Request) {
 		self.requests.push(request);
 		self.phase = Phase::Idle;
-		self.sheet = Sheet::None;
+		self.dialog = false;
+		self.menu = Menu::None;
 		self.binding = None;
+	}
+
+	/// The pause key's name for advice, or how to get one.
+	fn pause_name(&self) -> String {
+		self.keys
+			.pause
+			.as_ref()
+			.map_or_else(|| "not set".to_owned(), |key| key.name.clone())
 	}
 }
 
@@ -311,194 +369,404 @@ impl crate::MessagingUi {
 		let peers = state.remote_peers();
 		let colors = design::palette(ui);
 		let now = ui.input(|input| input.time);
-		let remote = &mut self.remote;
-		let (label, hint, tint, lit) = match &remote.phase {
-			Phase::Idle if peers.is_empty() => (
-				"Remote control",
-				"Remote control needs someone else in the call",
-				None,
-				0.0,
-			),
-			Phase::Idle => (
-				"Remote control",
-				"Access someone's PC or let them control yours · right-click for keys",
-				None,
-				0.0,
-			),
-			Phase::Waiting { .. } | Phase::Incoming { .. } | Phase::Setup { .. } => (
-				"Remote control",
-				"Show the remote control request",
-				Some(colors.accent),
-				0.5 + 0.5 * (now * std::f64::consts::TAU / 1.6).sin() as f32,
-			),
-			Phase::Hosting { grant, .. } => (
-				"End remote control",
-				"End control · right-click to manage access",
-				Some(if grant.paused {
-					colors.warning
+		let response = {
+			let remote = &mut self.remote;
+			let pending = match &remote.phase {
+				Phase::Waiting { .. } | Phase::Incoming { .. } | Phase::Setup { .. } => true,
+				Phase::Viewing(viewing) => !viewing.started,
+				Phase::Idle | Phase::Hosting { .. } => false,
+			};
+			let (label, hint, tint, lit) = match &remote.phase {
+				Phase::Idle if peers.is_empty() => (
+					"Remote control",
+					"Remote control needs someone else in the call",
+					None,
+					0.0,
+				),
+				Phase::Idle => (
+					"Remote control",
+					"Ask to control someone's PC · right-click for keys",
+					None,
+					0.0,
+				),
+				_ if pending => (
+					"Remote control",
+					"Show the remote control request",
+					Some(colors.accent),
+					0.5 + 0.5 * (now * std::f64::consts::TAU / 1.6).sin() as f32,
+				),
+				Phase::Hosting { grant, .. } => (
+					"End remote control",
+					"End control · right-click to pause or change access",
+					Some(if grant.paused {
+						colors.warning
+					} else {
+						colors.accent
+					}),
+					1.0,
+				),
+				_ => (
+					"End remote control",
+					"End control · right-click for keys · double-click their screen to take control",
+					Some(colors.positive),
+					1.0,
+				),
+			};
+			let enabled = !peers.is_empty() || remote.active();
+			let (rect, response) = ui.allocate_exact_size(
+				egui::vec2(48.0, crate::voice::CONTROL_HEIGHT),
+				if enabled {
+					egui::Sense::click()
 				} else {
-					colors.accent
-				}),
-				1.0,
-			),
-			Phase::Viewing(_) => (
-				"Back to control",
-				"Back to controlling · right-click for keys",
-				Some(colors.positive),
-				1.0,
-			),
-		};
-		let enabled = !peers.is_empty() || remote.active();
-		let (rect, response) = ui.allocate_exact_size(
-			egui::vec2(48.0, crate::voice::CONTROL_HEIGHT),
-			if enabled {
-				egui::Sense::click()
+					egui::Sense::hover()
+				},
+			);
+			let hover = if enabled {
+				design::hover_motion(ui, &response)
 			} else {
-				egui::Sense::hover()
+				0.0
+			};
+			let press = if enabled {
+				design::press_motion(ui, &response)
+			} else {
+				0.0
+			};
+			let plate = design::pressed_rect(rect.shrink(4.0), press);
+			let open = remote.menu != Menu::None;
+			if let Some(tint) = tint {
+				ui.painter().rect_filled(
+					plate,
+					8,
+					tint.gamma_multiply(0.14 + 0.16 * lit + 0.08 * hover),
+				);
+				if lit < 1.0 {
+					ui.ctx().request_repaint();
+				}
+			} else if hover > 0.0 || open {
+				ui.painter().rect_filled(
+					plate,
+					8,
+					egui::Color32::from_white_alpha(
+						(28.0 * hover.max(if open { 0.8 } else { 0.0 }) + 14.0 * press) as u8,
+					),
+				);
+			}
+			let glyph = if !enabled {
+				crate::voice::stage_tones().muted.gamma_multiply(0.45)
+			} else if let Some(tint) = tint {
+				crate::voice::stage_tones()
+					.text
+					.lerp_to_gamma(tint, 0.35 + 0.5 * lit)
+			} else {
+				crate::voice::stage_tones().text
+			};
+			paint_remote_glyph(
+				ui.painter(),
+				egui::Rect::from_center_size(
+					rect.center(),
+					egui::Vec2::splat(22.0 * (1.0 - 0.1 * press)),
+				),
+				glyph,
+			);
+			response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+			// No tooltip over an open menu: it would cover the menu's first row.
+			let response = if open {
+				response
+			} else {
+				response.on_hover_text(hint)
+			};
+			if response.secondary_clicked() && enabled {
+				remote.menu = if remote.menu == Menu::Manage {
+					Menu::None
+				} else {
+					Menu::Manage
+				};
+			}
+			if response.clicked() {
+				match &mut remote.phase {
+					Phase::Idle => {
+						remote.menu = if matches!(remote.menu, Menu::Access | Menu::Who) {
+							Menu::None
+						} else {
+							Menu::Access
+						};
+					}
+					Phase::Hosting { .. } => remote.end(Request::End),
+					Phase::Viewing(viewing) if viewing.started => remote.end(Request::End),
+					Phase::Incoming { opened, .. } => {
+						*opened = true;
+						remote.dialog = true;
+						remote.menu = Menu::None;
+					}
+					_ => {
+						remote.dialog = true;
+						remote.menu = Menu::None;
+					}
+				}
+			}
+			// A request that came in, or anyone leaving, closes the Access choice.
+			if matches!(remote.menu, Menu::Access | Menu::Who)
+				&& (!matches!(remote.phase, Phase::Idle) || peers.is_empty())
+			{
+				remote.menu = Menu::None;
+			}
+			response
+		};
+		let menu = self.remote.menu;
+		if menu != Menu::None {
+			let mut open = true;
+			egui::Popup::menu(&response)
+				.id(response.id.with(("remote-menu", menu as u8)))
+				.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+				.open_bool(&mut open)
+				.show(|ui| match menu {
+					Menu::Access => self.remote_access_menu(ui, state, &peers, now),
+					Menu::Who => self.remote_who_menu(ui, state, &peers, now),
+					Menu::Manage => self.remote_manage_menu(ui),
+					Menu::None => {}
+				});
+			if !open && self.remote.menu == menu {
+				self.remote.menu = Menu::None;
+			}
+		}
+		// A key binding started in the menu stops with it; the setup binds in its own dialog.
+		if self.remote.menu != Menu::Manage
+			&& self.remote.binding.is_some()
+			&& !matches!(
+				self.remote.phase,
+				Phase::Setup {
+					step: Step::Key,
+					..
+				}
+			) {
+			self.remote.binding = None;
+		}
+	}
+
+	/// Left click: only Access. With one other person it asks them at once; with more, whose
+	/// PC comes next, in a menu of its own.
+	fn remote_access_menu(
+		&mut self,
+		ui: &mut egui::Ui,
+		state: &client_core::State,
+		peers: &[Id],
+		now: f64,
+	) {
+		ui.set_width(272.0);
+		let detail = match peers {
+			[peer] => format!("Ask to control {}'s PC", peer_name(state, *peer)),
+			_ => "Ask to control someone's PC".to_owned(),
+		};
+		if access_row(ui, &detail).clicked() {
+			match peers {
+				[peer] => self.remote.ask(*peer, peer_name(state, *peer), now),
+				_ => self.remote.menu = Menu::Who,
+			}
+		}
+	}
+
+	/// Whose PC: everyone else in the call, by avatar and name.
+	fn remote_who_menu(
+		&mut self,
+		ui: &mut egui::Ui,
+		state: &client_core::State,
+		peers: &[Id],
+		now: f64,
+	) {
+		ui.set_width(248.0);
+		let colors = design::palette(ui);
+		menu_heading(ui, "Access · whose PC?", None, &colors);
+		for &peer in peers {
+			let name = peer_name(state, peer);
+			let user = state_user(state, peer);
+			if person_row(ui, &mut self.avatars, user, state.demo, &name).clicked() {
+				self.remote.ask(peer, name, now);
+			}
+		}
+	}
+
+	/// Right click: for the one controlled, pause and what the other may do; for the
+	/// controller, taking control again; for everyone, the keys.
+	fn remote_manage_menu(&mut self, ui: &mut egui::Ui) {
+		ui.set_width(292.0);
+		let (hosting, viewing) = (
+			matches!(self.remote.phase, Phase::Hosting { .. }),
+			matches!(self.remote.phase, Phase::Viewing(_)),
+		);
+		if hosting {
+			self.remote_host_menu(ui);
+		} else if viewing {
+			self.remote_viewer_menu(ui);
+		}
+		let colors = design::palette(ui);
+		let remote = &mut self.remote;
+		let hosting = matches!(remote.phase, Phase::Hosting { .. });
+		menu_heading(ui, "Keys", None, &colors);
+		for (bind, title, detail) in [
+			(Bind::Pause, "Pause key", "While someone controls your PC"),
+			(
+				Bind::Overlay,
+				"Hide the control label",
+				"While you control someone's PC",
+			),
+		] {
+			let key = match bind {
+				Bind::Pause => &mut remote.keys.pause,
+				Bind::Overlay => &mut remote.keys.overlay,
+			};
+			// The pause key stays while it is the only way to stop the controller.
+			let clearable = !(hosting && bind == Bind::Pause);
+			if key_menu_row(ui, title, detail, key, &mut remote.binding, bind, clearable) {
+				remote.keys_changed = true;
+			}
+		}
+		if !remote.active()
+			&& design::menu_check(
+				ui,
+				"Skip the pause key warning",
+				&mut remote.keys.skip_warning,
+			)
+			.changed()
+		{
+			remote.keys_changed = true;
+		}
+		if matches!(remote.phase, Phase::Hosting { .. } | Phase::Viewing(_)) {
+			ui.add_space(4.0);
+			ui.horizontal(|ui| {
+				ui.add_space(10.0);
+				ui.label(
+					egui::RichText::new("Left click on the button ends control")
+						.size(12.0)
+						.color(colors.muted),
+				);
+			});
+			ui.add_space(2.0);
+		}
+	}
+
+	/// Pause first, then what the controller may do: access changes only while paused.
+	fn remote_host_menu(&mut self, ui: &mut egui::Ui) {
+		let colors = design::palette(ui);
+		let pause_name = self.remote.pause_name();
+		let pause_key = self.remote.keys.pause.as_ref().map(|key| key.name.clone());
+		let remote = &mut self.remote;
+		let Phase::Hosting { name, grant, .. } = &mut remote.phase else {
+			return;
+		};
+		let before = *grant;
+		let state = match (grant.paused, grant.permission) {
+			(true, _) => "Paused · they can only watch".to_owned(),
+			(false, Some(permission)) => format!(
+				"{} · {}",
+				permission.label(),
+				if grant.audio {
+					"hears your PC"
+				} else {
+					"no sound"
+				}
+			),
+			(false, None) => "No control".to_owned(),
+		};
+		status_header(
+			ui,
+			&format!("{name} controls your PC"),
+			&state,
+			if grant.paused {
+				colors.warning
+			} else {
+				colors.positive
 			},
 		);
-		let hover = if enabled {
-			design::hover_motion(ui, &response)
+		let label = if grant.paused {
+			"Resume control"
 		} else {
-			0.0
+			"Pause control"
 		};
-		let press = if enabled {
-			design::press_motion(ui, &response)
-		} else {
-			0.0
-		};
-		let plate = design::pressed_rect(rect.shrink(4.0), press);
-		if let Some(tint) = tint {
-			ui.painter().rect_filled(
-				plate,
-				8,
-				tint.gamma_multiply(0.14 + 0.16 * lit + 0.08 * hover),
-			);
-			if lit < 1.0 {
-				ui.ctx().request_repaint();
-			}
-		} else if hover > 0.0 {
-			ui.painter().rect_filled(
-				plate,
-				8,
-				egui::Color32::from_white_alpha((28.0 * hover + 14.0 * press) as u8),
-			);
+		if key_hint_item(ui, label, pause_key.as_deref()).clicked() {
+			grant.paused = !grant.paused;
 		}
-		let glyph = if !enabled {
-			crate::voice::stage_tones().muted.gamma_multiply(0.45)
-		} else if let Some(tint) = tint {
-			crate::voice::stage_tones()
-				.text
-				.lerp_to_gamma(tint, 0.35 + 0.5 * lit)
-		} else {
-			crate::voice::stage_tones().text
-		};
-		paint_remote_glyph(
-			ui.painter(),
-			egui::Rect::from_center_size(
-				rect.center(),
-				egui::Vec2::splat(22.0 * (1.0 - 0.1 * press)),
-			),
-			glyph,
+		menu_heading(
+			ui,
+			"Access",
+			(!grant.paused).then_some("Pause to change"),
+			&colors,
 		);
-		response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
-		let response = response.on_hover_text(hint);
-		if response.secondary_clicked() {
-			remote.sheet = if matches!(remote.phase, Phase::Hosting { .. }) {
-				Sheet::Access
-			} else {
-				Sheet::Keys
-			};
-		}
-		if response.clicked() {
-			match &mut remote.phase {
-				Phase::Idle => {}
-				Phase::Hosting { .. } => remote.end(Request::End),
-				Phase::Viewing(viewing) => viewing.full = true,
-				Phase::Incoming { opened, .. } => {
-					*opened = true;
-					remote.sheet = Sheet::Phase;
-				}
-				_ => remote.sheet = Sheet::Phase,
-			}
-		}
-		if matches!(remote.phase, Phase::Idle) {
-			egui::Popup::menu(&response)
-				.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-				.show(|ui| self.remote_menu(ui, state, &peers));
-		}
-	}
-
-	/// Access | Control, and who it is for when more than one other person is in the call.
-	fn remote_menu(&mut self, ui: &mut egui::Ui, state: &client_core::State, peers: &[Id]) {
-		let remote = &mut self.remote;
-		let chosen = remote
-			.chosen
-			.filter(|chosen| peers.contains(chosen))
-			.or(peers.first().copied());
-		remote.chosen = chosen;
-		let Some(chosen) = chosen else {
-			return;
-		};
-		ui.set_width(320.0);
-		let colors = design::palette(ui);
-		ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-		let name = |user| peer_name(state, user);
-		let mut picked = None;
-		ui.horizontal(|ui| {
-			for (give, title, detail) in [
-				(false, "ACCESS", "Ask to control their PC"),
-				(true, "CONTROL", "Let them control yours"),
-			] {
-				if choice_tile(ui, give, title, detail, &colors).clicked() {
-					picked = Some(give);
+		let mut locked = false;
+		for (permission, label) in [
+			(Some(Permission::Full), "Full control"),
+			(Some(Permission::Keyboard), "Keyboard only"),
+			(Some(Permission::Mouse), "Mouse only"),
+			(None, "Disable · ends control"),
+		] {
+			let response = menu_radio(
+				ui,
+				label,
+				grant.permission == permission,
+				!grant.paused,
+				permission.is_none(),
+			);
+			if response.clicked() {
+				if grant.paused {
+					grant.permission = permission;
+				} else {
+					locked = true;
 				}
 			}
-		});
-		if peers.len() > 1 {
-			ui.add_space(2.0);
-			ui.label(design::eyebrow(ui, "WHO", colors.muted));
-			for &peer in peers {
-				let selected = peer == chosen;
-				if design::radio_row(ui, selected, &name(peer), None).clicked() {
-					remote.chosen = Some(peer);
-				}
-			}
-		} else {
-			ui.label(
-				egui::RichText::new(format!("With {}", name(chosen)))
-					.size(12.0)
-					.color(colors.muted),
+		}
+		design::menu_check(ui, "Share PC audio", &mut grant.audio);
+		let name = name.clone();
+		let grant = *grant;
+		if locked {
+			self.toasts.push(
+				design::Level::Warning,
+				format!(
+					"Pause {name}'s control before changing access · your pause key is {pause_name}"
+				),
 			);
 		}
-		let Some(give) = picked else {
-			return;
-		};
-		let name = name(chosen);
-		let now = ui.input(|input| input.time);
-		remote.phase = if give {
-			Phase::Setup {
-				peer: chosen,
-				name,
-				give: true,
-				step: Step::Permission,
-				grant: Grant::default(),
-			}
-		} else {
-			remote.requests.push(Request::Ask(chosen));
-			Phase::Waiting {
-				peer: chosen,
-				name,
-				give: false,
-				since: now,
-				connecting: false,
-			}
-		};
-		remote.sheet = Sheet::Phase;
-		ui.close();
+		if grant.permission.is_none() {
+			self.remote.end(Request::End);
+		} else if grant != before {
+			self.remote.requests.push(Request::Change(grant));
+		}
 	}
 
-	/// The dialogs in the main window, the notification and the controller's window.
+	fn remote_viewer_menu(&mut self, ui: &mut egui::Ui) {
+		let colors = design::palette(ui);
+		let Phase::Viewing(viewing) = &mut self.remote.phase else {
+			return;
+		};
+		let state = if !viewing.started {
+			"Setting up".to_owned()
+		} else if viewing.paused {
+			format!("Paused by {}", viewing.name)
+		} else {
+			viewing
+				.permission
+				.map_or("No control", Permission::label)
+				.to_owned()
+		};
+		status_header(
+			ui,
+			&format!("You control {}'s PC", viewing.name),
+			&state,
+			if viewing.paused || !viewing.started {
+				colors.warning
+			} else {
+				colors.positive
+			},
+		);
+		if viewing.started
+			&& !viewing.full
+			&& design::menu_item(ui, Some(Icon::Fullscreen), "Take control", false).clicked()
+		{
+			viewing.full = true;
+			self.remote.menu = Menu::None;
+		}
+	}
+
+	/// The dialogs in the main window, the notification, and the controlled screen's
+	/// fullscreen state.
 	pub fn show_remote(&mut self, ctx: &egui::Context, state: &client_core::State) {
 		let now = ctx.input(|input| input.time);
 		if let Phase::Waiting {
@@ -519,57 +787,169 @@ impl crate::MessagingUi {
 		if matches!(self.remote.phase, Phase::Waiting { .. }) {
 			ctx.request_repaint_after(std::time::Duration::from_millis(500));
 		}
+		if let Phase::Viewing(viewing) = &mut self.remote.phase {
+			if viewing.since.is_nan() {
+				viewing.since = now;
+			}
+			if !viewing.staged {
+				viewing.staged = true;
+				self.voice_focus = Some(crate::voice::StageFocus::Remote(viewing.peer));
+			}
+			if !viewing.full {
+				viewing.release();
+				viewing.full_since = f64::NAN;
+			}
+		}
+		self.sync_remote_fullscreen(ctx);
 		self.remote_notification(ctx, state);
-		self.remote_viewer(ctx);
-		if self.window_hidden {
+		if self.window_hidden || !self.remote.dialog {
 			return;
 		}
-		match self.remote.sheet {
-			Sheet::None => {}
-			Sheet::Phase => self.remote_phase_sheet(ctx, state),
-			Sheet::Access => self.remote_access_sheet(ctx),
-			Sheet::Keys => self.remote_keys_sheet(ctx),
+		self.remote_dialog(ctx, state);
+	}
+
+	/// Fills the window while the controlled screen is fullscreen, and gives the window, its
+	/// pointer and the media fullscreen back afterwards. Runs every frame, signed in or not,
+	/// so control that ends with the account or while minimized still gives them back.
+	pub fn sync_remote_fullscreen(&mut self, ctx: &egui::Context) {
+		let full = matches!(&self.remote.phase, Phase::Viewing(viewing) if viewing.full);
+		match (full, self.remote.fullscreen_from) {
+			(true, None) => {
+				// A fullscreen screen share gives way; leaving control restores what was there.
+				let was = self.voice_fullscreen.as_ref().map_or_else(
+					|| ctx.input(|input| input.viewport().fullscreen.unwrap_or(false)),
+					|(_, _, previous, _)| *previous,
+				);
+				self.exit_voice_fullscreen();
+				self.remote.fullscreen_from = Some(was);
+				if !self.remote.windowed {
+					self.voice_fullscreen_request = Some(true);
+				}
+				ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+			}
+			(false, Some(was)) => {
+				self.remote.fullscreen_from = None;
+				if !self.remote.windowed {
+					self.voice_fullscreen_request = Some(was);
+				}
+			}
+			_ => {}
+		}
+		if !full && self.remote.pointer_locked {
+			self.remote.pointer_locked = false;
+			lock_pointer(ctx, false);
 		}
 	}
 
-	fn remote_phase_sheet(&mut self, ctx: &egui::Context, state: &client_core::State) {
+	/// Keys pressed in Leech itself: the binding in progress, and the pause key while this
+	/// PC is controlled. The keyboard hook takes them first whenever it runs; these only
+	/// arrive when it does not, so nothing happens twice. Runs before anything else reads
+	/// the keyboard, so a bound key never also types or triggers a shortcut.
+	pub(crate) fn capture_remote_keys(&mut self, ctx: &egui::Context) {
+		let remote = &mut self.remote;
+		let pause = remote
+			.keys
+			.pause
+			.as_ref()
+			.map(|key| (key.scan, key.extended));
+		let hosting = matches!(remote.phase, Phase::Hosting { .. });
+		if remote.binding.is_none() && !(hosting && pause.is_some()) {
+			return;
+		}
+		let binding = remote.binding.is_some();
+		let pressed = ctx.input_mut(|input| {
+			let mut pressed = None;
+			input.events.retain(|event| match event {
+				egui::Event::Key {
+					key,
+					physical_key,
+					pressed: true,
+					repeat: false,
+					..
+				} if pressed.is_none() => {
+					let key = physical_key.unwrap_or(*key);
+					let hit = binding || scan_code(key).is_some_and(|code| Some(code) == pause);
+					if hit {
+						pressed = Some(key);
+					}
+					!hit
+				}
+				// The bound key's text and release stay out of the composer.
+				egui::Event::Text(_) | egui::Event::Key { .. } => !(binding && pressed.is_some()),
+				_ => true,
+			});
+			pressed
+		});
+		let Some(key) = pressed else {
+			return;
+		};
+		if binding {
+			if key == egui::Key::Escape {
+				remote.binding = None;
+			} else if let Some(code) = scan_code(key) {
+				remote.typed = Some(code);
+			}
+		} else if let Some(text) = remote.toggle_pause() {
+			self.toasts.push(design::Level::Info, text);
+		}
+		ctx.request_repaint();
+	}
+
+	fn remote_dialog(&mut self, ctx: &egui::Context, state: &client_core::State) {
 		let now = ctx.input(|input| input.time);
 		let remote = &mut self.remote;
-		match &mut remote.phase {
+		let waiting = match &remote.phase {
 			Phase::Waiting {
 				name,
-				give,
 				since,
 				connecting,
 				..
-			} => {
-				let (name, give, since, connecting) = (name.clone(), *give, *since, *connecting);
-				let title = if give {
-					"Giving control"
+			} => Some((
+				name.clone(),
+				now - since,
+				if *connecting {
+					Wait::Connecting
 				} else {
-					"Asking for access"
-				};
-				let mut cancel = false;
-				let response = dialog::Dialog::new("remote-waiting", title)
-					.width(400.0)
-					.show(ctx, |body| {
-						body.content(|ui| {
-							waiting_scene(ui, &name, now - since, connecting, give);
-						});
-						body.footer(|ui| {
-							cancel =
-								dialog::action(ui, "Cancel", dialog::Action::Neutral).clicked();
-						});
+					Wait::Asking
+				},
+			)),
+			Phase::Viewing(viewing) if !viewing.started => Some((
+				viewing.name.clone(),
+				now - viewing.since,
+				if viewing.connected {
+					Wait::SettingUp
+				} else {
+					Wait::Connecting
+				},
+			)),
+			_ => None,
+		};
+		if let Some((name, elapsed, wait)) = waiting {
+			let mut cancel = false;
+			let response = dialog::Dialog::new("remote-waiting", "Asking for access")
+				.width(400.0)
+				.show(ctx, |body| {
+					body.content(|ui| waiting_scene(ui, &name, elapsed, wait));
+					body.footer(|ui| {
+						cancel = dialog::action(ui, "Cancel", dialog::Action::Neutral).clicked();
 					});
-				// Closing only hides the window; the call bar button brings it back.
-				if response.close {
-					remote.sheet = Sheet::None;
-				}
-				if cancel {
-					remote.end(Request::Cancel);
-				}
-				ctx.request_repaint();
+				});
+			// Closing only hides the window; the call bar button brings it back.
+			if response.close {
+				remote.dialog = false;
 			}
+			if cancel {
+				let request = if matches!(remote.phase, Phase::Waiting { .. }) {
+					Request::Cancel
+				} else {
+					Request::End
+				};
+				remote.end(request);
+			}
+			ctx.request_repaint();
+			return;
+		}
+		match &mut remote.phase {
 			Phase::Incoming {
 				peer,
 				name,
@@ -614,14 +994,12 @@ impl crate::MessagingUi {
 					Some(true) if give => {
 						remote.requests.push(Request::Answer(true));
 						remote.phase = Phase::Viewing(Box::new(Viewing::new(peer, name)));
-						remote.sheet = Sheet::None;
 					}
 					Some(true) => {
 						remote.requests.push(Request::Answer(true));
 						remote.phase = Phase::Setup {
 							peer,
 							name,
-							give: false,
 							step: Step::Permission,
 							grant: Grant::default(),
 						};
@@ -633,15 +1011,10 @@ impl crate::MessagingUi {
 			Phase::Setup {
 				peer,
 				name,
-				give,
 				step,
 				grant,
 			} => {
-				let title = if *give {
-					format!("Let {name} control your PC")
-				} else {
-					format!("Allow {name} to control your PC")
-				};
+				let title = format!("Allow {name} to control your PC");
 				let mut back = false;
 				let mut next = false;
 				let ready = match step {
@@ -689,14 +1062,8 @@ impl crate::MessagingUi {
 				if back {
 					remote.binding = None;
 					match step {
-						Step::Permission => {
-							// An offer sent nothing yet; an accepted request is connecting.
-							if !*give {
-								remote.requests.push(Request::End);
-							}
-							remote.phase = Phase::Idle;
-							remote.sheet = Sheet::None;
-						}
+						// The accepted request is connecting: cancelling tells them.
+						Step::Permission => remote.end(Request::End),
 						Step::Key => *step = Step::Permission,
 						Step::Warning => *step = Step::Key,
 					}
@@ -706,161 +1073,24 @@ impl crate::MessagingUi {
 						Step::Permission => *step = Step::Key,
 						Step::Key if !remote.keys.skip_warning => *step = Step::Warning,
 						_ => {
-							let (peer, name, grant, give) = (*peer, name.clone(), *grant, *give);
-							if give {
-								remote.requests.push(Request::Give(peer, grant));
-								remote.phase = Phase::Waiting {
-									peer,
-									name,
-									give: true,
-									since: now,
-									connecting: false,
-								};
-							} else {
-								remote.requests.push(Request::Start(grant));
-								remote.phase = Phase::Hosting {
-									peer,
-									name,
-									grant,
-									connected: false,
-								};
-								remote.sheet = Sheet::None;
-							}
+							let (peer, name, grant) = (*peer, name.clone(), *grant);
+							remote.requests.push(Request::Start(grant));
+							remote.phase = Phase::Hosting {
+								peer,
+								name,
+								grant,
+								connected: false,
+							};
+							remote.dialog = false;
 						}
 					}
 				} else if response.close {
-					// Escape or a click outside steps back once instead of throwing the setup away.
-					remote.sheet = Sheet::None;
+					// Escape or a click outside hides the setup; the button brings it back.
+					remote.binding = None;
+					remote.dialog = false;
 				}
 			}
-			_ => remote.sheet = Sheet::None,
-		}
-	}
-
-	/// The one in control: change what the controller may do, pause, or end.
-	fn remote_access_sheet(&mut self, ctx: &egui::Context) {
-		let remote = &mut self.remote;
-		let Phase::Hosting { name, grant, .. } = &mut remote.phase else {
-			remote.sheet = Sheet::None;
-			return;
-		};
-		let before = *grant;
-		let mut end = false;
-		let pause = remote.keys.pause.as_ref().map(|key| key.name.clone());
-		let response = dialog::Dialog::new("remote-access", "Access")
-			.subtitle(format!("What {name} can do on your PC"))
-			.width(420.0)
-			.show(ctx, |body| {
-				body.content(|ui| {
-					for (permission, label, detail) in [
-						(Some(Permission::Full), "Full control", "Keyboard and mouse"),
-						(
-							Some(Permission::Keyboard),
-							"Keyboard only",
-							"Typing and key presses",
-						),
-						(
-							Some(Permission::Mouse),
-							"Mouse only",
-							"Pointer, clicks and scrolling",
-						),
-						(None, "Disable", "Ends control"),
-					] {
-						if design::radio_row(
-							ui,
-							grant.permission == permission,
-							label,
-							Some(detail),
-						)
-						.clicked()
-						{
-							grant.permission = permission;
-						}
-					}
-					ui.add_space(4.0);
-					design::switch(
-						ui,
-						"Share PC audio",
-						Some("They hear what your PC plays"),
-						&mut grant.audio,
-					);
-					ui.add_space(4.0);
-					let label = if grant.paused {
-						"Resume control"
-					} else {
-						"Pause control"
-					};
-					if dialog::action(ui, label, dialog::Action::Outline).clicked() {
-						grant.paused = !grant.paused;
-					}
-					if let Some(pause) = &pause {
-						ui.label(
-							egui::RichText::new(format!(
-								"{pause} pauses and resumes from anywhere"
-							))
-							.size(12.0)
-							.color(design::palette(ui).muted),
-						);
-					}
-				});
-				body.footer(|ui| {
-					end = dialog::action(ui, "End control", dialog::Action::Danger).clicked();
-				});
-			});
-		if response.close {
-			remote.sheet = Sheet::None;
-		}
-		if end || grant.permission.is_none() {
-			remote.end(Request::End);
-		} else if *grant != before {
-			let grant = *grant;
-			remote.requests.push(Request::Change(grant));
-		}
-	}
-
-	/// The keys this device remembers: the pause key and the label key.
-	fn remote_keys_sheet(&mut self, ctx: &egui::Context) {
-		let remote = &mut self.remote;
-		let response = dialog::Dialog::new("remote-keys", "Remote control keys")
-			.width(420.0)
-			.show(ctx, |body| {
-				body.content(|ui| {
-					for (bind, title, detail) in [
-						(
-							Bind::Overlay,
-							"Hide the control label",
-							"While you control someone's PC",
-						),
-						(Bind::Pause, "Pause key", "While someone controls yours"),
-					] {
-						let key = match bind {
-							Bind::Pause => &mut remote.keys.pause,
-							Bind::Overlay => &mut remote.keys.overlay,
-						};
-						if key_row(ui, title, detail, key, &mut remote.binding, bind) {
-							remote.keys_changed = true;
-						}
-					}
-					ui.add_space(2.0);
-					if design::checkbox(
-						ui,
-						&mut remote.keys.skip_warning,
-						"Skip the pause key warning",
-					)
-					.changed()
-					{
-						remote.keys_changed = true;
-					}
-				});
-				body.footer(|ui| {
-					if dialog::action(ui, "Done", dialog::Action::Primary).clicked() {
-						remote.sheet = Sheet::None;
-					}
-				});
-			});
-		if response.close || remote.sheet == Sheet::None {
-			remote.sheet = Sheet::None;
-			remote.binding = None;
+			_ => remote.dialog = false,
 		}
 	}
 
@@ -927,7 +1157,7 @@ impl crate::MessagingUi {
 				if let Phase::Incoming { opened, .. } = &mut self.remote.phase {
 					*opened = true;
 				}
-				self.remote.sheet = Sheet::Phase;
+				self.remote.dialog = true;
 				self.remote.requests.push(Request::Focus);
 			}
 			Some(false) => self.remote.end(Request::Answer(false)),
@@ -935,43 +1165,181 @@ impl crate::MessagingUi {
 		}
 	}
 
-	/// The controller's window: fullscreen on the other screen while in control, a small
-	/// window that only shows it after Escape. Double-click returns to control.
-	fn remote_viewer(&mut self, ctx: &egui::Context) {
-		let Phase::Viewing(viewing) = &mut self.remote.phase else {
-			return;
-		};
+	/// The controlled screen over all of Leech while in control, like a fullscreen screen
+	/// share. Returns true while it owns the window.
+	pub(crate) fn show_remote_fullscreen(&mut self, ctx: &egui::Context) -> bool {
 		let overlay_hidden = self.remote.overlay_hidden;
-		let windowed = self.remote.windowed;
-		let parent =
-			ctx.input(|input| input.viewport().outer_rect)
-				.unwrap_or(egui::Rect::from_min_size(
-					egui::Pos2::ZERO,
-					egui::vec2(1280.0, 800.0),
-				));
+		let Phase::Viewing(viewing) = &mut self.remote.phase else {
+			return false;
+		};
+		if !viewing.full {
+			return false;
+		}
 		let now = ctx.input(|input| input.time);
-		if viewing.opened_at.is_nan() {
-			viewing.opened_at = now;
+		if viewing.full_since.is_nan() {
+			viewing.full_since = now;
 		}
-		let builder = egui::ViewportBuilder::default()
-			.with_title(format!("{}'s PC", viewing.name))
-			.with_position(parent.min + egui::vec2(40.0, 40.0))
-			.with_inner_size([960.0, 540.0])
-			.with_min_inner_size([320.0, 180.0])
-			.with_fullscreen(viewing.full && !self.remote.windowed)
-			.with_taskbar(true);
-		let mut close = false;
-		ctx.show_viewport_immediate(
-			egui::ViewportId::from_hash_of("remote-viewer"),
-			builder,
-			|ui, _| {
-				close = viewer_ui(ui, viewing, overlay_hidden, windowed, now);
-			},
-		);
-		if close {
-			self.remote.end(Request::End);
+		let screen = ctx.content_rect();
+		let id = egui::Id::unique("remote-fullscreen");
+		let mut lock = false;
+		let overlay = egui::Modal::new(id)
+			.area(
+				egui::Modal::default_area(id)
+					.anchor(egui::Align2::LEFT_TOP, egui::Vec2::ZERO)
+					.fade_in(false),
+			)
+			.backdrop_color(egui::Color32::BLACK)
+			.frame(egui::Frame::NONE)
+			.show(ctx, |ui| {
+				ui.set_min_size(screen.size());
+				let rect = egui::Rect::from_min_size(screen.min, screen.size());
+				lock = controlled_screen(ui, viewing, rect, overlay_hidden, now);
+			});
+		// Escape reaches Leech only while nothing is captured (the hook takes it otherwise):
+		// it gives Leech back and leaves the other side as it is.
+		if overlay.should_close() {
+			viewing.full = false;
+			viewing.release();
 		}
+		let lock = lock && viewing.full;
+		if lock != self.remote.pointer_locked {
+			self.remote.pointer_locked = lock;
+			lock_pointer(ctx, lock);
+		}
+		true
 	}
+}
+
+/// Confines and hides the main window's pointer for a game that captured the other mouse.
+fn lock_pointer(ctx: &egui::Context, lock: bool) {
+	ctx.send_viewport_cmd_to(
+		egui::ViewportId::ROOT,
+		egui::ViewportCommand::CursorGrab(if lock {
+			egui::CursorGrab::Confined
+		} else {
+			egui::CursorGrab::None
+		}),
+	);
+	ctx.send_viewport_cmd_to(
+		egui::ViewportId::ROOT,
+		egui::ViewportCommand::CursorVisible(!lock),
+	);
+}
+
+/// Where a key sits as a set-1 scan code and extended flag, the way the desktop's keyboard
+/// hook reports it. Leech's own key events carry no scan codes; their physical keys follow
+/// US positions, which is what scan codes name too, whatever the layout.
+// ponytail: egui gives the numpad digits and Enter the main keys' names, so a numpad key
+// bound here (only while the hook is off) is stored as the main key; the hook tells them apart.
+pub(crate) fn scan_code(key: egui::Key) -> Option<(u16, bool)> {
+	use egui::Key as K;
+	let code = match key {
+		K::Escape => 0x01,
+		K::Num1 => 0x02,
+		K::Num2 => 0x03,
+		K::Num3 => 0x04,
+		K::Num4 => 0x05,
+		K::Num5 => 0x06,
+		K::Num6 => 0x07,
+		K::Num7 => 0x08,
+		K::Num8 => 0x09,
+		K::Num9 => 0x0A,
+		K::Num0 => 0x0B,
+		K::Minus => 0x0C,
+		K::Equals => 0x0D,
+		K::Backspace => 0x0E,
+		K::Tab => 0x0F,
+		K::Q => 0x10,
+		K::W => 0x11,
+		K::E => 0x12,
+		K::R => 0x13,
+		K::T => 0x14,
+		K::Y => 0x15,
+		K::U => 0x16,
+		K::I => 0x17,
+		K::O => 0x18,
+		K::P => 0x19,
+		K::OpenBracket => 0x1A,
+		K::CloseBracket => 0x1B,
+		K::Enter => 0x1C,
+		K::ControlLeft => 0x1D,
+		K::A => 0x1E,
+		K::S => 0x1F,
+		K::D => 0x20,
+		K::F => 0x21,
+		K::G => 0x22,
+		K::H => 0x23,
+		K::J => 0x24,
+		K::K => 0x25,
+		K::L => 0x26,
+		K::Semicolon => 0x27,
+		K::Quote => 0x28,
+		K::Backtick => 0x29,
+		K::ShiftLeft => 0x2A,
+		K::Backslash => 0x2B,
+		K::Z => 0x2C,
+		K::X => 0x2D,
+		K::C => 0x2E,
+		K::V => 0x2F,
+		K::B => 0x30,
+		K::N => 0x31,
+		K::M => 0x32,
+		K::Comma => 0x33,
+		K::Period => 0x34,
+		K::Slash => 0x35,
+		K::ShiftRight => 0x36,
+		K::AltLeft => 0x38,
+		K::Space => 0x39,
+		K::CapsLock => 0x3A,
+		K::F1 => 0x3B,
+		K::F2 => 0x3C,
+		K::F3 => 0x3D,
+		K::F4 => 0x3E,
+		K::F5 => 0x3F,
+		K::F6 => 0x40,
+		K::F7 => 0x41,
+		K::F8 => 0x42,
+		K::F9 => 0x43,
+		K::F10 => 0x44,
+		K::Pause => 0x45,
+		K::ScrollLock => 0x46,
+		K::IntlBackslash => 0x56,
+		K::F11 => 0x57,
+		K::F12 => 0x58,
+		K::F13 => 0x64,
+		K::F14 => 0x65,
+		K::F15 => 0x66,
+		K::F16 => 0x67,
+		K::F17 => 0x68,
+		K::F18 => 0x69,
+		K::F19 => 0x6A,
+		K::F20 => 0x6B,
+		K::F21 => 0x6C,
+		K::F22 => 0x6D,
+		K::F23 => 0x6E,
+		K::F24 => 0x76,
+		_ => {
+			let code = match key {
+				K::ControlRight => 0x1D,
+				K::PrintScreen => 0x37,
+				K::AltRight => 0x38,
+				K::NumLock => 0x45,
+				K::Home => 0x47,
+				K::ArrowUp => 0x48,
+				K::PageUp => 0x49,
+				K::ArrowLeft => 0x4B,
+				K::ArrowRight => 0x4D,
+				K::End => 0x4F,
+				K::ArrowDown => 0x50,
+				K::PageDown => 0x51,
+				K::Insert => 0x52,
+				K::Delete => 0x53,
+				_ => return None,
+			};
+			return Some((code, true));
+		}
+	};
+	Some((code, false))
 }
 
 fn state_user(state: &client_core::State, user: Id) -> Option<&model::User> {
@@ -983,51 +1351,334 @@ fn peer_name(state: &client_core::State, user: Id) -> String {
 	state_user(state, user).map_or_else(|| "Someone".to_owned(), |user| user.name.clone())
 }
 
-/// One of the menu's two choices, as a tile with a glyph, a title and what it does.
-fn choice_tile(
-	ui: &mut egui::Ui,
-	give: bool,
-	title: &str,
-	detail: &str,
-	colors: &design::Palette,
-) -> egui::Response {
-	let width = (ui.available_width() - ui.spacing().item_spacing.x) * 0.5;
-	let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 96.0), egui::Sense::click());
-	let hover = design::hover_motion(ui, &response);
-	let press = design::press_motion(ui, &response);
-	let rect = design::pressed_rect(rect, press);
-	ui.painter().rect(
-		rect,
-		10,
-		colors.raised.lerp_to_gamma(colors.hover, hover),
-		egui::Stroke::new(1.0, colors.border.lerp_to_gamma(colors.accent, hover * 0.8)),
-		egui::StrokeKind::Inside,
-	);
-	let glyph = egui::Rect::from_center_size(
-		rect.center_top() + egui::vec2(0.0, 26.0),
-		egui::Vec2::splat(24.0),
-	);
-	if give {
-		paint_give_glyph(ui.painter(), glyph, colors.accent);
-	} else {
-		paint_remote_glyph(ui.painter(), glyph, colors.accent);
+/// Hover plate shared by the menu rows below, as [`design::menu_item`] draws it.
+fn row_hover(ui: &egui::Ui, response: &egui::Response, rect: egui::Rect) -> f32 {
+	let hover = design::hover_motion(ui, response);
+	if hover > 0.0 {
+		ui.painter().rect_filled(
+			rect,
+			6,
+			design::palette(ui).text_strong.gamma_multiply(0.08 * hover),
+		);
 	}
+	hover
+}
+
+/// The Access choice: the glyph on an accent plate, the title and what it does.
+fn access_row(ui: &mut egui::Ui, detail: &str) -> egui::Response {
+	let colors = design::palette(ui);
+	let (rect, response) =
+		ui.allocate_exact_size(egui::vec2(ui.available_width(), 56.0), egui::Sense::click());
+	let hover = row_hover(ui, &response, rect);
+	let plate = egui::Rect::from_min_size(
+		rect.left_center() + egui::vec2(8.0, -18.0),
+		egui::Vec2::splat(36.0),
+	);
+	ui.painter()
+		.rect_filled(plate, 9, colors.accent.gamma_multiply(0.16 + 0.08 * hover));
+	paint_remote_glyph(ui.painter(), plate.shrink(8.0), colors.accent);
+	let left = plate.right() + 12.0;
 	ui.painter().text(
-		rect.center_top() + egui::vec2(0.0, 54.0),
-		egui::Align2::CENTER_CENTER,
-		title,
-		egui::FontId::new(13.0, design::semibold_family(ui.ctx())),
+		egui::pos2(left, rect.center().y - 9.0),
+		egui::Align2::LEFT_CENTER,
+		"Access",
+		egui::FontId::new(14.5, design::semibold_family(ui.ctx())),
+		colors.text_strong,
+	);
+	let mut job = egui::text::LayoutJob::simple_singleline(
+		detail.to_owned(),
+		egui::FontId::proportional(12.5),
+		colors.muted.lerp_to_gamma(colors.text, hover),
+	);
+	job.wrap.max_width = rect.right() - 8.0 - left;
+	job.wrap.max_rows = 1;
+	let galley = ui.painter().layout_job(job);
+	ui.painter().galley(
+		egui::pos2(left, rect.center().y + 10.0 - galley.size().y * 0.5),
+		galley,
+		colors.muted,
+	);
+	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Access"));
+	response
+}
+
+/// One person to ask: avatar and name.
+fn person_row(
+	ui: &mut egui::Ui,
+	avatars: &mut crate::avatars::Avatars,
+	user: Option<&model::User>,
+	demo: bool,
+	name: &str,
+) -> egui::Response {
+	let colors = design::palette(ui);
+	let (rect, response) =
+		ui.allocate_exact_size(egui::vec2(ui.available_width(), 44.0), egui::Sense::click());
+	let hover = row_hover(ui, &response, rect);
+	let face = egui::Rect::from_min_size(
+		rect.left_center() + egui::vec2(8.0, -14.0),
+		egui::Vec2::splat(28.0),
+	);
+	let mut child = ui.new_child(egui::UiBuilder::new().max_rect(face));
+	avatar(&mut child, avatars, user, demo, name, 28.0);
+	let mut job = egui::text::LayoutJob::simple_singleline(
+		name.to_owned(),
+		egui::FontId::new(14.0, design::medium_family(ui.ctx())),
+		colors.text.lerp_to_gamma(colors.text_strong, hover),
+	);
+	job.wrap.max_width = rect.right() - 8.0 - (face.right() + 10.0);
+	job.wrap.max_rows = 1;
+	let galley = ui.painter().layout_job(job);
+	ui.painter().galley(
+		egui::pos2(face.right() + 10.0, rect.center().y - galley.size().y * 0.5),
+		galley,
+		colors.text,
+	);
+	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+	response
+}
+
+/// Who the session is with and how it stands, above the menu's actions.
+fn status_header(ui: &mut egui::Ui, title: &str, detail: &str, dot: egui::Color32) {
+	let colors = design::palette(ui);
+	let (rect, _) =
+		ui.allocate_exact_size(egui::vec2(ui.available_width(), 46.0), egui::Sense::hover());
+	ui.painter()
+		.circle_filled(egui::pos2(rect.left() + 14.0, rect.top() + 15.0), 4.0, dot);
+	let mut job = egui::text::LayoutJob::simple_singleline(
+		title.to_owned(),
+		egui::FontId::new(14.0, design::semibold_family(ui.ctx())),
+		colors.text_strong,
+	);
+	job.wrap.max_width = rect.width() - 34.0;
+	job.wrap.max_rows = 1;
+	let galley = ui.painter().layout_job(job);
+	ui.painter().galley(
+		egui::pos2(
+			rect.left() + 26.0,
+			rect.top() + 15.0 - galley.size().y * 0.5,
+		),
+		galley,
 		colors.text_strong,
 	);
 	ui.painter().text(
-		rect.center_top() + egui::vec2(0.0, 74.0),
-		egui::Align2::CENTER_CENTER,
+		egui::pos2(rect.left() + 26.0, rect.top() + 34.0),
+		egui::Align2::LEFT_CENTER,
 		detail,
-		egui::FontId::proportional(11.5),
+		egui::FontId::proportional(12.5),
 		colors.muted,
 	);
-	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, title));
+	ui.separator();
+}
+
+/// A small section title over menu rows, with an optional note at its right.
+fn menu_heading(ui: &mut egui::Ui, title: &str, note: Option<&str>, colors: &design::Palette) {
+	ui.add_space(4.0);
+	let (rect, _) =
+		ui.allocate_exact_size(egui::vec2(ui.available_width(), 22.0), egui::Sense::hover());
+	ui.painter().text(
+		egui::pos2(rect.left() + 10.0, rect.center().y),
+		egui::Align2::LEFT_CENTER,
+		crate::i18n::translate_if_key(title).to_uppercase(),
+		egui::FontId::new(12.0, design::semibold_family(ui.ctx())),
+		colors.muted,
+	);
+	if let Some(note) = note {
+		ui.painter().text(
+			rect.right_center() - egui::vec2(10.0, 0.0),
+			egui::Align2::RIGHT_CENTER,
+			note,
+			egui::FontId::proportional(12.0),
+			colors.warning,
+		);
+	}
+}
+
+/// A menu row with a keycap at its right: the key that does the same.
+fn key_hint_item(ui: &mut egui::Ui, label: &str, key: Option<&str>) -> egui::Response {
+	let colors = design::palette(ui);
+	let (rect, response) =
+		ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), egui::Sense::click());
+	let hover = row_hover(ui, &response, rect);
+	ui.painter().text(
+		egui::pos2(rect.left() + 10.0, rect.center().y),
+		egui::Align2::LEFT_CENTER,
+		label,
+		egui::FontId::new(14.0, design::medium_family(ui.ctx())),
+		colors.text.lerp_to_gamma(colors.text_strong, hover),
+	);
+	if let Some(key) = key {
+		keycap(
+			ui,
+			rect.right_center() - egui::vec2(8.0, 0.0),
+			key,
+			false,
+			0.0,
+		);
+	}
+	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
 	response
+}
+
+/// A small keycap whose right edge sits at `right`; returns its rect.
+fn keycap(ui: &egui::Ui, right: egui::Pos2, text: &str, listening: bool, hover: f32) -> egui::Rect {
+	let colors = design::palette(ui);
+	let galley = ui.painter().layout_no_wrap(
+		text.to_owned(),
+		egui::FontId::new(12.5, design::medium_family(ui.ctx())),
+		colors.text_strong,
+	);
+	let cap = egui::Rect::from_min_max(
+		egui::pos2(right.x - (galley.size().x + 18.0).max(30.0), right.y - 12.0),
+		egui::pos2(right.x, right.y + 12.0),
+	);
+	ui.painter()
+		.rect_filled(cap.translate(egui::vec2(0.0, 1.5)), 6, colors.border);
+	ui.painter().rect(
+		cap,
+		6,
+		if listening {
+			colors.accent.gamma_multiply(0.2)
+		} else {
+			colors.raised.lerp_to_gamma(colors.hover, hover)
+		},
+		egui::Stroke::new(
+			1.0,
+			if listening {
+				colors.accent
+			} else {
+				colors.border
+			},
+		),
+		egui::StrokeKind::Inside,
+	);
+	ui.painter().galley(
+		cap.center() - galley.size() * 0.5,
+		galley,
+		colors.text_strong,
+	);
+	cap
+}
+
+/// One choice of what the controller may do, with a radio at its right. `locked` rows look
+/// dimmed but still answer a click, so the menu can say why nothing changed.
+fn menu_radio(
+	ui: &mut egui::Ui,
+	label: &str,
+	selected: bool,
+	locked: bool,
+	danger: bool,
+) -> egui::Response {
+	let colors = design::palette(ui);
+	let (rect, response) =
+		ui.allocate_exact_size(egui::vec2(ui.available_width(), 32.0), egui::Sense::click());
+	response
+		.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, selected, label));
+	let hover = row_hover(ui, &response, rect);
+	let dim = if locked { 0.5 } else { 1.0 };
+	let ink = if danger {
+		colors.danger
+	} else {
+		colors.text.lerp_to_gamma(colors.text_strong, hover)
+	};
+	ui.painter().text(
+		egui::pos2(rect.left() + 10.0, rect.center().y),
+		egui::Align2::LEFT_CENTER,
+		label,
+		egui::FontId::new(14.0, design::medium_family(ui.ctx())),
+		ink.gamma_multiply(dim),
+	);
+	let center = egui::pos2(rect.right() - 19.0, rect.center().y);
+	if selected {
+		ui.painter()
+			.circle_filled(center, 9.0, colors.accent.gamma_multiply(dim));
+		ui.painter()
+			.circle_filled(center, 3.5, colors.accent_text.gamma_multiply(dim));
+	} else {
+		ui.painter().circle_stroke(
+			center,
+			8.25,
+			egui::Stroke::new(
+				1.5,
+				colors
+					.text_strong
+					.gamma_multiply((0.32 + 0.23 * hover) * dim),
+			),
+		);
+	}
+	response
+}
+
+/// One remembered key in the menu: what it does, its keycap (click to bind, Escape to stop)
+/// and a × that forgets it. Returns true when the key was cleared.
+fn key_menu_row(
+	ui: &mut egui::Ui,
+	title: &str,
+	detail: &str,
+	key: &mut Option<Key>,
+	binding: &mut Option<Bind>,
+	bind: Bind,
+	clearable: bool,
+) -> bool {
+	let colors = design::palette(ui);
+	let (rect, response) =
+		ui.allocate_exact_size(egui::vec2(ui.available_width(), 44.0), egui::Sense::click());
+	let listening = *binding == Some(bind);
+	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, title));
+	let hover = row_hover(ui, &response, rect);
+	ui.painter().text(
+		egui::pos2(rect.left() + 10.0, rect.center().y - 8.0),
+		egui::Align2::LEFT_CENTER,
+		title,
+		egui::FontId::new(14.0, design::medium_family(ui.ctx())),
+		colors.text.lerp_to_gamma(colors.text_strong, hover),
+	);
+	ui.painter().text(
+		egui::pos2(rect.left() + 10.0, rect.center().y + 10.0),
+		egui::Align2::LEFT_CENTER,
+		detail,
+		egui::FontId::proportional(12.0),
+		colors.muted,
+	);
+	let mut right = rect.right_center() - egui::vec2(8.0, 0.0);
+	let mut cleared = false;
+	if key.is_some() && clearable && !listening {
+		let clear =
+			egui::Rect::from_center_size(right - egui::vec2(10.0, 0.0), egui::Vec2::splat(20.0));
+		let clear_response = ui.interact(clear, response.id.with("clear"), egui::Sense::click());
+		let over = design::hover_motion(ui, &clear_response);
+		if over > 0.0 {
+			ui.painter()
+				.circle_filled(clear.center(), 10.0, colors.hover.gamma_multiply(over));
+		}
+		crate::icons::paint(
+			ui.painter(),
+			Icon::Close,
+			egui::Rect::from_center_size(clear.center(), egui::Vec2::splat(9.0)),
+			colors.muted.lerp_to_gamma(colors.text_strong, over),
+		);
+		clear_response.widget_info(|| {
+			egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Clear {title}"))
+		});
+		if clear_response.clicked() {
+			*key = None;
+			cleared = true;
+		}
+		right.x = clear.left() - 4.0;
+	}
+	let text = if listening {
+		"Press a key…".to_owned()
+	} else {
+		key.as_ref()
+			.map_or_else(|| "Set".to_owned(), |key| key.name.clone())
+	};
+	keycap(ui, right, &text, listening, hover);
+	if listening {
+		ui.ctx().request_repaint();
+	}
+	if response.clicked() && !cleared {
+		*binding = if listening { None } else { Some(bind) };
+	}
+	cleared
 }
 
 /// Words that cycle under the waiting animation, a few seconds each.
@@ -1040,8 +1691,19 @@ const WAITING_WORDS: [&str; 6] = [
 	"Still waiting",
 ];
 
+/// How far an Access request got.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Wait {
+	/// The notification is out.
+	Asking,
+	/// They said yes; the two PCs are finding each other.
+	Connecting,
+	/// Connected; they choose what you can do and their pause key.
+	SettingUp,
+}
+
 /// Two screens and a signal travelling between them while the other side answers.
-fn waiting_scene(ui: &mut egui::Ui, name: &str, elapsed: f64, connecting: bool, give: bool) {
+fn waiting_scene(ui: &mut egui::Ui, name: &str, elapsed: f64, wait: Wait) {
 	let colors = design::palette(ui);
 	let (rect, _) = ui.allocate_exact_size(
 		egui::vec2(ui.available_width(), 158.0),
@@ -1053,11 +1715,10 @@ fn waiting_scene(ui: &mut egui::Ui, name: &str, elapsed: f64, connecting: bool, 
 	let left = center - egui::vec2(92.0, 0.0);
 	let right = center + egui::vec2(92.0, 0.0);
 	// You on the left, them on the right: the ask travels across and rings at their screen.
-	let target = right;
 	for ring in 0..3 {
 		let phase = ((t / 2.4) + ring as f32 / 3.0).fract();
 		ui.painter().circle_stroke(
-			target,
+			right,
 			26.0 + 24.0 * phase,
 			egui::Stroke::new(1.5, colors.accent.gamma_multiply(0.45 * (1.0 - phase))),
 		);
@@ -1100,8 +1761,8 @@ fn waiting_scene(ui: &mut egui::Ui, name: &str, elapsed: f64, connecting: bool, 
 			if them { colors.accent } else { colors.muted },
 		);
 	}
-	// Dots run along the line, faster once connecting.
-	let speed = if connecting { 0.9 } else { 1.6 };
+	// Dots run along the line, faster once they said yes.
+	let speed = if wait == Wait::Asking { 1.6 } else { 0.9 };
 	let (from, to) = (left + egui::vec2(36.0, 0.0), right - egui::vec2(36.0, 0.0));
 	for dot in 0..5 {
 		let phase = ((t / speed) + dot as f32 / 5.0).fract();
@@ -1112,10 +1773,10 @@ fn waiting_scene(ui: &mut egui::Ui, name: &str, elapsed: f64, connecting: bool, 
 			.circle_filled(at, 2.5 + 1.0 * fade, colors.accent.gamma_multiply(fade));
 	}
 	// The phrase with a light sweeping across it, and the seconds in the open.
-	let word = if connecting {
-		"Connecting"
-	} else {
-		WAITING_WORDS[((elapsed / 3.2) as usize).min(WAITING_WORDS.len() - 1)]
+	let word = match wait {
+		Wait::Asking => WAITING_WORDS[((elapsed / 3.2) as usize).min(WAITING_WORDS.len() - 1)],
+		Wait::Connecting => "Connecting",
+		Wait::SettingUp => "Almost there",
 	};
 	let text = format!("{word}…");
 	let font = egui::FontId::new(14.0, design::medium_family(ui.ctx()));
@@ -1134,12 +1795,10 @@ fn waiting_scene(ui: &mut egui::Ui, name: &str, elapsed: f64, connecting: bool, 
 	ui.painter()
 		.with_clip_rect(band)
 		.galley(origin, bright, colors.text_strong);
-	let detail = if connecting {
-		format!("{name} said yes")
-	} else if give {
-		format!("{name} decides · {}s", elapsed as u32)
-	} else {
-		format!("{name} has to accept · {}s", elapsed as u32)
+	let detail = match wait {
+		Wait::Asking => format!("{name} has to accept · {}s", elapsed as u32),
+		Wait::Connecting => format!("{name} said yes"),
+		Wait::SettingUp => format!("{name} is choosing what you can do"),
 	};
 	ui.painter().text(
 		egui::pos2(rect.center().x, rect.top() + 138.0),
@@ -1558,104 +2217,14 @@ fn big_keycap(ui: &mut egui::Ui, name: Option<&str>, listening: bool) -> egui::R
 	response
 }
 
-/// One remembered key: what it does, its keycap (click to bind) and a clear action.
-fn key_row(
-	ui: &mut egui::Ui,
-	title: &str,
-	detail: &str,
-	key: &mut Option<Key>,
-	binding: &mut Option<Bind>,
-	bind: Bind,
-) -> bool {
-	let colors = design::palette(ui);
-	let mut changed = false;
-	ui.horizontal(|ui| {
-		ui.vertical(|ui| {
-			ui.label(design::medium(ui, title, 14.0));
-			ui.label(egui::RichText::new(detail).size(12.0).color(colors.muted));
-		});
-		ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-			if key.is_some() && *binding != Some(bind) && design::text_action(ui, "Clear").clicked()
-			{
-				*key = None;
-				changed = true;
-			}
-			let listening = *binding == Some(bind);
-			let text = if listening {
-				"Press a key…".to_owned()
-			} else {
-				key.as_ref()
-					.map_or_else(|| "Not set".to_owned(), |key| key.name.clone())
-			};
-			let (rect, response) =
-				ui.allocate_exact_size(egui::vec2(120.0, 32.0), egui::Sense::click());
-			let hover = design::hover_motion(ui, &response);
-			ui.painter().rect(
-				rect,
-				6,
-				if listening {
-					colors.accent.gamma_multiply(0.18)
-				} else {
-					colors.raised.lerp_to_gamma(colors.hover, hover)
-				},
-				egui::Stroke::new(
-					if listening { 1.5 } else { 1.0 },
-					if listening {
-						colors.accent
-					} else {
-						colors.border
-					},
-				),
-				egui::StrokeKind::Inside,
-			);
-			ui.painter().text(
-				rect.center(),
-				egui::Align2::CENTER_CENTER,
-				text,
-				egui::FontId::new(12.5, design::medium_family(ui.ctx())),
-				if key.is_some() || listening {
-					colors.text_strong
-				} else {
-					colors.muted
-				},
-			);
-			if response.clicked() {
-				*binding = if listening { None } else { Some(bind) };
-			}
-		});
-	});
-	ui.add_space(6.0);
-	changed
-}
-
-/// The controller's window. Returns true when it asks to close, which ends control.
-fn viewer_ui(
-	ui: &mut egui::Ui,
-	viewing: &mut Viewing,
-	overlay_hidden: bool,
-	windowed: bool,
-	now: f64,
-) -> bool {
-	let rect = ui.max_rect();
-	ui.painter().rect_filled(rect, 0, egui::Color32::BLACK);
-	let (close, focused, fullscreen) = ui.input(|input| {
-		(
-			input.viewport().close_requested(),
-			input.viewport().focused == Some(true),
-			input.viewport().fullscreen == Some(true),
-		)
-	});
-	if viewing.shown_full != Some(viewing.full) {
-		if viewing.shown_full.is_some() && !windowed {
-			ui.ctx()
-				.send_viewport_cmd(egui::ViewportCommand::Fullscreen(viewing.full));
-			if viewing.full {
-				ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
-			}
-		}
-		viewing.shown_full = Some(viewing.full);
-	}
-	// Only the other screen, at its own shape: never the encoder's bars, never stretched.
+/// Where the other screen sits in `rect`: at its own shape, never the encoder's bars, never
+/// stretched. Draws it there, rounded by `corner`.
+pub(crate) fn paint_screen(
+	ui: &egui::Ui,
+	viewing: &Viewing,
+	rect: egui::Rect,
+	corner: u8,
+) -> egui::Rect {
 	let [x, y, width, height] = viewing.content;
 	let uv = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(width, height));
 	let screen = egui::vec2(viewing.screen[0] as f32, viewing.screen[1] as f32);
@@ -1666,16 +2235,136 @@ fn viewer_ui(
 		_ => crate::voice::fit_rect(rect, screen),
 	};
 	if let Some(texture) = viewing.texture {
-		ui.painter()
-			.image(texture.id, content, uv, egui::Color32::WHITE);
+		ui.painter().add(
+			egui::epaint::RectShape::filled(content, corner, egui::Color32::WHITE)
+				.with_texture(texture.id, uv),
+		);
 	}
-	let steering = viewing.full
-		&& fullscreen
-		&& focused
-		&& viewing.started
-		&& !viewing.paused
-		&& viewing.permission.is_some();
-	viewing.capturing = steering;
+	content
+}
+
+/// Why the other screen cannot be steered yet, as a title and a detail, with a spinner while
+/// something is still on its way.
+pub(crate) fn screen_status(viewing: &Viewing) -> Option<(String, String, bool)> {
+	if !viewing.connected && viewing.texture.is_none() {
+		Some((
+			"Connecting…".to_owned(),
+			format!("Reaching {}'s PC", viewing.name),
+			true,
+		))
+	} else if !viewing.started {
+		Some((
+			format!("{} is setting up", viewing.name),
+			"Control starts when they finish".to_owned(),
+			true,
+		))
+	} else if viewing.paused {
+		Some((
+			format!("{} paused your control", viewing.name),
+			"You can watch; control comes back when they resume".to_owned(),
+			false,
+		))
+	} else {
+		None
+	}
+}
+
+/// A dark card in the middle of the screen with a status; small screens get a smaller one.
+pub(crate) fn paint_status_card(
+	ui: &egui::Ui,
+	rect: egui::Rect,
+	(title, detail, spin): &(String, String, bool),
+	now: f64,
+) {
+	let colors = design::palette(ui);
+	let compact = rect.width() < 420.0 || rect.height() < 200.0;
+	let width = (rect.width() - 24.0).min(if compact { 260.0 } else { 360.0 });
+	let height = if compact { 64.0 } else { 92.0 } + if *spin { 26.0 } else { 0.0 };
+	if width < 80.0 || rect.height() < height + 8.0 {
+		return;
+	}
+	ui.painter()
+		.rect_filled(rect, 0, egui::Color32::from_black_alpha(120));
+	let card = egui::Rect::from_center_size(rect.center(), egui::vec2(width, height));
+	ui.painter().rect_filled(
+		card,
+		14,
+		egui::Color32::from_rgba_unmultiplied(20, 20, 24, 235),
+	);
+	let mut y = card.top() + if compact { 14.0 } else { 22.0 };
+	if *spin {
+		let t = now as f32;
+		for dot in 0..3 {
+			let phase = (t * 1.4 - dot as f32 * 0.18).rem_euclid(1.0);
+			let lift = (phase * std::f32::consts::TAU).sin().max(0.0) * 5.0;
+			ui.painter().circle_filled(
+				egui::pos2(card.center().x - 14.0 + 14.0 * dot as f32, y + 6.0 - lift),
+				3.5,
+				colors.accent,
+			);
+		}
+		y += 26.0;
+		ui.ctx().request_repaint();
+	}
+	let fit = |text: &str, font: egui::FontId, color: egui::Color32| {
+		let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, color);
+		job.wrap.max_width = width - 24.0;
+		job.wrap.max_rows = 1;
+		ui.painter().layout_job(job)
+	};
+	let title = fit(
+		title,
+		egui::FontId::new(
+			if compact { 14.0 } else { 16.0 },
+			design::semibold_family(ui.ctx()),
+		),
+		egui::Color32::WHITE,
+	);
+	let title_height = title.size().y;
+	ui.painter().galley(
+		egui::pos2(card.center().x - title.size().x * 0.5, y),
+		title,
+		egui::Color32::WHITE,
+	);
+	let detail = fit(
+		detail,
+		egui::FontId::proportional(if compact { 11.5 } else { 12.5 }),
+		egui::Color32::from_gray(190),
+	);
+	ui.painter().galley(
+		egui::pos2(
+			card.center().x - detail.size().x * 0.5,
+			y + title_height + if compact { 4.0 } else { 8.0 },
+		),
+		detail,
+		egui::Color32::from_gray(190),
+	);
+}
+
+/// The controlled screen filling the window. Returns true when the pointer should be locked
+/// (a game there captured the mouse).
+fn controlled_screen(
+	ui: &mut egui::Ui,
+	viewing: &mut Viewing,
+	rect: egui::Rect,
+	overlay_hidden: bool,
+	now: f64,
+) -> bool {
+	ui.painter().rect_filled(rect, 0, egui::Color32::BLACK);
+	let (focused, fullscreen) = ui.input(|input| {
+		(
+			input.viewport().focused == Some(true),
+			input.viewport().fullscreen == Some(true),
+		)
+	});
+	let content = paint_screen(ui, viewing, rect, 0);
+	let steering =
+		fullscreen && focused && viewing.started && !viewing.paused && viewing.permission.is_some();
+	if steering {
+		viewing.capturing = true;
+	} else {
+		viewing.release();
+	}
 	let mouse = steering
 		&& matches!(
 			viewing.permission,
@@ -1694,121 +2383,14 @@ fn viewer_ui(
 			.request_repaint_after(std::time::Duration::from_millis(260));
 	}
 	let lock = mouse && viewing.relative && now - since >= 0.25;
-	let locked_id = egui::Id::unique("remote-pointer-locked");
-	let was_locked = ui
-		.data(|data| data.get_temp::<bool>(locked_id))
-		.unwrap_or(false);
-	if lock != was_locked {
-		ui.data_mut(|data| data.insert_temp(locked_id, lock));
-		ui.ctx()
-			.send_viewport_cmd(egui::ViewportCommand::CursorGrab(if lock {
-				egui::CursorGrab::Confined
-			} else {
-				egui::CursorGrab::None
-			}));
-		ui.ctx()
-			.send_viewport_cmd(egui::ViewportCommand::CursorVisible(!lock));
-	}
 	if mouse {
 		collect_pointer(ui, viewing, content);
-	} else if !viewing.held.is_empty() {
-		for button in std::mem::take(&mut viewing.held) {
-			viewing.inputs.push(MouseInput::Button {
-				button,
-				down: false,
-			});
-		}
 	}
 	let colors = design::palette(ui);
-	if !viewing.full {
-		// The small window only shows; a double-click goes back to control.
-		let surface = ui.interact(
-			rect,
-			egui::Id::unique("remote-viewer-surface"),
-			egui::Sense::click(),
-		);
-		if surface.double_clicked() {
-			viewing.full = true;
-		}
-		let hint = egui::Rect::from_center_size(
-			egui::pos2(rect.center().x, rect.bottom() - 24.0),
-			egui::vec2(236.0, 28.0),
-		);
-		ui.painter()
-			.rect_filled(hint, 14, egui::Color32::from_black_alpha(170));
-		ui.painter().text(
-			hint.center(),
-			egui::Align2::CENTER_CENTER,
-			"Double-click to take control",
-			egui::FontId::proportional(12.5),
-			egui::Color32::WHITE,
-		);
+	if let Some(status) = screen_status(viewing) {
+		paint_status_card(ui, rect, &status, now);
 	}
-	let center_card = |ui: &egui::Ui, title: &str, detail: &str, spin: bool| {
-		ui.painter()
-			.rect_filled(rect, 0, egui::Color32::from_black_alpha(150));
-		let card = egui::Rect::from_center_size(
-			rect.center(),
-			egui::vec2(360.0, if spin { 120.0 } else { 92.0 }),
-		);
-		ui.painter().rect_filled(
-			card,
-			14,
-			egui::Color32::from_rgba_unmultiplied(20, 20, 24, 235),
-		);
-		let mut y = card.top() + 24.0;
-		if spin {
-			let t = now as f32;
-			for dot in 0..3 {
-				let phase = (t * 1.4 - dot as f32 * 0.18).rem_euclid(1.0);
-				let lift = (phase * std::f32::consts::TAU).sin().max(0.0) * 5.0;
-				ui.painter().circle_filled(
-					egui::pos2(card.center().x - 14.0 + 14.0 * dot as f32, y + 6.0 - lift),
-					3.5,
-					colors.accent,
-				);
-			}
-			y += 30.0;
-			ui.ctx().request_repaint();
-		}
-		ui.painter().text(
-			egui::pos2(card.center().x, y + 6.0),
-			egui::Align2::CENTER_CENTER,
-			title,
-			egui::FontId::new(16.0, design::semibold_family(ui.ctx())),
-			egui::Color32::WHITE,
-		);
-		ui.painter().text(
-			egui::pos2(card.center().x, y + 32.0),
-			egui::Align2::CENTER_CENTER,
-			detail,
-			egui::FontId::proportional(12.5),
-			egui::Color32::from_gray(190),
-		);
-	};
-	if !viewing.connected && viewing.texture.is_none() {
-		center_card(
-			ui,
-			"Connecting…",
-			&format!("Reaching {}'s PC", viewing.name),
-			true,
-		);
-	} else if !viewing.started {
-		center_card(
-			ui,
-			&format!("{} is setting up", viewing.name),
-			"Control starts when they finish",
-			true,
-		);
-	} else if viewing.paused {
-		center_card(
-			ui,
-			&format!("{} paused your control", viewing.name),
-			"You can watch; control comes back when they resume",
-			false,
-		);
-	}
-	if viewing.full && !overlay_hidden {
+	if !overlay_hidden {
 		// What this control allows, small at the top right.
 		let what = if !viewing.started {
 			"Starting"
@@ -1848,10 +2430,10 @@ fn viewer_ui(
 		);
 	}
 	// How to get out, for the first seconds of control.
-	let since = (now - viewing.opened_at) as f32;
-	if viewing.full && since < 6.0 {
+	let since = (now - viewing.full_since) as f32;
+	if since < 6.0 {
 		let fade = (1.0 - (since - 4.5).max(0.0) / 1.5).clamp(0.0, 1.0);
-		let text = "Esc shows Leech · Windows key stops · Shift+Esc sends Esc";
+		let text = "Esc returns to Leech · Windows key ends control · Shift+Esc sends Esc";
 		let galley = ui.painter().layout_no_wrap(
 			text.to_owned(),
 			egui::FontId::proportional(13.0),
@@ -1873,7 +2455,7 @@ fn viewer_ui(
 		);
 		ui.ctx().request_repaint();
 	}
-	close
+	lock
 }
 
 /// Turns the window's pointer events into input for the other screen.
@@ -1986,33 +2568,6 @@ pub(crate) fn paint_remote_glyph(painter: &egui::Painter, rect: egui::Rect, colo
 	}
 }
 
-/// Giving control: a screen with an arrow leaving it.
-fn paint_give_glyph(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
-	let unit = rect.width() / 256.0;
-	let at = |x: f32, y: f32| rect.min + egui::vec2(x, y) * unit;
-	let stroke = egui::Stroke::new(20.0 * unit, color);
-	painter.add(egui::Shape::line(
-		vec![
-			at(228.0, 120.0),
-			at(228.0, 168.0),
-			at(216.0, 180.0),
-			at(40.0, 180.0),
-			at(28.0, 168.0),
-			at(28.0, 52.0),
-			at(40.0, 40.0),
-			at(120.0, 40.0),
-		],
-		stroke,
-	));
-	painter.line_segment([at(88.0, 220.0), at(168.0, 220.0)], stroke);
-	painter.line_segment([at(128.0, 180.0), at(128.0, 220.0)], stroke);
-	painter.line_segment([at(120.0, 116.0), at(224.0, 28.0)], stroke);
-	painter.add(egui::Shape::line(
-		vec![at(164.0, 28.0), at(224.0, 28.0), at(224.0, 84.0)],
-		stroke,
-	));
-}
-
 fn paint_keyboard(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
 	painter.rect_stroke(
 		rect,
@@ -2081,5 +2636,43 @@ mod tests {
 		});
 		assert_eq!(remote.keys.pause.as_ref().map(|key| key.scan), Some(0x42));
 		assert!(remote.keys_changed && remote.binding.is_none());
+	}
+
+	#[test]
+	fn keys_map_to_what_the_hook_sees() {
+		assert_eq!(scan_code(egui::Key::F8), Some((0x42, false)));
+		assert_eq!(scan_code(egui::Key::A), Some((0x1E, false)));
+		assert_eq!(scan_code(egui::Key::ArrowUp), Some((0x48, true)));
+		assert_eq!(scan_code(egui::Key::Delete), Some((0x53, true)));
+		assert_eq!(scan_code(egui::Key::F24), Some((0x76, false)));
+	}
+
+	#[test]
+	fn pause_flips_and_tells_the_other_side() {
+		let mut remote = Remote::default();
+		assert!(remote.toggle_pause().is_none() && remote.requests.is_empty());
+		remote.phase = Phase::Hosting {
+			peer: Id(7),
+			name: "mafaka".into(),
+			grant: Grant::default(),
+			connected: true,
+		};
+		assert_eq!(
+			remote.toggle_pause().as_deref(),
+			Some("mafaka's control is paused")
+		);
+		assert_eq!(
+			remote.toggle_pause().as_deref(),
+			Some("mafaka's control resumed")
+		);
+		let paused: Vec<bool> = remote
+			.requests
+			.iter()
+			.filter_map(|request| match request {
+				Request::Change(grant) => Some(grant.paused),
+				_ => None,
+			})
+			.collect();
+		assert_eq!(paused, [true, false]);
 	}
 }

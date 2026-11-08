@@ -243,25 +243,21 @@ impl Remote {
 		out: &mut Outcome,
 	) {
 		match request {
-			Request::Ask(peer) | Request::Give(peer, _) if self.session.is_none() => {
+			Request::Ask(peer) if self.session.is_none() => {
 				let mut id = [0; 8];
 				if getrandom::fill(&mut id).is_err() {
 					return;
 				}
 				let id = u64::from_le_bytes(id);
-				let (host, announce, grant) = match request {
-					Request::Give(_, grant) => (true, Kind::Give, Some(grant)),
-					_ => (false, Kind::Ask, None),
-				};
 				self.session = Some(Session {
 					id,
 					peer,
 					name: peer_name(state, peer),
-					host,
+					host: false,
 					stage: Stage::Gathering(gather(id, ctx, runtime)),
-					announce,
+					announce: Kind::Ask,
 					theirs: None,
-					grant,
+					grant: None,
 					texture: VideoTexture::default(),
 					held_at: Instant::now(),
 				});
@@ -293,7 +289,7 @@ impl Remote {
 				self.finish(ui, state, out, true);
 			}
 			Request::Focus => out.focus = true,
-			Request::Ask(_) | Request::Give(..) => {}
+			Request::Ask(_) => {}
 		}
 	}
 
@@ -423,6 +419,14 @@ impl Remote {
 				if let Some(end) = status.ended {
 					failed = Some(end_text(end, false));
 				} else if let Phase::Viewing(viewing) = &mut ui.remote.phase {
+					// Control starts fullscreen over Leech, brought forward, as soon as the
+					// other side finished its setup.
+					if status.started && !viewing.started {
+						viewing.full = true;
+						ui.remote.dialog = false;
+						ui.remote.menu = ui::remote::Menu::None;
+						out.focus = true;
+					}
 					if let Some(picture) = picture {
 						viewing.texture = session.texture.upload(
 							ctx,
@@ -495,6 +499,8 @@ impl Remote {
 		}
 		ui.remote.phase = Phase::Idle;
 		ui.remote.binding = None;
+		ui.remote.dialog = false;
+		ui.remote.menu = ui::remote::Menu::None;
 		let mut shared = lock(&self.shared);
 		shared.forwarded.clear();
 		shared.mode = Mode::Pass;
@@ -565,11 +571,32 @@ impl Remote {
 			let wake = ctx.clone();
 			match Hook::start(move |event| filter(&shared, &wake, event)) {
 				Ok(hook) => self.hook = Some(hook),
-				Err(_) => self.hook_failed = true,
+				Err(error) => {
+					self.hook_failed = true;
+					ui.toasts.push(
+						ui::design::Level::Warning,
+						format!("{error}: remote control keys only work while Leech has focus"),
+					);
+				}
 			}
-		} else if !needed && self.hook.is_some() {
-			self.hook = None;
-			lock(&self.shared).swallowed.clear();
+		} else if !needed {
+			// Tried again the next time a key is needed.
+			self.hook_failed = false;
+			if self.hook.take().is_some() {
+				lock(&self.shared).swallowed.clear();
+			}
+		}
+		// A key pressed in Leech itself, which the hook did not catch.
+		if let Some((scan, extended)) = remote.typed.take() {
+			remote.bound(ui::remote::Key {
+				scan,
+				extended,
+				name: platform::keyboard_hook::key_name(scan, extended),
+			});
+		}
+		// The mode above came before these keys: one more frame sets the one they leave.
+		if !caught.is_empty() {
+			ctx.request_repaint();
 		}
 		for caught in caught {
 			match caught {
@@ -580,23 +607,15 @@ impl Remote {
 				}),
 				Caught::CancelBind => remote.binding = None,
 				Caught::Pause => {
-					if let Phase::Hosting { grant, name, .. } = &mut remote.phase {
-						grant.paused = !grant.paused;
-						let grant = *grant;
-						let text = if grant.paused {
-							format!("{name}'s control is paused")
-						} else {
-							format!("{name}'s control resumed")
-						};
-						remote.requests.push(Request::Change(grant));
+					if let Some(text) = remote.toggle_pause() {
 						ui.toasts.push(ui::design::Level::Info, text);
 					}
 				}
+				// Leech comes back; the other side stays as it is.
 				Caught::Minimize => {
 					if let Some(viewing) = remote.viewing() {
 						viewing.full = false;
 					}
-					ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
 				}
 				Caught::Stop => remote.requests.push(Request::End),
 				Caught::Overlay => remote.overlay_hidden = !remote.overlay_hidden,
@@ -608,9 +627,11 @@ impl Remote {
 #[cfg(feature = "demo")]
 impl Remote {
 	/// `--demo --demo-call --demo-remote=<phase>`: one phase with the call's peer, for
-	/// screenshots, without any signal, connection or hook.
+	/// screenshots, without any signal, connection or hook. Phases: menu, who, keys, waiting,
+	/// setting-up, incoming, answer, setup, key, warning, hosting, access, access-paused,
+	/// viewing, paused, stage, viewer-menu.
 	fn demo(&mut self, ui: &mut ui::MessagingUi, state: &State, ctx: &egui::Context) {
-		use ui::remote::{Sheet, Step};
+		use ui::remote::{Menu, Step};
 		if !state.demo || self.demo.is_some() {
 			return;
 		}
@@ -651,32 +672,41 @@ impl Remote {
 		let setup = |step| Phase::Setup {
 			peer,
 			name: name.clone(),
-			give: false,
 			step,
 			grant,
 		};
-		let viewing = |paused: bool, started: bool, full: bool| {
+		let viewing = |paused: bool, connected: bool, started: bool, full: bool| {
 			let mut viewing = Viewing::new(peer, name.clone());
-			viewing.texture = Some(egui::load::SizedTexture::from_handle(&texture));
+			viewing.texture = connected.then(|| egui::load::SizedTexture::from_handle(&texture));
 			viewing.screen = [1920, 1080];
-			viewing.connected = true;
+			viewing.connected = connected;
 			viewing.started = started;
 			viewing.paused = paused;
 			viewing.full = full;
 			viewing.permission = Some(Permission::Full);
 			Phase::Viewing(Box::new(viewing))
 		};
-		let (phase, sheet) = match which.as_str() {
+		let hosting = |paused: bool| Phase::Hosting {
+			peer,
+			name: name.clone(),
+			grant: Grant { paused, ..grant },
+			connected: true,
+		};
+		let (phase, dialog, menu) = match which.as_str() {
+			"menu" => (Phase::Idle, false, Menu::Access),
+			"who" => (Phase::Idle, false, Menu::Who),
+			"keys" => (Phase::Idle, false, Menu::Manage),
 			"waiting" => (
 				Phase::Waiting {
 					peer,
 					name: name.clone(),
-					give: false,
 					since: now,
 					connecting: false,
 				},
-				Sheet::Phase,
+				true,
+				Menu::None,
 			),
+			"setting-up" => (viewing(false, true, false, false), true, Menu::None),
 			"incoming" | "answer" => (
 				Phase::Incoming {
 					peer,
@@ -685,32 +715,25 @@ impl Remote {
 					since: now,
 					opened: which == "answer",
 				},
-				Sheet::Phase,
+				true,
+				Menu::None,
 			),
-			"setup" => (setup(Step::Permission), Sheet::Phase),
-			"key" => (setup(Step::Key), Sheet::Phase),
-			"warning" => (setup(Step::Warning), Sheet::Phase),
-			"hosting" | "access" => (
-				Phase::Hosting {
-					peer,
-					name: name.clone(),
-					grant,
-					connected: true,
-				},
-				if which == "access" {
-					Sheet::Access
-				} else {
-					Sheet::None
-				},
-			),
-			"keys" => (Phase::Idle, Sheet::Keys),
-			"viewing" => (viewing(false, true, true), Sheet::None),
-			"paused" => (viewing(true, true, true), Sheet::None),
-			"starting" => (viewing(false, false, true), Sheet::None),
-			"window" => (viewing(false, true, false), Sheet::None),
+			"setup" => (setup(Step::Permission), true, Menu::None),
+			"key" => (setup(Step::Key), true, Menu::None),
+			"warning" => (setup(Step::Warning), true, Menu::None),
+			"hosting" => (hosting(false), false, Menu::None),
+			"access" => (hosting(false), false, Menu::Manage),
+			"access-paused" => (hosting(true), false, Menu::Manage),
+			"viewing" => (viewing(false, true, true, true), false, Menu::None),
+			"paused" => (viewing(true, true, true, true), false, Menu::None),
+			"stage" => (viewing(false, true, true, false), false, Menu::None),
+			"viewer-menu" => (viewing(false, true, true, false), false, Menu::Manage),
 			_ => return,
 		};
-		if which == "key" || which == "warning" {
+		if matches!(
+			which.as_str(),
+			"key" | "warning" | "access" | "access-paused" | "keys"
+		) {
 			ui.remote.keys.pause = Some(ui::remote::Key {
 				scan: 0x42,
 				extended: false,
@@ -718,7 +741,8 @@ impl Remote {
 			});
 		}
 		ui.remote.phase = phase;
-		ui.remote.sheet = sheet;
+		ui.remote.dialog = dialog;
+		ui.remote.menu = menu;
 		ui.remote.windowed = true;
 		self.demo = Some(texture);
 	}
@@ -745,7 +769,9 @@ fn filter(shared: &Mutex<Shared>, wake: &egui::Context, event: KeyEvent) -> bool
 		}
 		return true;
 	}
-	if event.injected {
+	// The controller's keys replayed on this PC never count as this PC's own; other
+	// injected keys (remappers, on-screen keyboards) do.
+	if event.injected && event.extra == platform::remote_input::INJECTED_MARK {
 		return false;
 	}
 	let repeat = shared.swallowed.contains(&key);

@@ -549,6 +549,10 @@ From 0.1.21 (November 7, 2026):
 - **Opacity** (menu, 20–100 %) fades the whole window, in picture-in-picture too. On
   Windows every window now presents through DirectComposition so its alpha reaches the
   desktop; the main window still paints opaque pixels unless its own transparency is on.
+- **Moving windows.** From 0.1.23 Leech moves these windows itself, so they go past the
+  screen's edges and never snap to an edge, half the screen or maximized, and Windows 11's
+  border, rounded corners and shadow are turned off for them (a see-through picture showed
+  them as an outline). The end of a move is never a click, so it cannot maximize the window.
 - **Remove background** (chrome button and menu, images and GIFs only). A GIF or PNG with
   see-through pixels opens without a backdrop. An opaque one cuts out the plain colour most
   of its border shares, flood-filled from the border so the same colour inside the subject
@@ -564,9 +568,12 @@ From 0.1.21 (November 7, 2026):
 ## Remote control — November 8, 2026
 
 From 0.1.22 one Leech user can control another's PC while both are in the same call. The
-call bar has a remote control button between screen share and More. Left click offers
-**ACCESS** (ask to control their PC) and **CONTROL** (let them control yours), and asks who
-when more than two people are in the call.
+call bar has a remote control button between screen share and More. Left click offers only
+**Access** (ask to control their PC). With one other person in the call it asks them at
+once; with more, a second menu lists them by avatar and name. From 0.1.23 nobody can offer
+control of their own PC: the one controlled always answers a request. While a session runs,
+left click on the button ends it on either side, and right click opens the keys (pause key,
+the key hiding the label) and, for the one controlled, what the other may do.
 
 **Signalling.** The two Leech clients trade connection offers through their direct
 message: silent messages (`@silent`) carrying a marker (`U+2063 lr1 <kind> <session> <offer>`)
@@ -576,27 +583,39 @@ it, so other clients may show it for a moment. Signals are accepted only from so
 device's connected call, through their one-to-one DM; a missing DM is opened without
 navigating to it. Kinds: `ask`, `give`, `yes` (with the responder's offer) and `no`.
 
-**Flow.** Access: the asker's waiting window animates while the other side gets Leech's own
-notification (bottom right, always on top, a 15 second countdown ring; it declines when the
-countdown ends, the × declines too). A click opens the answer in Leech. Accepting connects at
-once and opens the setup: keyboard only, mouse only or full control, whether the PC's sound
-goes along, and one pause key, then a warning to remember it ("don't warn me again" skips
-it next time). Finish starts control. Control: the one offering sets up first, then the other
-side answers the same notification. The asker gives up after 60 seconds.
+**Flow.** The asker's dialog animates while the other side gets Leech's own notification
+(bottom right, always on top, a 15 second countdown ring; it declines when the countdown
+ends, the × declines too). A click opens the answer in Leech. Accepting connects at once and
+opens the setup: keyboard only, mouse only or full control, whether the PC's sound goes
+along, and one pause key, then a warning to remember it ("don't warn me again" skips it next
+time). The asker's dialog follows along (connecting, then "choosing what you can do") and
+can be closed; left click on the button brings it back. The asker gives up after 60 seconds.
 
 **While controlled.** The pause key works from anywhere (a low-level keyboard hook) and
-pauses or resumes the controller at once; the controller is told. Left click on the button
-ends control; right click opens Access, where the permission changes live or Disable ends
-control, audio switches, and Pause/Resume sits next to End control.
+pauses or resumes the controller at once; the controller is told. Right click shows
+Pause/Resume, the permission (full, keyboard, mouse, or Disable, which ends control) and
+the PC's sound. The permission only changes while paused: a click on it before that keeps
+it and says to pause first, naming the pause key.
 
-**Controlling.** The other screen opens fullscreen on this monitor with nothing over it but a
-small label at the top right ("Full control · Name's PC"), which a key chosen with right
-click on the button hides. The picture keeps the other screen's shape: a smaller monitor here
-sees it scaled down, the encoder's black bars never show, and the pointer maps exactly onto
-the other screen. Escape gives Leech back and shrinks the view to a window that only
-shows; a double-click returns to control. Shift+Escape sends Escape. The Windows key stops
-control. While a game there hides its pointer, raw motion drives it and this pointer is
-confined and hidden (after a quarter second, so typing does not flicker it).
+**Controlling.** When the other side finishes the setup, their screen fills Leech's window,
+which goes fullscreen, the way a watched screen share does (0.1.22 opened a separate black
+window). Nothing is over it but a small label at the top right ("Full control · Name's PC"),
+which the key chosen with right click on the button hides, and, for the first seconds, how
+to get out. The picture keeps the other screen's shape: a smaller monitor here sees it scaled
+down, the encoder's black bars never show, and the pointer maps exactly onto the other
+screen. Escape is a pause for yourself only: Leech comes back, nothing is sent, and the
+other side is not paused. Their screen stays first on the call stage ("Name's PC"); a
+double-click on it, or Take control in the right-click menu, returns to control.
+Shift+Escape sends Escape. The Windows key stops control. While a game there hides its
+pointer, raw motion drives it and this pointer is confined and hidden (after a quarter
+second, so typing does not flicker it).
+
+**Binding keys.** The first key pressed while binding is taken, from the keyboard hook or,
+when the hook is not running, from Leech's own key events (physical keys, so any layout
+gives the same key); Escape cancels. 0.1.22's hook skipped every injected key, which also
+dropped keys from remappers, on-screen and remote keyboards; it now skips only what Leech
+itself injects (marked in `dwExtraInfo`). A hook that fails to start says so instead of
+failing silently.
 
 **Transport** (`discord-voice/src/remote/`). Direct UDP between the two PCs: each offer
 carries a session id, an X25519 key and candidate addresses (the STUN-mapped public address

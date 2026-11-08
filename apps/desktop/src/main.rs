@@ -7057,6 +7057,7 @@ impl eframe::App for Desktop {
 			self.messaging.video().stop();
 		}
 		self.video.poll(self.messaging.video(), ctx);
+		ui::set_screen_cursor(ctx, platform::cursor_position());
 		self.self_views.poll(
 			&mut self.messaging.self_views,
 			ctx,
@@ -8024,6 +8025,7 @@ impl eframe::App for Desktop {
 			self.sign_in_screen(ui);
 		}
 		// Outside the signed-in branch so leaving an account still restores the window mode.
+		self.messaging.sync_remote_fullscreen(&ctx);
 		let video = self.messaging.video().take_fullscreen_request();
 		let voice = self.messaging.take_voice_fullscreen_request();
 		for fullscreen in [video, voice].into_iter().flatten() {
