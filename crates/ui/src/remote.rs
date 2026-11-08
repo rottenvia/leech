@@ -552,11 +552,21 @@ impl crate::MessagingUi {
 		peers: &[Id],
 		now: f64,
 	) {
-		ui.set_width(272.0);
 		let detail = match peers {
 			[peer] => format!("Ask to control {}'s PC", peer_name(state, *peer)),
 			_ => "Ask to control someone's PC".to_owned(),
 		};
+		// Wide enough for the name; a very long one still ends in an ellipsis.
+		let text = ui
+			.painter()
+			.layout_no_wrap(
+				detail.clone(),
+				egui::FontId::proportional(12.5),
+				egui::Color32::WHITE,
+			)
+			.size()
+			.x;
+		ui.set_width((text + 72.0).clamp(272.0, 380.0));
 		if access_row(ui, &detail).clicked() {
 			match peers {
 				[peer] => self.remote.ask(*peer, peer_name(state, *peer), now),
@@ -2032,7 +2042,7 @@ fn notification_card(
 fn permission_step(ui: &mut egui::Ui, grant: &mut Grant, name: &str) {
 	let colors = design::palette(ui);
 	ui.label(
-		egui::RichText::new(format!("Choose what {name} can do. You can change it any time by right-clicking the remote control button."))
+		egui::RichText::new(format!("Choose what {name} can do. To change it later, pause their control, then right-click the remote control button."))
 			.size(12.5)
 			.color(colors.muted),
 	);
