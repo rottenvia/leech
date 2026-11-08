@@ -140,6 +140,27 @@ use model::{Freshness, Id};
 pub use verification::VerificationUi;
 pub use voice::StageFocus;
 
+fn screen_cursor_id() -> egui::Id {
+	egui::Id::unique("leech-screen-cursor")
+}
+
+/// The pointer anywhere on the desktop, in physical pixels, given each frame by the desktop
+/// for windows Leech moves itself; `None` where the platform has no global pointer.
+pub fn set_screen_cursor(ctx: &egui::Context, cursor: Option<(f64, f64)>) {
+	ctx.data_mut(|data| match cursor {
+		Some((x, y)) => {
+			data.insert_temp(screen_cursor_id(), egui::pos2(x as f32, y as f32));
+		}
+		None => data.remove::<egui::Pos2>(screen_cursor_id()),
+	});
+}
+
+/// [`set_screen_cursor`]'s pointer in the current viewport's points.
+pub(crate) fn screen_cursor(ctx: &egui::Context) -> Option<egui::Pos2> {
+	let cursor = ctx.data(|data| data.get_temp::<egui::Pos2>(screen_cursor_id()))?;
+	Some((cursor.to_vec2() / ctx.pixels_per_point()).to_pos2())
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct VoiceGain {
 	pub input_percent: u16,
@@ -4280,6 +4301,8 @@ impl MessagingUi {
 	}
 
 	pub fn show(&mut self, ui: &mut egui::Ui, state: &mut State) -> Vec<Command> {
+		// A key being bound for remote control never also types or triggers a shortcut.
+		self.capture_remote_keys(ui.ctx());
 		self.take_local_paste(ui.ctx());
 		self.avatars.cosmetics = self.cosmetics;
 		let cosmetics_refresh = state.set_profile_cosmetics(self.cosmetics);
@@ -4383,7 +4406,13 @@ impl MessagingUi {
 		// Its own native window, so it keeps playing whatever the main window shows.
 		self.show_voice_pip(ui.ctx(), state);
 		self.self_views.show(ui.ctx());
-		// Fullscreen media owns the whole client surface, including during native resizing.
+		// The PC this device controls, then fullscreen media, own the whole client surface,
+		// including during native resizing.
+		if self.show_remote_fullscreen(ui.ctx()) {
+			ui.painter()
+				.rect_filled(ui.max_rect(), 0, egui::Color32::BLACK);
+			return commands;
+		}
 		if self.show_fullscreen_voice(ui.ctx(), state) {
 			ui.painter()
 				.rect_filled(ui.max_rect(), 0, egui::Color32::BLACK);

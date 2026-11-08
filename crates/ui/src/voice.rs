@@ -53,7 +53,7 @@ impl MessagingUi {
 						&& self.screen.preview.is_some()
 				}
 				StageFocus::Stream(user) => call.watching == Some(*user),
-				StageFocus::Participant(_) => false,
+				StageFocus::Participant(_) | StageFocus::Remote(_) => false,
 			})
 			.map(|call| call.channel)
 	}
@@ -87,7 +87,9 @@ impl MessagingUi {
 					StageFocus::Stream(user) => {
 						self.stream_tile(ui, state, rect, channel, user, true, None)
 					}
-					StageFocus::Participant(_) => unreachable!("validated screen share"),
+					StageFocus::Participant(_) | StageFocus::Remote(_) => {
+						unreachable!("validated screen share")
+					}
 				}
 				let button = ui.put(
 					egui::Rect::from_min_size(
@@ -258,7 +260,7 @@ impl MessagingUi {
 			.voice_pip_crop
 			.uv(self.voice_stream_zoom.update(ui, &surface, content));
 		self.voice_stream_zoom.move_window(ui, &surface);
-		if surface.double_clicked() {
+		if self.voice_stream_zoom.double_clicked(ui, &surface) {
 			if self.voice_stream_zoom.zoomed() {
 				self.voice_stream_zoom.reset(ui);
 			} else if cfg!(target_os = "windows") {
@@ -1398,7 +1400,11 @@ impl MessagingUi {
 			.active
 			.as_ref()
 			.filter(|call| call.channel == channel);
-		let mut tiles = Vec::with_capacity(entries.len() + 2);
+		let mut tiles = Vec::with_capacity(entries.len() + 3);
+		// The PC this device controls leads, like a watched share.
+		if let Some(peer) = call.and(self.remote.viewing_peer()) {
+			tiles.push(Tile::Remote(peer));
+		}
 		if call.is_some_and(|call| {
 			self.screen.context == Some((state.generation, channel, call.request))
 				&& self.screen.busy
@@ -1593,6 +1599,7 @@ impl MessagingUi {
 	fn tile_has_video(&self, state: &State, channel: Id, tile: &Tile<'_>) -> bool {
 		match tile {
 			Tile::LocalScreen => self.screen.preview.is_some(),
+			Tile::Remote(_) => true,
 			Tile::Stream(streamer) => self.watching(state, channel, *streamer),
 			Tile::Participant(entry) => {
 				let own = state
@@ -1644,6 +1651,15 @@ impl MessagingUi {
 		}
 		let compact = rect.height() < 132.0;
 		let hint = match tile {
+			// Its own clicks: a double-click takes control, a single one never moves it.
+			Tile::Remote(_) => {
+				let hint = self.remote_screen_tile(ui, rect, compact, &response);
+				response.widget_info(|| {
+					egui::WidgetInfo::labeled(egui::Role::Button, true, "Take control")
+				});
+				response.on_hover_text(hint);
+				return None;
+			}
 			Tile::LocalScreen => {
 				self.screen_tile(ui, rect, compact);
 				self.screen
@@ -1719,6 +1735,81 @@ impl MessagingUi {
 			response.on_hover_text(hint);
 		}
 		None
+	}
+
+	/// The PC this device controls, in the call: its screen, whose it is, and how to take
+	/// control again. Returns the tile's hover text.
+	fn remote_screen_tile(
+		&mut self,
+		ui: &mut egui::Ui,
+		rect: egui::Rect,
+		compact: bool,
+		response: &egui::Response,
+	) -> &'static str {
+		let opacity = self.badge_opacity();
+		let now = ui.input(|input| input.time);
+		let Some(viewing) = self.remote.viewing() else {
+			return "";
+		};
+		ui.painter().rect_filled(rect, 10, egui::Color32::BLACK);
+		let content = crate::remote::paint_screen(ui, viewing, rect, 10);
+		let content = if viewing.texture.is_some() {
+			content
+		} else {
+			rect
+		};
+		let status = crate::remote::screen_status(viewing);
+		if let Some(status) = &status {
+			crate::remote::paint_status_card(ui, rect, status, now);
+		}
+		if !compact {
+			name_badge(
+				ui,
+				content,
+				&format!("{}'s PC", viewing.name),
+				None,
+				opacity,
+			);
+		}
+		let ready = viewing.started && status.is_none();
+		// The way back into control, under the pointer.
+		let shown = ui.ctx().animate_bool_with_time(
+			response.id.with("remote-hint"),
+			ready && response.hovered(),
+			0.15,
+		);
+		if shown > 0.0 && !compact {
+			let galley = ui.painter().layout_no_wrap(
+				"Double-click to take control".to_owned(),
+				egui::FontId::new(13.0, design::medium_family(ui.ctx())),
+				egui::Color32::WHITE,
+			);
+			let pill = egui::Rect::from_center_size(
+				content.center(),
+				galley.size() + egui::vec2(28.0, 14.0),
+			);
+			ui.painter().rect_filled(
+				pill,
+				16,
+				egui::Color32::from_black_alpha((170.0 * shown) as u8),
+			);
+			ui.painter().galley(
+				pill.center() - galley.size() * 0.5,
+				galley,
+				egui::Color32::WHITE.gamma_multiply(shown),
+			);
+		}
+		if response.double_clicked() && viewing.started {
+			viewing.full = true;
+		}
+		if ready {
+			response
+				.clone()
+				.on_hover_cursor(egui::CursorIcon::PointingHand);
+			"Double-click to take control"
+		} else {
+			"The PC you control"
+		}
 	}
 
 	fn screen_tile(&self, ui: &mut egui::Ui, rect: egui::Rect, compact: bool) {
@@ -5654,12 +5745,15 @@ pub enum StageFocus {
 	LocalScreen,
 	Stream(Id),
 	Participant(Id),
+	/// The PC this device controls.
+	Remote(Id),
 }
 
 enum Tile<'a> {
 	LocalScreen,
 	Stream(Id),
 	Participant(&'a RosterEntry),
+	Remote(Id),
 }
 impl Tile<'_> {
 	fn focus(&self) -> StageFocus {
@@ -5667,6 +5761,7 @@ impl Tile<'_> {
 			Self::LocalScreen => StageFocus::LocalScreen,
 			Self::Stream(streamer) => StageFocus::Stream(*streamer),
 			Self::Participant(entry) => StageFocus::Participant(entry.participant.user),
+			Self::Remote(peer) => StageFocus::Remote(*peer),
 		}
 	}
 	/// Stable interaction identity, so a tile keeps its hover while the layout changes.
@@ -5675,6 +5770,7 @@ impl Tile<'_> {
 			StageFocus::LocalScreen => (0, 0),
 			StageFocus::Stream(user) => (1, user.0),
 			StageFocus::Participant(user) => (2, user.0),
+			StageFocus::Remote(user) => (3, user.0),
 		}
 	}
 }
@@ -5744,9 +5840,13 @@ pub(crate) struct PictureZoom {
 	gesture: Option<f64>,
 	/// When the level last changed, on the interface clock, so the level badge shows it.
 	changed: f64,
-	/// Start time of the press that moved the window: the OS owned that press, so egui may
-	/// not have seen its release, and its wheel never zooms.
+	/// Start time of the press that moved the window: its wheel never zooms.
 	moved: Option<f64>,
+	/// The pointer's offset from the window's corner while Leech moves the window, in
+	/// physical pixels so it holds when the window crosses to a monitor of another scale.
+	dragging: Option<egui::Vec2>,
+	/// When Leech last let go of the window: that release is no click of a double-click.
+	dropped: f64,
 }
 
 impl Default for PictureZoom {
@@ -5757,6 +5857,8 @@ impl Default for PictureZoom {
 			gesture: None,
 			changed: f64::NEG_INFINITY,
 			moved: None,
+			dragging: None,
+			dropped: f64::NEG_INFINITY,
 		}
 	}
 }
@@ -5848,10 +5950,41 @@ impl PictureZoom {
 		self.uv()
 	}
 
+	/// A double-click on the window, unless one of its clicks was the end of a move.
+	pub(crate) fn double_clicked(&self, ui: &egui::Ui, surface: &egui::Response) -> bool {
+		surface.double_clicked()
+			&& self.dragging.is_none()
+			&& ui.input(|input| input.time) - self.dropped > 0.6
+	}
+
 	/// For a borderless picture window: a press on `surface` that travels a few points moves
 	/// the window like a title bar, unless the press zooms or pans. A press that holds still
-	/// keeps the wheel for zooming. The OS owns the move until the button is released.
+	/// keeps the wheel for zooming.
+	///
+	/// Leech moves the window itself, so it follows the pointer anywhere, past the screen's
+	/// edges too: the system's move would snap it to an edge, to half the screen or maximized,
+	/// like an app window. Without a global pointer it falls back to the system's move.
 	pub(crate) fn move_window(&mut self, ui: &egui::Ui, surface: &egui::Response) {
+		let cursor = crate::screen_cursor(ui.ctx());
+		if let Some(grab) = self.dragging {
+			match cursor.filter(|_| ui.input(|input| input.pointer.primary_down())) {
+				Some(cursor) => {
+					let target = cursor - grab / ui.ctx().pixels_per_point();
+					if ui
+						.input(|input| input.viewport().outer_rect)
+						.is_none_or(|outer| outer.min.distance(target) > 0.1)
+					{
+						ui.ctx()
+							.send_viewport_cmd(egui::ViewportCommand::OuterPosition(target));
+					}
+				}
+				None => {
+					self.dragging = None;
+					self.dropped = ui.input(|input| input.time);
+				}
+			}
+			return;
+		}
 		if self.zoomed() || self.gesturing(ui) || !surface.is_pointer_button_down_on() {
 			return;
 		}
@@ -5868,7 +6001,12 @@ impl PictureZoom {
 		});
 		if travelled && press.is_some() && self.moved != press {
 			self.moved = press;
-			ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+			match (cursor, ui.input(|input| input.viewport().outer_rect)) {
+				(Some(cursor), Some(outer)) => {
+					self.dragging = Some((cursor - outer.min) * ui.ctx().pixels_per_point());
+				}
+				_ => ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag),
+			}
 		}
 	}
 

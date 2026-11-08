@@ -208,7 +208,7 @@ impl View {
 		};
 		let uv = self.crop.uv(self.zoom.update(ui, &surface, content));
 		self.zoom.move_window(ui, &surface);
-		if surface.double_clicked() {
+		if self.zoom.double_clicked(ui, &surface) {
 			if self.zoom.zoomed() {
 				self.zoom.reset(ui);
 			} else if cfg!(target_os = "windows") {
@@ -287,23 +287,6 @@ impl View {
 		let shown = ui
 			.ctx()
 			.animate_bool_with_time(id.with("chrome"), hovered, 0.15);
-		if shown > 0.0 && !backdrop {
-			// A window without a backdrop shows where it is while the pointer is over it.
-			ui.painter().rect_filled(
-				rect,
-				0,
-				egui::Color32::from_black_alpha(40).gamma_multiply(shown),
-			);
-			ui.painter().rect_stroke(
-				rect.shrink(0.5),
-				0,
-				egui::Stroke::new(
-					1.0,
-					egui::Color32::from_white_alpha(70).gamma_multiply(shown),
-				),
-				egui::StrokeKind::Inside,
-			);
-		}
 		if shown > 0.0 {
 			close |= self.chrome(ui, id, rect, hovered, shown);
 		}

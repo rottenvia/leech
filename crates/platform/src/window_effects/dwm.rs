@@ -172,6 +172,7 @@ pub fn clear_child_surfaces(root: &Window) {
 			**window != root && !cleared.contains(window) && class(**window) == root_class
 		}) {
 			let window = HWND(window as _);
+			draw_no_frame(window);
 			let mut rect = RECT::default();
 			// SAFETY: A live window of this thread; the DC is released before returning.
 			unsafe {
@@ -184,6 +185,30 @@ pub fn clear_child_surfaces(root: &Window) {
 		}
 		*cleared = found;
 	});
+}
+
+/// These windows draw everything themselves: Windows 11's border, rounded corners and
+/// shadow would outline a see-through picture's whole rectangle.
+fn draw_no_frame(window: HWND) {
+	use windows::Win32::Graphics::Dwm::{
+		DWMNCRP_DISABLED, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_NCRENDERING_POLICY,
+		DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DwmSetWindowAttribute,
+	};
+	let set = |attribute, value: &i32| {
+		// SAFETY: a live window of this thread and a 4-byte value that outlives the call.
+		// Windows 10 refuses the border and corner attributes, which is fine: it has neither.
+		let _ = unsafe {
+			DwmSetWindowAttribute(
+				window,
+				attribute,
+				std::ptr::from_ref(value).cast(),
+				size_of::<i32>() as u32,
+			)
+		};
+	};
+	set(DWMWA_NCRENDERING_POLICY, &DWMNCRP_DISABLED.0);
+	set(DWMWA_WINDOW_CORNER_PREFERENCE, &DWMWCP_DONOTROUND.0);
+	set(DWMWA_BORDER_COLOR, &(DWMWA_COLOR_NONE as i32));
 }
 
 #[cfg(test)]

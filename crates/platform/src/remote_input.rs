@@ -3,6 +3,10 @@
 //! packet never leaves a key or button down.
 #![allow(unsafe_code)]
 
+/// Tags every event this module injects, so this PC's own keyboard hook can tell the
+/// controller's keys from other injected ones (remappers, on-screen keyboards).
+pub const INJECTED_MARK: usize = 0x4C45_4543;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Input {
 	/// Absolute position as a fraction (0..=1) of the host's captured screen, plus the raw
@@ -374,7 +378,7 @@ mod windows_input {
 					mouseData: data as u32,
 					dwFlags: flags,
 					time: 0,
-					dwExtraInfo: 0,
+					dwExtraInfo: super::INJECTED_MARK,
 				},
 			},
 		};
@@ -438,7 +442,7 @@ mod windows_input {
 							wScan: scan,
 							dwFlags: flags,
 							time: 0,
-							dwExtraInfo: 0,
+							dwExtraInfo: super::INJECTED_MARK,
 						},
 					},
 				}
