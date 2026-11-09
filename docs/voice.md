@@ -618,7 +618,7 @@ The host can now let them in for one session (`platform/src/remote_input/helper.
 
 - **Opt-in, asked twice.** The first time a session's input meets an elevated window, the
   host's Leech shows a card of its own, always on top where the request notification goes:
-  "Name reached an app that runs as administrator" with **Allow admin apps** and **Not now**.
+  "Name reached an admin app" with **Allow admin apps** and **Not now**.
   It leaves after 30 s; the host's right-click menu keeps an "Allow admin apps" row for the
   rest of the session. Allowing starts `leech.exe --remote-input-helper <pipe>` through
   `ShellExecuteEx` "runas", so Windows' own UAC prompt asks again. The controller can click

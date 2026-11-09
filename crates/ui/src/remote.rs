@@ -1289,7 +1289,7 @@ impl crate::MessagingUi {
 			}
 			return;
 		}
-		let size = egui::vec2(392.0, 140.0);
+		let size = egui::vec2(392.0, 150.0);
 		// ponytail: placed like the notification (desktop origin, 48 point taskbar below).
 		let monitor = ctx
 			.input(|input| input.viewport().monitor_size)
@@ -2231,30 +2231,32 @@ fn admin_card(ui: &mut egui::Ui, name: &str, elapsed: f64) -> Option<bool> {
 		colors.warning,
 	);
 	let left = plate.right() + 14.0;
-	let wrap = rect.right() - 18.0 - left;
-	let title = ui.painter().layout(
-		format!("{name} reached an app that runs as administrator"),
+	// One line of title and two of detail, so the buttons below always have their room.
+	let text = |text: String, font: egui::FontId, color: egui::Color32, rows: usize| {
+		let mut job = egui::text::LayoutJob::simple(text, font, color, rect.right() - 18.0 - left);
+		job.wrap.max_rows = rows;
+		ui.painter().layout_job(job)
+	};
+	let title = text(
+		format!("{name} reached an admin app"),
 		egui::FontId::new(14.0, design::semibold_family(ui.ctx())),
 		colors.text_strong,
-		wrap,
+		1,
 	);
-	let title_height = title.size().y;
+	let below = rect.top() + 18.0 + title.size().y + 5.0;
 	ui.painter().galley(
-		egui::pos2(left, rect.top() + 17.0),
+		egui::pos2(left, rect.top() + 18.0),
 		title,
 		colors.text_strong,
 	);
-	let detail = ui.painter().layout(
-		"Windows blocks their mouse and keyboard there. Allow it until control ends?".to_owned(),
+	let detail = text(
+		"Windows blocks their mouse and keyboard in apps that run as administrator.".to_owned(),
 		egui::FontId::proportional(12.5),
 		colors.muted,
-		wrap,
+		2,
 	);
-	ui.painter().galley(
-		egui::pos2(left, rect.top() + 21.0 + title_height),
-		detail,
-		colors.muted,
-	);
+	ui.painter()
+		.galley(egui::pos2(left, below), detail, colors.muted);
 	let buttons = egui::Rect::from_min_max(
 		egui::pos2(left, rect.bottom() - 14.0 - design::BUTTON_HEIGHT),
 		rect.right_bottom() - egui::vec2(14.0, 14.0),
