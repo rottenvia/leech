@@ -835,6 +835,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 fn gather(id: u64, ctx: &egui::Context, runtime: &tokio::runtime::Handle) -> Gathered {
+	allow_through_firewall();
 	let (send, receive) = mpsc::sync_channel(1);
 	let wake = ctx.clone();
 	runtime.spawn(async move {
@@ -842,6 +843,31 @@ fn gather(id: u64, ctx: &egui::Context, runtime: &tokio::runtime::Handle) -> Gat
 		wake.request_repaint();
 	});
 	receive
+}
+
+/// Once per run, at the first remote control: makes sure Windows Firewall lets the other PC's
+/// datagrams in even from a port this PC never sent to (its NAT may pick a new one per
+/// destination). When no rule does, Windows asks for administrator approval once; remote
+/// control goes on either way. Demo builds never ask.
+fn allow_through_firewall() {
+	#[cfg(not(feature = "demo"))]
+	{
+		static ONCE: std::sync::Once = std::sync::Once::new();
+		ONCE.call_once(|| {
+			let _ = std::thread::Builder::new()
+				.name("firewall".into())
+				.spawn(|| {
+					use platform::firewall::Inbound;
+					let outcome = match platform::firewall::allow_inbound_udp() {
+						Inbound::Allowed => "already allows remote control",
+						Inbound::Added => "rule added",
+						Inbound::Declined => "administrator approval declined",
+						Inbound::Failed => "rule could not be added",
+					};
+					client_core::journal::note("remote", format!("firewall {outcome}"));
+				});
+		});
+	}
 }
 
 fn config(grant: Grant) -> HostConfig {

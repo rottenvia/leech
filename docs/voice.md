@@ -617,12 +617,44 @@ dropped keys from remappers, on-screen and remote keyboards; it now skips only w
 itself injects (marked in `dwExtraInfo`). A hook that fails to start says so instead of
 failing silently.
 
-**Transport** (`discord-voice/src/remote/`). Direct UDP between the two PCs: each offer
-carries a session id, an X25519 key and candidate addresses (the STUN-mapped public address
-from `stun.l.google.com:19302` / `stun.cloudflare.com:3478`, plus local and VPN addresses).
-Both sides punch every 50 ms for up to 10 s; the first authenticated packet picks the path.
-Keys per direction come from the shared secret and session id (ChaCha20-Poly1305, counter
-nonces, replay window of 64). Keepalives every second; 6 s of silence ends the session.
+**Transport** (`discord-voice/src/remote/`). Direct UDP between the two PCs, never through a
+relay or server: each offer carries a session id, an X25519 key and up to eight candidate
+addresses. Both sides punch every 50 ms for up to 10 s, and the first authenticated packet
+picks the path. Keys per direction come from the shared secret and session id
+(ChaCha20-Poly1305, counter nonces, replay window of 64). Keepalives every second; 6 s of
+silence ends the session.
+
+From 0.1.24 the candidates come from four sources, gathered at once (at most 2.5 s):
+
+- **Router port.** UPnP IGD (`upnp.rs`): an SSDP search, the router's description, then
+  `AddPortMapping` for the socket's port (UDP, a one-hour lease, removed when the session
+  ends). A forwarded port on a public address goes first, because it reaches this PC
+  whatever the other side's NAT does. A forwarded port behind the provider's NAT (100.64/10
+  or private) is still offered for a PC behind that same NAT. Only the router that answered
+  the search is asked.
+- **STUN.** Three servers at different addresses (`stun.l.google.com`, `stun1.l.google.com`,
+  `stun.cloudflare.com`).
+  - When a NAT shows them different ports, it picks a new port per destination. The other
+    side then also punches the 32 ports above the highest one, every 200 ms, which covers
+    NATs that pick ports in order. NATs that pick ports at random are not covered.
+- **IPv6.** The socket is dual-stack where IPv6 is on. Its global IPv6 address (not Teredo)
+  needs no NAT traversal, only both sides sending at once.
+- **Local and VPN addresses**, as before.
+
+Windows Firewall drops UDP from an address the program never sent to, even after the router
+forwarded it. Windows never asks about UDP on its own, and no Leech install had a rule (checked
+on 2026-11-09: a program without one got nothing through a forwarded port, and an allowed one
+got everything). So the first remote control of each run looks for an inbound allow rule for
+`leech.exe`. It reads the firewall's rule list from the registry, which needs no elevation.
+When no rule lets UDP in on every network, it runs `netsh advfirewall firewall add rule` through
+the UAC prompt: name "Leech remote control", UDP, inbound, this executable only
+(`platform/src/firewall.rs`). Declining changes nothing else. Demo builds never ask.
+
+The connection journal records the NAT behaviour STUN saw, the router port result, the firewall
+result, whether IPv6 was there, and how the session connected (or how many datagrams arrived when it did
+not). It never records an address. Two PCs whose NATs both pick random ports per destination,
+without a router port or IPv6 on either side, still cannot connect: that needs a relay, which
+Leech does not use.
 
 - **Video:** the primary display, captured and encoded like a Go Live share (1080p60, or
   720p60 for smaller displays, low-latency CBR without B-frames, no cursor drawn: the
@@ -642,7 +674,9 @@ nonces, replay window of 64). Keepalives every second; 6 s of silence ends the s
 - Media and input run on the link's own thread and runtime with the 1 ms timer and MMCSS
   priority, like calls, so a game's load does not delay them.
 
-Not verified on real networks yet: NAT traversal beyond loopback, behaviour under real loss.
+Not verified on real networks yet: NAT traversal beyond loopback (the router port was checked
+against the owner's router only), adding the firewall rule through the UAC prompt, behaviour
+under real loss.
 Windows only for being controlled; injection cannot reach elevated windows, the UAC prompt
 or the lock screen unless Leech itself is elevated.
 
