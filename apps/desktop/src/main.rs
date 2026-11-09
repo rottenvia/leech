@@ -83,6 +83,13 @@ const SIGN_IN_HEADER_HEIGHT: f32 = if cfg!(target_os = "windows") {
 
 /// Run explicit offline checks before native startup, or launch the configured desktop client.
 fn main() -> eframe::Result {
+	// Remote control's administrator helper, started by Leech through the UAC prompt: it only
+	// replays input from the Leech that started it, and exits with it.
+	if let [_, switch, pipe] = std::env::args().collect::<Vec<_>>().as_slice()
+		&& switch == platform::remote_input::helper::ARG
+	{
+		std::process::exit(platform::remote_input::helper::serve(pipe));
+	}
 	platform::memory::tune_allocator();
 	#[cfg(all(debug_assertions, feature = "demo"))]
 	if std::env::args().any(|arg| arg == "--demo")

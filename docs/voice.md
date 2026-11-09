@@ -611,6 +611,62 @@ there. Moving over Leech, Shift, Ctrl, Alt and Alt+Tab still pass, so the contro
 switch away. Input for a program running as administrator is noted too: Windows drops it
 when Leech is not elevated (UIPI). Each kind tells the controller at most every 30 s.
 
+**Admin apps (0.1.26).** Windows' User Interface Privilege Isolation drops input that a
+program sends to one running with a higher integrity level, so a controller could not use an
+app the host runs as administrator (an elevated game launcher, Task Manager, an installer).
+The host can now let them in for one session (`platform/src/remote_input/helper.rs`):
+
+- **Opt-in, asked twice.** The first time a session's input meets an elevated window, the
+  host's Leech shows a card of its own, always on top where the request notification goes:
+  "Name reached an admin app" with **Allow admin apps** and **Not now**.
+  It leaves after 30 s; the host's right-click menu keeps an "Allow admin apps" row for the
+  rest of the session. Allowing starts `leech.exe --remote-input-helper <pipe>` through
+  `ShellExecuteEx` "runas", so Windows' own UAC prompt asks again. The controller can click
+  neither: Leech refuses their presses into its own windows (the card included), and the UAC
+  prompt sits on the secure desktop, which screen capture does not show and `SendInput` does
+  not reach, from any process.
+- **What runs elevated.** The same executable, which checks for the switch first thing in
+  `main` and does nothing else: no window, no network, no Discord, no files. It creates one
+  pipe, waits for its parent, and replays input. A Leech that is itself elevated never sees
+  the offer, because nothing outranks it.
+- **The pipe.** Its name carries 128 random bits. It is the only instance
+  (`FILE_FLAG_FIRST_PIPE_INSTANCE`, one instance at most), local only
+  (`PIPE_REJECT_REMOTE_CLIENTS`), inbound only, and its DACL lets in only the account the
+  parent runs as. Its integrity label is Medium, so the non-elevated Leech may write to it.
+- **Each side checks the other.** Leech writes only when the pipe's server process
+  (`GetNamedPipeServerProcessId`) is the process the UAC launch returned, so a program that
+  grabbed the name first never receives anything. The helper takes one client, and only its
+  parent (`GetNamedPipeClientProcessId` against the parent id that UAC records for the
+  requesting process); it holds the parent open so that id cannot pass to another process,
+  and any other client ends it.
+- **Only finished input.** Each message is 1 to 256 records of 20 bytes, each one an `INPUT`
+  of exactly the shapes the injector builds: an absolute move over the virtual desktop or a
+  relative one, one button going down or up, a wheel step, or a key by scan code without a
+  virtual key or Unicode text. The helper sets `dwExtraInfo` itself, so this PC's keyboard
+  hook still knows the controller's keys. Anything else (hardware input, extra flags, a short
+  or oversized message) ends the helper. It makes no decisions: the injector in Leech still
+  checks every press, so Leech's own windows still refuse them, and the pause key, the
+  take-over key and the permission work as before. With the helper running, elevated windows
+  count as any other and the controller is no longer told about them.
+- **Lifetime.** The helper belongs to the session's input thread. Ending control, losing the
+  connection, quitting Leech or Leech crashing closes the pipe and the helper exits; a helper
+  nobody connects to within 10 s, or whose parent is gone first, exits too. If a write fails,
+  Leech drops the helper, goes back to its own `SendInput` and tells the host that admin apps
+  are blocked again.
+
+What it does not change: while the helper runs, any program that can drive the non-elevated
+Leech (programs of the same user can) could type into elevated windows. That window is the
+reason for the per-session opt-in, the UAC prompt and the exit with the session. The UAC
+prompt, the lock screen and programs running at System integrity stay out of reach. Games
+whose anti-cheat ignores injected input still ignore it; the helper injects the same way. A
+per-user install keeps `leech.exe` in a folder its user can write, as every self-elevating
+per-user app does, so the UAC prompt is where the host sees what is about to run elevated.
+Demo builds never start the helper; `--demo --demo-call --demo-remote=admin` shows the card and
+`=admin-allowed` the menu afterwards. Not verified live yet: the elevated path itself (UAC,
+a High-integrity server and a Medium client). The tests run both ends in one process at one
+level: the protocol, the shape checks, both process checks, the single instance and the
+routing through the helper.
+
 **Controlling.** When the other side finishes the setup, their screen fills Leech's window,
 which goes fullscreen, the way a watched screen share does (0.1.22 opened a separate black
 window). Nothing is over it but a small label at the top right ("Full control · Name's PC"),
@@ -695,8 +751,8 @@ Leech does not use.
 Not verified on real networks yet: NAT traversal beyond loopback (the router port was checked
 against the owner's router only), adding the firewall rule through the UAC prompt, behaviour
 under real loss.
-Windows only for being controlled; injection cannot reach elevated windows, the UAC prompt
-or the lock screen unless Leech itself is elevated.
+Windows only for being controlled; injection reaches elevated windows only while admin apps
+are allowed (or Leech itself is elevated), and never the UAC prompt or the lock screen.
 
 **Latency (0.1.25).** Windows Graphics Capture only delivers a picture when the screen
 changes. The capture used to drop a picture that came sooner than the frame interval after

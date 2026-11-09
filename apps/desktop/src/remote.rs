@@ -6,14 +6,17 @@ use client_core::{
 	Command, State,
 	remote::{Kind, Received, Signal},
 };
-use discord_voice::remote::{self as net, End, Endpoint, Host, HostConfig, Link, Offer, Viewer};
+use discord_voice::remote::{
+	self as net, End, Endpoint, Host, HostConfig, HostStatus, Link, Offer, Viewer,
+};
 use model::Id;
 use platform::keyboard_hook::{Hook, KeyEvent};
+use platform::remote_input::helper::{self, Helper};
 use std::{
 	sync::{Arc, Mutex, mpsc},
 	time::{Duration, Instant},
 };
-use ui::remote::{Grant, MouseButton, MouseInput, Permission, Phase, Request, Viewing};
+use ui::remote::{Admin, Grant, MouseButton, MouseInput, Permission, Phase, Request, Viewing};
 
 /// How long hole punching may take.
 const CONNECT: Duration = Duration::from_secs(10);
@@ -62,6 +65,101 @@ struct Session {
 	held_at: Instant,
 	/// Refusal counts already shown (Leech itself, administrator apps) and when.
 	refusals: [(u32, Option<Instant>); 2],
+	/// This PC is controlled: the helper for programs running as administrator.
+	elevation: Elevation,
+}
+
+/// The administrator helper on the controlled PC (`platform::remote_input::helper`): offered
+/// once a session, when the controller first reaches a program running as administrator.
+#[derive(Default)]
+struct Elevation {
+	/// Windows' prompt is up; the helper arrives here.
+	asking: Option<mpsc::Receiver<Result<Helper, helper::Failure>>>,
+	/// Refusals of administrator programs already seen.
+	seen: u32,
+	offered: bool,
+	/// The helper ran at the last look.
+	running: bool,
+}
+
+impl Elevation {
+	/// Starts the helper through the UAC prompt, off the UI thread.
+	fn start(&mut self, ctx: &egui::Context) {
+		if self.asking.is_some() || self.running {
+			return;
+		}
+		let (send, receive) = mpsc::sync_channel(1);
+		let wake = ctx.clone();
+		let started = std::thread::Builder::new()
+			.name("admin-helper".into())
+			.spawn(move || {
+				let _ = send.send(Helper::start());
+				wake.request_repaint();
+			});
+		if started.is_ok() {
+			self.asking = Some(receive);
+		}
+	}
+
+	/// Hands a started helper to the session and mirrors it in `admin`; returns a toast.
+	fn update(
+		&mut self,
+		host: &Host,
+		status: HostStatus,
+		admin: &mut Admin,
+		now: f64,
+	) -> Option<(ui::design::Level, &'static str)> {
+		let mut toast = None;
+		if self.running && !status.admin {
+			*admin = Admin::Blocked;
+			toast = Some((
+				ui::design::Level::Warning,
+				"Admin apps are blocked again: the helper stopped",
+			));
+		}
+		self.running = status.admin;
+		let result = match self.asking.as_ref().map(mpsc::Receiver::try_recv) {
+			Some(Ok(result)) => Some(result),
+			Some(Err(mpsc::TryRecvError::Disconnected)) => Some(Err(helper::Failure::Failed)),
+			Some(Err(mpsc::TryRecvError::Empty)) | None => None,
+		};
+		if let Some(result) = result {
+			self.asking = None;
+			let outcome = match result.map(|helper| host.use_helper(helper)) {
+				Ok(true) => {
+					// Watched from now on, even if it stops before the next look.
+					self.running = true;
+					*admin = Admin::Allowed;
+					toast = Some((
+						ui::design::Level::Success,
+						"{name} can use apps that run as administrator until control ends",
+					));
+					"started"
+				}
+				Ok(false) => "session ended first",
+				Err(helper::Failure::Declined) => "declined",
+				Err(helper::Failure::Failed) => {
+					toast = Some((
+						ui::design::Level::Warning,
+						"Admin apps could not be allowed: the helper did not start",
+					));
+					"failed"
+				}
+			};
+			if *admin == Admin::Asking {
+				*admin = Admin::Blocked;
+			}
+			client_core::journal::note("remote", format!("admin helper {outcome}"));
+		}
+		if status.refused_elevated != self.seen {
+			self.seen = status.refused_elevated;
+			if !self.offered && *admin == Admin::Blocked {
+				self.offered = true;
+				*admin = Admin::Offered(now);
+			}
+		}
+		toast
+	}
 }
 
 #[derive(Default)]
@@ -202,6 +300,7 @@ impl Remote {
 					texture: VideoTexture::default(),
 					held_at: Instant::now(),
 					refusals: [(0, None); 2],
+					elevation: Elevation::default(),
 				});
 				ui.remote.phase = Phase::Incoming {
 					peer: from,
@@ -276,6 +375,7 @@ impl Remote {
 					texture: VideoTexture::default(),
 					held_at: Instant::now(),
 					refusals: [(0, None); 2],
+					elevation: Elevation::default(),
 				});
 			}
 			Request::Answer(true) => {
@@ -303,6 +403,21 @@ impl Remote {
 			}
 			Request::Answer(false) | Request::Cancel | Request::End => {
 				self.finish(ui, state, out, true);
+			}
+			Request::AllowAdmin => {
+				if state.demo {
+					// The offline preview never asks Windows for anything.
+					if let Phase::Hosting { admin, .. } = &mut ui.remote.phase {
+						*admin = Admin::Allowed;
+					}
+				} else if let Some(Session {
+					stage: Stage::Hosting(_),
+					elevation,
+					..
+				}) = &mut self.session
+				{
+					elevation.start(ctx);
+				}
 			}
 			Request::Focus => out.focus = true,
 			Request::Ask(_) => {}
@@ -403,6 +518,7 @@ impl Remote {
 								name: session.name.clone(),
 								grant,
 								connected: true,
+								admin: Admin::Blocked,
 							};
 							Stage::Hosting(host)
 						}
@@ -418,8 +534,19 @@ impl Remote {
 				let status = host.status();
 				if let Some(end) = status.ended {
 					failed = Some(end_text(end, true));
-				} else if let Phase::Hosting { connected, .. } = &mut ui.remote.phase {
+				} else if let Phase::Hosting {
+					connected,
+					admin,
+					name,
+					..
+				} = &mut ui.remote.phase
+				{
 					*connected = status.connected;
+					let now = ctx.input(|input| input.time);
+					if let Some((level, text)) = session.elevation.update(&host, status, admin, now)
+					{
+						ui.toasts.push(level, text.replace("{name}", name));
+					}
 				}
 				Stage::Hosting(host)
 			}
@@ -543,7 +670,7 @@ impl Remote {
 			),
 			(
 				status.refused_elevated,
-				"That app runs as administrator on {name}'s PC, so Windows blocks your mouse and keyboard there",
+				"That app runs as administrator on {name}'s PC: Windows blocks your mouse and keyboard there until they allow admin apps",
 			),
 		]) {
 			if count == *seen {
@@ -711,7 +838,8 @@ impl Remote {
 	/// `--demo --demo-call --demo-remote=<phase>`: one phase with the call's peer, for
 	/// screenshots, without any signal, connection or hook. Phases: menu, who, keys, waiting,
 	/// setting-up, incoming, answer, setup, key, warning, hosting, access, access-paused,
-	/// viewing, paused, taken, stage, viewer-menu.
+	/// admin (the offer to allow admin apps), admin-allowed, viewing, paused, taken, stage,
+	/// viewer-menu.
 	fn demo(&mut self, ui: &mut ui::MessagingUi, state: &State, ctx: &egui::Context) {
 		use ui::remote::{Menu, Step};
 		if !state.demo || self.demo.is_some() {
@@ -768,11 +896,12 @@ impl Remote {
 			viewing.permission = Some(Permission::Full);
 			Phase::Viewing(Box::new(viewing))
 		};
-		let hosting = |paused: bool| Phase::Hosting {
+		let hosting = |paused: bool, admin: Admin| Phase::Hosting {
 			peer,
 			name: name.clone(),
 			grant: Grant { paused, ..grant },
 			connected: true,
+			admin,
 		};
 		let (phase, dialog, menu) = match which.as_str() {
 			"menu" => (Phase::Idle, false, Menu::Access),
@@ -803,9 +932,11 @@ impl Remote {
 			"setup" => (setup(Step::Permission), true, Menu::None),
 			"key" => (setup(Step::Key), true, Menu::None),
 			"warning" => (setup(Step::Warning), true, Menu::None),
-			"hosting" => (hosting(false), false, Menu::None),
-			"access" => (hosting(false), false, Menu::Manage),
-			"access-paused" => (hosting(true), false, Menu::Manage),
+			"hosting" => (hosting(false, Admin::Blocked), false, Menu::None),
+			"access" => (hosting(false, Admin::Blocked), false, Menu::Manage),
+			"access-paused" => (hosting(true, Admin::Blocked), false, Menu::Manage),
+			"admin" => (hosting(false, Admin::Offered(now)), false, Menu::None),
+			"admin-allowed" => (hosting(false, Admin::Allowed), false, Menu::Manage),
 			"viewing" => (viewing(false, true, true, true), false, Menu::None),
 			"paused" => (viewing(true, true, true, true), false, Menu::None),
 			"taken" => {
@@ -821,7 +952,7 @@ impl Remote {
 		};
 		if matches!(
 			which.as_str(),
-			"key" | "warning" | "access" | "access-paused" | "keys"
+			"key" | "warning" | "access" | "access-paused" | "admin-allowed" | "keys"
 		) {
 			ui.remote.keys.pause = Some(ui::remote::Key {
 				scan: 0x42,
@@ -829,7 +960,10 @@ impl Remote {
 				name: "F8".into(),
 			});
 		}
-		if matches!(which.as_str(), "access" | "access-paused" | "keys") {
+		if matches!(
+			which.as_str(),
+			"access" | "access-paused" | "admin-allowed" | "keys"
+		) {
 			ui.remote.keys.take_over = Some(ui::remote::Key {
 				scan: 0x43,
 				extended: false,

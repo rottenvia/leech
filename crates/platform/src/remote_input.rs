@@ -3,6 +3,9 @@
 //! packet never leaves a key or button down.
 #![allow(unsafe_code)]
 
+pub mod helper;
+pub use helper::Helper;
+
 /// Tags every event this module injects, so this PC's own keyboard hook can tell the
 /// controller's keys from other injected ones (remappers, on-screen keyboards).
 pub const INJECTED_MARK: usize = 0x4C45_4543;
@@ -72,6 +75,15 @@ enum Target {
 	Elevated,
 }
 
+/// With the administrator helper running, a program running as administrator takes input
+/// like any other. Leech's own windows still refuse it.
+fn route(target: Target, helper: bool) -> Target {
+	match target {
+		Target::Elevated if helper => Target::Open,
+		target => target,
+	}
+}
+
 /// Presses that did not reach their window since the last [`Injector::take_refused`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Refused {
@@ -119,11 +131,25 @@ trait Output {
 	fn target(&mut self, pointer: Option<Option<(i32, i32)>>) -> Target;
 }
 
-struct System;
+#[derive(Default)]
+struct System {
+	/// The administrator helper while it runs: everything goes out through it.
+	helper: Option<Helper>,
+}
 impl Output for System {
 	fn send(&mut self, events: &[Out]) {
+		if events.is_empty() {
+			return;
+		}
+		if let Some(helper) = &mut self.helper {
+			if helper.send(events) {
+				return;
+			}
+			// It is gone; Windows blocks administrator programs again.
+			self.helper = None;
+		}
 		// Tests never inject real input, even through Drop.
-		if !cfg!(test) && !events.is_empty() {
+		if !cfg!(test) {
 			send(events);
 		}
 	}
@@ -131,7 +157,7 @@ impl Output for System {
 		cursor_hidden()
 	}
 	fn target(&mut self, pointer: Option<Option<(i32, i32)>>) -> Target {
-		target(pointer)
+		route(target(pointer), self.helper.is_some())
 	}
 }
 
@@ -143,6 +169,7 @@ pub struct Injector {
 	/// The pixel of the last absolute move; Windows may not have moved the cursor there yet
 	/// when the press right after it is checked.
 	at: Option<(i32, i32)>,
+	system: System,
 }
 
 impl Injector {
@@ -153,7 +180,31 @@ impl Injector {
 			buttons: Vec::new(),
 			refused: Refused::default(),
 			at: None,
+			system: System::default(),
 		}
+	}
+
+	/// From now on input goes out through the administrator helper, until it is gone.
+	pub fn use_helper(&mut self, helper: Helper) {
+		self.system.helper = Some(helper);
+	}
+
+	pub fn helper_running(&self) -> bool {
+		self.system.helper.is_some()
+	}
+
+	/// The captured screen changed: lets go of everything held and maps moves onto `screen`.
+	pub fn set_screen(&mut self, screen: ScreenRect) {
+		self.release_all();
+		self.screen = screen;
+		self.at = None;
+	}
+
+	/// Runs `act` with the real output.
+	fn on_system(&mut self, act: impl FnOnce(&mut Self, &mut System)) {
+		let mut system = std::mem::take(&mut self.system);
+		act(self, &mut system);
+		self.system = system;
 	}
 
 	/// What was refused since the last call.
@@ -187,12 +238,12 @@ impl Injector {
 
 	/// Applies one input when allowed; tracks what is held.
 	pub fn apply(&mut self, input: Input, keyboard: bool, mouse: bool) {
-		self.apply_to(&mut System, input, keyboard, mouse);
+		self.on_system(|injector, out| injector.apply_to(out, input, keyboard, mouse));
 	}
 
 	/// Releases every key and button this injector holds (pause, permission change, end).
 	pub fn release_all(&mut self) {
-		self.release_all_to(&mut System);
+		self.on_system(|injector, out| injector.release_all_to(out));
 	}
 
 	/// Brings held state in line with the viewer's snapshot (lost packets never leave a key down).
@@ -203,7 +254,7 @@ impl Injector {
 		keyboard: bool,
 		mouse: bool,
 	) {
-		self.sync_held_to(&mut System, keys, buttons, keyboard, mouse);
+		self.on_system(|injector, out| injector.sync_held_to(out, keys, buttons, keyboard, mouse));
 	}
 
 	fn apply_to(&mut self, out: &mut impl Output, input: Input, keyboard: bool, mouse: bool) {
@@ -435,9 +486,10 @@ mod windows_input {
 		pub swapped: bool,
 	}
 
-	pub(super) fn send(events: &[Out]) {
+	/// The virtual desktop now.
+	pub(super) fn desk() -> Desk {
 		// SAFETY: GetSystemMetrics only reads system values.
-		let desk = unsafe {
+		unsafe {
 			Desk {
 				x: GetSystemMetrics(SM_XVIRTUALSCREEN),
 				y: GetSystemMetrics(SM_YVIRTUALSCREEN),
@@ -445,7 +497,11 @@ mod windows_input {
 				height: GetSystemMetrics(SM_CYVIRTUALSCREEN),
 				swapped: GetSystemMetrics(SM_SWAPBUTTON) != 0,
 			}
-		};
+		}
+	}
+
+	pub(super) fn send(events: &[Out]) {
+		let desk = desk();
 		let inputs: Vec<INPUT> = events.iter().map(|event| to_input(*event, desk)).collect();
 		// SAFETY: initialized INPUTs whose union member matches their type, with the
 		// documented element size. UIPI or the secure desktop may still drop them silently.
@@ -1008,6 +1064,20 @@ mod tests {
 		assert_eq!(out.take().len(), 1);
 		assert!(injector.take_refused().elevated);
 		injector.release_all_to(&mut out);
+	}
+
+	#[test]
+	fn the_helper_opens_admin_apps_but_never_leech() {
+		for (target, helper, routed) in [
+			(Target::Open, false, Target::Open),
+			(Target::Open, true, Target::Open),
+			(Target::Own, false, Target::Own),
+			(Target::Own, true, Target::Own),
+			(Target::Elevated, false, Target::Elevated),
+			(Target::Elevated, true, Target::Open),
+		] {
+			assert_eq!(route(target, helper), routed, "{target:?} {helper}");
+		}
 	}
 
 	/// This test binary runs at the same level as itself.
