@@ -21,6 +21,9 @@ const CONNECT: Duration = Duration::from_secs(10);
 /// when the two PCs cannot reach each other directly. The relay sees only sealed datagrams.
 const RELAY_LOGIN: &str = "https://leech-stats.leech-stats.workers.dev/v1/relay";
 const RELAY_SERVER: &str = "turn.cloudflare.com:3478";
+/// Cloudflare's relay listens for UDP on both ports. Some networks silently drop one flow to
+/// it and not the other (seen on 2026-11-09: about a quarter of source ports got no answer).
+const RELAY_PORTS: [u16; 2] = [3478, 53];
 /// How often the controller tells the other PC what it holds.
 const HELD_EVERY: Duration = Duration::from_millis(100);
 
@@ -865,7 +868,12 @@ async fn relay_login() -> Option<net::RelayLogin> {
 	);
 	let login: serde_json::Value = response.ok()?.error_for_status().ok()?.json().await.ok()?;
 	Some(net::RelayLogin {
-		server: server.ok()?.find(std::net::SocketAddr::is_ipv4)?,
+		servers: {
+			let ip = server.ok()?.find(std::net::SocketAddr::is_ipv4)?.ip();
+			RELAY_PORTS
+				.map(|port| std::net::SocketAddr::new(ip, port))
+				.into()
+		},
 		username: login["username"].as_str()?.to_owned(),
 		password: login["credential"].as_str()?.to_owned(),
 	})

@@ -991,7 +991,9 @@ mod tests {
 				.find(SocketAddr::is_ipv4)
 				.unwrap();
 			let login = RelayLogin {
-				server,
+				servers: [3478, 53]
+					.map(|port| SocketAddr::new(server.ip(), port))
+					.into(),
 				username: std::env::var("LEECH_RELAY_USER").unwrap(),
 				password: std::env::var("LEECH_RELAY_PASS").unwrap(),
 			};

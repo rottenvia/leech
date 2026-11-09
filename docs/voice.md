@@ -627,8 +627,11 @@ nonces, replay window of 64). Keepalives every second; 6 s of silence ends the s
 **Relay** (from 0.1.24, `remote/turn.rs`). Two PCs behind a symmetric or carrier-grade NAT,
 or a firewall that only lets replies in, never reach each other directly; 0.1.23 then said
 "Could not reach the other PC". Each side now also takes an address on Cloudflare's TURN relay
-(`turn.cloudflare.com:3478`, UDP) on the same socket, with a one-day login from Leech's
+(`turn.cloudflare.com`, UDP) on the same socket, with a one-day login from Leech's
 credential service (`tools/stats-worker`, `POST /v1/relay`), and lists it first in its offer.
+The allocation asks ports 3478 and 53 at once and stays on whichever answers: from the owner's
+PC on 2026-11-09 about a quarter of source ports got no answer at all from one port while the
+other port worked, and a flow that answered carried 300 KB without loss.
 The direct path gets a two-second head start: only then does each side let the other's public
 addresses through its relay (CreatePermission, renewed every two minutes with the allocation)
 and punch through it too. Datagrams through the relay are the same sealed ones in Send/Data

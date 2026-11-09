@@ -12,7 +12,9 @@ use std::time::Duration;
 /// Where a relay is and the long-term login for it.
 #[derive(Clone, Debug)]
 pub struct RelayLogin {
-	pub server: SocketAddr,
+	/// The same relay at one or more addresses. Some networks silently drop a single UDP flow
+	/// to a relay while the next port works, so the allocation goes to whichever answers first.
+	pub servers: Vec<SocketAddr>,
 	pub username: String,
 	pub password: String,
 }
@@ -171,17 +173,17 @@ struct Auth {
 }
 
 impl Auth {
-	fn new(login: &RelayLogin, realm: &[u8], nonce: &[u8]) -> Self {
+	fn new(username: &str, password: &str, realm: &[u8], nonce: &[u8]) -> Self {
 		use md5::Digest;
 		let mut hash = Md5::new();
-		hash.update(login.username.as_bytes());
+		hash.update(username.as_bytes());
 		hash.update(b":");
 		hash.update(realm);
 		hash.update(b":");
-		hash.update(login.password.as_bytes());
+		hash.update(password.as_bytes());
 		Self {
-			username: login.username.clone(),
-			password: login.password.clone(),
+			username: username.to_owned(),
+			password: password.to_owned(),
 			realm: realm.to_vec(),
 			nonce: nonce.to_vec(),
 			key: hash.finalize().into(),
@@ -207,9 +209,9 @@ pub(super) struct Relay {
 }
 
 impl Relay {
-	/// Asks `login.server` for an allocation: the first request learns the realm and nonce,
-	/// the second is signed with them. `None` when the relay does not answer in 2.5 s or
-	/// refuses the login.
+	/// Asks `login.servers` for an allocation: the first request goes to every address and
+	/// learns the realm and nonce from whichever answers, the second is signed with them and
+	/// goes only there. An error when no address answers in 2.5 s or the login is refused.
 	pub(super) async fn allocate(
 		socket: &tokio::net::UdpSocket,
 		login: &RelayLogin,
@@ -218,6 +220,7 @@ impl Relay {
 		getrandom::fill(&mut id).map_err(|_| "no random id")?;
 		let transport = [17, 0, 0, 0];
 		let mut auth: Option<Auth> = None;
+		let mut server: Option<SocketAddr> = None;
 		let mut buffer = [0; 1500];
 		let mut retry = tokio::time::interval(ALLOCATE_RETRY);
 		let deadline = tokio::time::sleep(ALLOCATE_WAIT);
@@ -232,12 +235,17 @@ impl Relay {
 						Some(auth) => request.sign(auth),
 						None => request.0,
 					};
-					let _ = socket.send_to(&request, login.server).await;
+					let servers = server.as_slice();
+					for to in if servers.is_empty() { &login.servers } else { servers } {
+						let _ = socket.send_to(&request, to).await;
+					}
 				}
 				received = socket.recv_from(&mut buffer) => {
 					let Ok((len, from)) = received else { continue };
 					let Some(message) = Message::parse(&buffer[..len]) else { continue };
-					if from != login.server || message.id != id {
+					if message.id != id
+						|| server.map_or(!login.servers.contains(&from), |server| server != from)
+					{
 						continue;
 					}
 					match message.kind {
@@ -248,7 +256,7 @@ impl Relay {
 								return Err("unexpected answer");
 							};
 							return Ok(Self {
-								server: login.server,
+								server: from,
 								relayed,
 								mapped: message.address(XOR_MAPPED_ADDRESS),
 								auth: Mutex::new(auth),
@@ -266,7 +274,8 @@ impl Relay {
 							{
 								return Err("refused");
 							}
-							auth = Some(Auth::new(login, realm, nonce));
+							auth = Some(Auth::new(&login.username, &login.password, realm, nonce));
+							server = Some(from);
 							getrandom::fill(&mut id).map_err(|_| "no random id")?;
 							retry.reset_immediately();
 						}
@@ -332,12 +341,8 @@ impl Relay {
 				if auth.nonce == nonce {
 					return None;
 				}
-				let login = RelayLogin {
-					server: self.server,
-					username: auth.username.clone(),
-					password: auth.password.clone(),
-				};
-				*auth = Auth::new(&login, message.get(REALM).unwrap_or(&auth.realm), nonce);
+				let realm = message.get(REALM).unwrap_or(&auth.realm);
+				*auth = Auth::new(&auth.username, &auth.password, realm, nonce);
 				Some(Incoming::Retry)
 			}
 			_ => None,
@@ -419,7 +424,7 @@ pub(super) async fn test_relay() -> RelayLogin {
 		}
 	});
 	RelayLogin {
-		server,
+		servers: vec![server],
 		username: "leech".into(),
 		password: "test".into(),
 	}
@@ -432,13 +437,13 @@ mod tests {
 	/// RFC 5769 section 2.4: a request signed with a long-term credential.
 	#[test]
 	fn signing_matches_rfc_5769() {
-		let login = RelayLogin {
-			server: "192.0.2.1:3478".parse().unwrap(),
-			username: "\u{30de}\u{30c8}\u{30ea}\u{30c3}\u{30af}\u{30b9}".into(),
-			// The password after SASLprep.
-			password: "TheMatrIX".into(),
-		};
-		let auth = Auth::new(&login, b"example.org", b"f//499k954d6OL34oL9FSTvy64sA");
+		// The username and the password after SASLprep.
+		let auth = Auth::new(
+			"\u{30de}\u{30c8}\u{30ea}\u{30c3}\u{30af}\u{30b9}",
+			"TheMatrIX",
+			b"example.org",
+			b"f//499k954d6OL34oL9FSTvy64sA",
+		);
 		let id = [
 			0x78, 0xad, 0x34, 0x33, 0xc6, 0xad, 0x72, 0xc0, 0x29, 0xda, 0x41, 0x2e,
 		];
@@ -472,15 +477,7 @@ mod tests {
 			server: "192.0.2.1:3478".parse().unwrap(),
 			relayed: "192.0.2.1:50000".parse().unwrap(),
 			mapped: None,
-			auth: Mutex::new(Auth::new(
-				&RelayLogin {
-					server: "192.0.2.1:3478".parse().unwrap(),
-					username: "u".into(),
-					password: "p".into(),
-				},
-				b"r",
-				b"n",
-			)),
+			auth: Mutex::new(Auth::new("u", "p", b"r", b"n")),
 		};
 		let peer: SocketAddr = "203.0.113.7:4242".parse().unwrap();
 		let mut sent = relay.send(peer, b"sealed bytes").unwrap();
@@ -493,6 +490,37 @@ mod tests {
 		for end in 0..sent.len() {
 			assert!(relay.receive(&sent[..end]).is_none());
 		}
+	}
+
+	/// A relay address whose flow is dropped does not hold up the one that answers, and the
+	/// signed request and the allocation stay on the address that answered.
+	#[test]
+	fn allocation_takes_whichever_address_answers() {
+		let runtime = tokio::runtime::Builder::new_current_thread()
+			.enable_all()
+			.build()
+			.unwrap();
+		runtime.block_on(async {
+			let silent = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+			let mut login = test_relay().await;
+			login.servers.insert(0, silent.local_addr().unwrap());
+			let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+			let relay = Relay::allocate(&socket, &login).await.unwrap();
+			assert_eq!(relay.server, login.servers[1]);
+			let mut buffer = [0; 1500];
+			let mut asked = 0;
+			while let Ok(Ok((len, _))) =
+				tokio::time::timeout(Duration::from_millis(50), silent.recv_from(&mut buffer)).await
+			{
+				let message = Message::parse(&buffer[..len]).unwrap();
+				assert!(
+					message.get(MESSAGE_INTEGRITY).is_none(),
+					"signed request went astray"
+				);
+				asked += 1;
+			}
+			assert!(asked >= 1);
+		});
 	}
 
 	#[test]
