@@ -4,6 +4,7 @@ pub mod app_menu;
 pub mod badge;
 pub mod captcha;
 pub mod compositor;
+pub mod firewall;
 pub mod game_activity;
 pub mod heic;
 pub mod hotkeys;

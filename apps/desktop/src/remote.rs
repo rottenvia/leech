@@ -17,13 +17,6 @@ use ui::remote::{Grant, MouseButton, MouseInput, Permission, Phase, Request, Vie
 
 /// How long hole punching may take.
 const CONNECT: Duration = Duration::from_secs(10);
-/// Leech's credential service hands out short-lived logins for Cloudflare's TURN relay, used
-/// when the two PCs cannot reach each other directly. The relay sees only sealed datagrams.
-const RELAY_LOGIN: &str = "https://leech-stats.leech-stats.workers.dev/v1/relay";
-const RELAY_SERVER: &str = "turn.cloudflare.com:3478";
-/// Cloudflare's relay listens for UDP on both ports. Some networks silently drop one flow to
-/// it and not the other (seen on 2026-11-09: about a quarter of source ports got no answer).
-const RELAY_PORTS: [u16; 2] = [3478, 53];
 /// How often the controller tells the other PC what it holds.
 const HELD_EVERY: Duration = Duration::from_millis(100);
 
@@ -42,7 +35,7 @@ enum Stage {
 	Asked,
 	Gathering(Gathered),
 	/// This side's offer is out; the other side's is still to come.
-	Ready(Box<Endpoint>),
+	Ready(Endpoint),
 	Connecting(Connected),
 	/// Connected while the host's setup is still open.
 	Linked(Link),
@@ -324,7 +317,7 @@ impl Remote {
 							token: endpoint.offer().to_token(),
 						},
 					));
-					Stage::Ready(Box::new(endpoint))
+					Stage::Ready(endpoint)
 				}
 				Ok(Err(error)) => {
 					failed = Some(error);
@@ -342,7 +335,7 @@ impl Remote {
 					let wake = ctx.clone();
 					let host = session.host;
 					runtime.spawn(async move {
-						let _ = send.send((*endpoint).connect(&theirs, host, CONNECT).await);
+						let _ = send.send(endpoint.connect(&theirs, host, CONNECT).await);
 						wake.request_repaint();
 					});
 					Stage::Connecting(receive)
@@ -842,41 +835,39 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 fn gather(id: u64, ctx: &egui::Context, runtime: &tokio::runtime::Handle) -> Gathered {
+	allow_through_firewall();
 	let (send, receive) = mpsc::sync_channel(1);
 	let wake = ctx.clone();
 	runtime.spawn(async move {
-		let login = relay_login().await;
-		let _ = send.send(Endpoint::gather(id, login).await);
+		let _ = send.send(Endpoint::gather(id).await);
 		wake.request_repaint();
 	});
 	receive
 }
 
-/// A relay login, when the credential service answers within three seconds.
-async fn relay_login() -> Option<net::RelayLogin> {
-	let client = reqwest::Client::builder()
-		.https_only(true)
-		.no_proxy()
-		.user_agent(concat!("Leech/", env!("CARGO_PKG_VERSION")))
-		.timeout(Duration::from_secs(3))
-		.redirect(reqwest::redirect::Policy::none())
-		.build()
-		.ok()?;
-	let (response, server) = tokio::join!(
-		client.post(RELAY_LOGIN).send(),
-		tokio::net::lookup_host(RELAY_SERVER)
-	);
-	let login: serde_json::Value = response.ok()?.error_for_status().ok()?.json().await.ok()?;
-	Some(net::RelayLogin {
-		servers: {
-			let ip = server.ok()?.find(std::net::SocketAddr::is_ipv4)?.ip();
-			RELAY_PORTS
-				.map(|port| std::net::SocketAddr::new(ip, port))
-				.into()
-		},
-		username: login["username"].as_str()?.to_owned(),
-		password: login["credential"].as_str()?.to_owned(),
-	})
+/// Once per run, at the first remote control: makes sure Windows Firewall lets the other PC's
+/// datagrams in even from a port this PC never sent to (its NAT may pick a new one per
+/// destination). When no rule does, Windows asks for administrator approval once; remote
+/// control goes on either way. Demo builds never ask.
+fn allow_through_firewall() {
+	#[cfg(not(feature = "demo"))]
+	{
+		static ONCE: std::sync::Once = std::sync::Once::new();
+		ONCE.call_once(|| {
+			let _ = std::thread::Builder::new()
+				.name("firewall".into())
+				.spawn(|| {
+					use platform::firewall::Inbound;
+					let outcome = match platform::firewall::allow_inbound_udp() {
+						Inbound::Allowed => "already allows remote control",
+						Inbound::Added => "rule added",
+						Inbound::Declined => "administrator approval declined",
+						Inbound::Failed => "rule could not be added",
+					};
+					client_core::journal::note("remote", format!("firewall {outcome}"));
+				});
+		});
+	}
 }
 
 fn config(grant: Grant) -> HostConfig {

@@ -1556,11 +1556,9 @@ dependencies = [
  "gstreamer",
  "gstreamer-app",
  "gstreamer-video",
- "hmac 0.13.0",
  "image",
  "libc",
  "libpulse-sys",
- "md-5",
  "model",
  "nnnoiseless",
  "objc2 0.6.4",
@@ -1579,7 +1577,6 @@ dependencies = [
  "rtrb",
  "screencapturekit",
  "serde_json",
- "sha1",
  "sha2 0.10.9",
  "sha3",
  "socket2",
@@ -3973,16 +3970,6 @@ dependencies = [
  "log",
  "tendril",
  "web_atoms",
-]
-
-[[package]]
-name = "md-5"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98"
-dependencies = [
- "cfg-if",
- "digest 0.11.3",
 ]
 
 [[package]]

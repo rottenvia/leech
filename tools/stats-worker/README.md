@@ -15,22 +15,7 @@ It is deployed at `https://leech-stats.leech-stats.workers.dev`; Leech sends to
 4. `npx wrangler deploy`, then set `RECEIVER` in `perf_stats.rs` to the printed address
    followed by `/v1/performance`.
 
-`node test.js` checks what the receiver keeps and turns away, and the relay logins.
-
-## Relay logins for remote control
-
-`POST /v1/relay` returns `{"username","credential"}`: a Cloudflare Realtime TURN login valid
-for a day, which Leech uses when two PCs cannot reach each other directly
-(`apps/desktop/src/remote.rs`, `crates/discord-voice/src/remote/turn.rs`). Without the TURN
-key it answers 503 and remote control stays direct-only. To turn it on once:
-
-1. In the Cloudflare dashboard open Realtime → TURN Server → Create, and keep the key ID and
-   the API token it shows.
-2. In this folder run `npx wrangler secret put TURN_KEY_ID` and
-   `npx wrangler secret put TURN_KEY_TOKEN`, pasting each value when asked.
-
-Cloudflare bills TURN traffic after the first 1,000 GB a month (shared with its SFU), at
-$0.05 per GB; a relayed 1080p session uses about 2-4 GB an hour.
+`node test.js` checks what the receiver keeps and turns away.
 
 ## Read
 
