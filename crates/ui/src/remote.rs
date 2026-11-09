@@ -8,7 +8,10 @@
 //! the screen stays in the call, and a double-click on it takes control again. A left click
 //! on the button ends control on either side; a right click holds the keys and, for the one
 //! controlled, what the other may do. Holding the take-over key gives the one controlled
-//! their own mouse and keyboard back for as long as it is held.
+//! their own mouse and keyboard back for as long as it is held. When the controller reaches a
+//! program running as administrator, which Windows keeps them out of, the one controlled is
+//! offered "Allow admin apps": Windows asks them, then a helper replays the input until control
+//! ends.
 //!
 //! The interface only draws; the desktop signals, connects, captures, injects and fills in
 //! [`Phase`] as the session moves on.
@@ -19,6 +22,8 @@ use model::Id;
 pub const NOTICE_SECS: f64 = 15.0;
 /// How long the one who asked waits for an answer, the setup included.
 pub const ANSWER_SECS: f64 = 60.0;
+/// How long the offer to allow admin apps stays up; the right-click menu keeps it after.
+pub const ADMIN_OFFER_SECS: f64 = 30.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Permission {
@@ -35,6 +40,20 @@ impl Permission {
 			Self::Full => "Full control",
 		}
 	}
+}
+
+/// Whether the controller reaches programs that run as administrator on this PC.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub enum Admin {
+	/// Windows keeps the controller out of them.
+	#[default]
+	Blocked,
+	/// The controller just reached one: the offer shows, since this time.
+	Offered(f64),
+	/// Windows' prompt is up.
+	Asking,
+	/// A helper with administrator rights replays the input until control ends.
+	Allowed,
 }
 
 /// What the one giving control allows.
@@ -98,6 +117,9 @@ pub enum Request {
 	Start(Grant),
 	/// The one controlled changes what the controller may do.
 	Change(Grant),
+	/// Start the helper that lets the controller into programs running as administrator;
+	/// Windows asks first.
+	AllowAdmin,
 	/// End the session, from either side.
 	End,
 	/// Bring the main window forward (the notification was clicked).
@@ -254,6 +276,7 @@ pub enum Phase {
 		name: String,
 		grant: Grant,
 		connected: bool,
+		admin: Admin,
 	},
 	Viewing(Box<Viewing>),
 }
@@ -340,6 +363,16 @@ impl Remote {
 		match &self.phase {
 			Phase::Viewing(viewing) => Some(viewing.peer),
 			_ => None,
+		}
+	}
+
+	/// Asks Windows to let the controller into programs running as administrator.
+	fn allow_admin(&mut self) {
+		if let Phase::Hosting { admin, .. } = &mut self.phase
+			&& matches!(admin, Admin::Blocked | Admin::Offered(_))
+		{
+			*admin = Admin::Asking;
+			self.requests.push(Request::AllowAdmin);
 		}
 	}
 
@@ -697,7 +730,10 @@ impl crate::MessagingUi {
 			.as_ref()
 			.map(|key| key.name.clone());
 		let remote = &mut self.remote;
-		let Phase::Hosting { name, grant, .. } = &mut remote.phase else {
+		let Phase::Hosting {
+			name, grant, admin, ..
+		} = &mut remote.phase
+		else {
 			return;
 		};
 		let before = *grant;
@@ -772,6 +808,7 @@ impl crate::MessagingUi {
 			}
 		}
 		design::menu_check(ui, "Share PC audio", &mut grant.audio);
+		let allow = admin_row(ui, *admin).clicked();
 		let name = name.clone();
 		let grant = *grant;
 		if locked {
@@ -786,6 +823,10 @@ impl crate::MessagingUi {
 			self.remote.end(Request::End);
 		} else if grant != before {
 			self.remote.requests.push(Request::Change(grant));
+		}
+		if allow {
+			self.remote.allow_admin();
+			self.remote.menu = Menu::None;
 		}
 	}
 
@@ -862,6 +903,7 @@ impl crate::MessagingUi {
 		}
 		self.sync_remote_fullscreen(ctx);
 		self.remote_notification(ctx, state);
+		self.remote_admin_offer(ctx);
 		if self.window_hidden || !self.remote.dialog {
 			return;
 		}
@@ -1140,6 +1182,7 @@ impl crate::MessagingUi {
 								name,
 								grant,
 								connected: false,
+								admin: Admin::Blocked,
 							};
 							remote.dialog = false;
 						}
@@ -1221,6 +1264,68 @@ impl crate::MessagingUi {
 				self.remote.requests.push(Request::Focus);
 			}
 			Some(false) => self.remote.end(Request::Answer(false)),
+			None => {}
+		}
+	}
+
+	/// The offer to let the controller into programs running as administrator, in a card of
+	/// its own where the notification goes: Leech is usually behind what the controller uses.
+	/// Only someone at this PC can click it (Leech refuses the controller's presses), and
+	/// Windows asks them again.
+	fn remote_admin_offer(&mut self, ctx: &egui::Context) {
+		let Phase::Hosting {
+			name,
+			admin: Admin::Offered(since),
+			..
+		} = &self.remote.phase
+		else {
+			return;
+		};
+		let (name, since) = (name.clone(), *since);
+		let now = ctx.input(|input| input.time);
+		if now - since > ADMIN_OFFER_SECS {
+			if let Phase::Hosting { admin, .. } = &mut self.remote.phase {
+				*admin = Admin::Blocked;
+			}
+			return;
+		}
+		let size = egui::vec2(392.0, 140.0);
+		// ponytail: placed like the notification (desktop origin, 48 point taskbar below).
+		let monitor = ctx
+			.input(|input| input.viewport().monitor_size)
+			.unwrap_or(egui::vec2(1920.0, 1080.0));
+		let position = monitor - size - egui::vec2(16.0, 16.0 + 48.0);
+		let builder = egui::ViewportBuilder::default()
+			.with_title("Allow admin apps · remote control")
+			.with_position(position.to_pos2())
+			.with_inner_size(size)
+			.with_resizable(false)
+			.with_transparent(true)
+			.with_decorations(false)
+			.with_taskbar(false)
+			.with_active(false)
+			.with_window_level(egui::WindowLevel::AlwaysOnTop);
+		let mut answer = None;
+		ctx.show_viewport_immediate(
+			egui::ViewportId::from_hash_of("remote-admin-offer"),
+			builder,
+			|ui, _| answer = admin_card(ui, &name, now - since),
+		);
+		// The slide-in, then only the moment it goes.
+		if now - since < 0.4 {
+			ctx.request_repaint();
+		} else {
+			ctx.request_repaint_after(std::time::Duration::from_secs_f64(
+				ADMIN_OFFER_SECS - (now - since),
+			));
+		}
+		match answer {
+			Some(true) => self.remote.allow_admin(),
+			Some(false) => {
+				if let Phase::Hosting { admin, .. } = &mut self.remote.phase {
+					*admin = Admin::Blocked;
+				}
+			}
 			None => {}
 		}
 	}
@@ -2088,6 +2193,155 @@ fn notification_card(
 	}
 }
 
+/// The offer to allow admin apps: a shield, why, and the two answers. Returns the answer.
+fn admin_card(ui: &mut egui::Ui, name: &str, elapsed: f64) -> Option<bool> {
+	let colors = design::palette(ui);
+	let full = ui.max_rect();
+	// Slides in from the right and fades, like the notification.
+	let enter = egui::emath::easing::cubic_out((elapsed / 0.32).clamp(0.0, 1.0) as f32);
+	let rect = full
+		.shrink(6.0)
+		.translate(egui::vec2(40.0 * (1.0 - enter), 0.0));
+	ui.set_opacity(enter);
+	ui.painter().add(
+		egui::epaint::RectShape::filled(rect, 14, colors.chat.to_opaque()).with_blur_width(0.0),
+	);
+	ui.painter().rect_stroke(
+		rect,
+		14,
+		egui::Stroke::new(1.0, colors.border),
+		egui::StrokeKind::Inside,
+	);
+	ui.painter().rect_filled(
+		egui::Rect::from_min_size(
+			rect.min + egui::vec2(0.0, 18.0),
+			egui::vec2(3.0, rect.height() - 36.0),
+		),
+		2,
+		colors.accent,
+	);
+	let plate =
+		egui::Rect::from_min_size(rect.min + egui::vec2(18.0, 18.0), egui::Vec2::splat(40.0));
+	ui.painter()
+		.rect_filled(plate, 10, colors.warning.gamma_multiply(0.16));
+	crate::icons::paint(
+		ui.painter(),
+		Icon::ShieldWarning,
+		plate.shrink(10.0),
+		colors.warning,
+	);
+	let left = plate.right() + 14.0;
+	let wrap = rect.right() - 18.0 - left;
+	let title = ui.painter().layout(
+		format!("{name} reached an app that runs as administrator"),
+		egui::FontId::new(14.0, design::semibold_family(ui.ctx())),
+		colors.text_strong,
+		wrap,
+	);
+	let title_height = title.size().y;
+	ui.painter().galley(
+		egui::pos2(left, rect.top() + 17.0),
+		title,
+		colors.text_strong,
+	);
+	let detail = ui.painter().layout(
+		"Windows blocks their mouse and keyboard there. Allow it until control ends?".to_owned(),
+		egui::FontId::proportional(12.5),
+		colors.muted,
+		wrap,
+	);
+	ui.painter().galley(
+		egui::pos2(left, rect.top() + 21.0 + title_height),
+		detail,
+		colors.muted,
+	);
+	let buttons = egui::Rect::from_min_max(
+		egui::pos2(left, rect.bottom() - 14.0 - design::BUTTON_HEIGHT),
+		rect.right_bottom() - egui::vec2(14.0, 14.0),
+	);
+	let mut answer = None;
+	ui.scope_builder(
+		egui::UiBuilder::new()
+			.max_rect(buttons)
+			.layout(egui::Layout::right_to_left(egui::Align::Center)),
+		|ui| {
+			ui.spacing_mut().item_spacing.x = 8.0;
+			if dialog::action(ui, "Allow admin apps", dialog::Action::Primary).clicked() {
+				answer = Some(true);
+			}
+			if dialog::action(ui, "Not now", dialog::Action::Neutral).clicked() {
+				answer = Some(false);
+			}
+		},
+	);
+	answer
+}
+
+/// The right-click menu's row for programs running as administrator: the offer while Windows
+/// keeps the controller out of them, otherwise how it stands.
+fn admin_row(ui: &mut egui::Ui, admin: Admin) -> egui::Response {
+	let colors = design::palette(ui);
+	let open = matches!(admin, Admin::Blocked | Admin::Offered(_));
+	let (rect, response) = ui.allocate_exact_size(
+		egui::vec2(ui.available_width(), 44.0),
+		if open {
+			egui::Sense::click()
+		} else {
+			egui::Sense::hover()
+		},
+	);
+	let (title, detail, icon, tint) = match admin {
+		Admin::Blocked | Admin::Offered(_) => (
+			"Allow admin apps",
+			"Windows asks you first · until control ends",
+			Icon::ShieldWarning,
+			colors.muted,
+		),
+		Admin::Asking => (
+			"Allow admin apps",
+			"Waiting for Windows to ask you",
+			Icon::ShieldWarning,
+			colors.warning,
+		),
+		Admin::Allowed => (
+			"Admin apps allowed",
+			"Until control ends",
+			Icon::ShieldCheck,
+			colors.positive,
+		),
+	};
+	response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, open, title));
+	let hover = if open {
+		row_hover(ui, &response, rect)
+	} else {
+		0.0
+	};
+	ui.painter().text(
+		egui::pos2(rect.left() + 10.0, rect.center().y - 8.0),
+		egui::Align2::LEFT_CENTER,
+		title,
+		egui::FontId::new(14.0, design::medium_family(ui.ctx())),
+		colors.text.lerp_to_gamma(colors.text_strong, hover),
+	);
+	ui.painter().text(
+		egui::pos2(rect.left() + 10.0, rect.center().y + 10.0),
+		egui::Align2::LEFT_CENTER,
+		detail,
+		egui::FontId::proportional(12.0),
+		colors.muted,
+	);
+	crate::icons::paint(
+		ui.painter(),
+		icon,
+		egui::Rect::from_center_size(
+			egui::pos2(rect.right() - 19.0, rect.center().y),
+			egui::Vec2::splat(18.0),
+		),
+		tint,
+	);
+	response
+}
+
 /// Step one: keyboard, mouse or both, and the sound.
 fn permission_step(ui: &mut egui::Ui, grant: &mut Grant, name: &str) {
 	let colors = design::palette(ui);
@@ -2739,6 +2993,7 @@ mod tests {
 			name: "mafaka".into(),
 			grant: Grant::default(),
 			connected: true,
+			admin: Admin::Blocked,
 		};
 		assert_eq!(
 			remote.toggle_pause().as_deref(),

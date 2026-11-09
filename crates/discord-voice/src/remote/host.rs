@@ -3,7 +3,7 @@
 use super::{End, Input, Link, MouseButton, Permission, Shared, stopped, wire};
 use crate::screen::{AudioChunk, EncodedFrame, Settings, SourceId, Worker};
 use opus2::{Application, Bitrate, Channels, Encoder};
-use platform::remote_input::{Injector, ScreenRect, cursor_hidden};
+use platform::remote_input::{Helper, Injector, ScreenRect, cursor_hidden};
 use std::sync::{
 	Arc,
 	atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering},
@@ -25,6 +25,10 @@ pub struct HostStatus {
 	pub ended: Option<End>,
 	pub rtt_ms: u32,
 	pub kbps: u32,
+	/// Input aimed at programs running as administrator, which Windows blocked; counts up.
+	pub refused_elevated: u32,
+	/// The administrator helper replays the input (from the moment it is handed over).
+	pub admin: bool,
 }
 
 const START_BITRATE: u32 = 8_000_000;
@@ -51,6 +55,7 @@ enum Command {
 	Sync(Vec<(u16, bool)>, Vec<MouseButton>, bool, bool),
 	ReleaseAll,
 	Screen(ScreenRect),
+	Helper(Helper),
 }
 
 pub struct Host {
@@ -58,6 +63,16 @@ pub struct Host {
 	config: watch::Sender<HostConfig>,
 	kbps: Arc<AtomicU32>,
 	hand: Hand,
+	/// The input thread's queue; it does not keep that thread alive.
+	inject: mpsc::WeakSender<Command>,
+	input: Arc<InputState>,
+}
+
+/// What the input thread tells the interface.
+#[derive(Default)]
+struct InputState {
+	elevated: AtomicU32,
+	admin: AtomicBool,
 }
 
 /// The host taking its PC back while a key is held: the controller's input is ignored and
@@ -96,12 +111,15 @@ impl Host {
 		}
 		let kbps = Arc::new(AtomicU32::new(0));
 		let hand = Hand(Arc::new(watch::channel(false).0));
-		match launch(&mut link, config, kbps.clone(), &hand) {
-			Ok(config) => Ok(Self {
+		let input = Arc::new(InputState::default());
+		match launch(&mut link, config, kbps.clone(), &hand, input.clone()) {
+			Ok((config, inject)) => Ok(Self {
 				link,
 				config,
 				kbps,
 				hand,
+				inject,
+				input,
 			}),
 			Err(error) => {
 				shared.finish(End::Failed(error), Some(wire::BYE_FAILED));
@@ -125,7 +143,24 @@ impl Host {
 			ended: shared.ended(),
 			rtt_ms: shared.rtt(),
 			kbps: self.kbps.load(Ordering::Relaxed),
+			refused_elevated: self.input.elevated.load(Ordering::Relaxed),
+			admin: self.input.admin.load(Ordering::Relaxed),
 		}
+	}
+
+	/// Sends the input through the administrator helper from now on. The helper ends with the
+	/// session; false when the session already ended (the helper is closed then too).
+	pub fn use_helper(&self, helper: Helper) -> bool {
+		// Set first: the input thread clears it once it loses the helper, which may be soon.
+		self.input.admin.store(true, Ordering::Relaxed);
+		let sent = self
+			.inject
+			.upgrade()
+			.is_some_and(|inject| inject.try_send(Command::Helper(helper)).is_ok());
+		if !sent {
+			self.input.admin.store(false, Ordering::Relaxed);
+		}
+		sent
 	}
 
 	pub fn end(&self) {
@@ -142,7 +177,8 @@ fn launch(
 	config: HostConfig,
 	kbps: Arc<AtomicU32>,
 	hand: &Hand,
-) -> Result<watch::Sender<HostConfig>, &'static str> {
+	input: Arc<InputState>,
+) -> Result<(watch::Sender<HostConfig>, mpsc::WeakSender<Command>), &'static str> {
 	let shared = link.shared.clone();
 	let mut inbox = link
 		.inbox
@@ -181,7 +217,7 @@ fn launch(
 	let (taken, noted) = (hand.0.subscribe(), refused.clone());
 	std::thread::Builder::new()
 		.name("remote-input".into())
-		.spawn(move || inject_loop(rect, commands, &taken, &noted))
+		.spawn(move || inject_loop(rect, commands, &taken, &noted, &input))
 		.map_err(|_| "Remote control input could not start")?;
 
 	let audio = Arc::new(AtomicBool::new(config.audio));
@@ -191,6 +227,7 @@ fn launch(
 	if let Some(chunks) = video.audio.take() {
 		runtime.spawn(send_audio(shared.clone(), chunks, audio.clone()));
 	}
+	let weak = inject.downgrade();
 	let control = Control {
 		shared,
 		inject,
@@ -212,7 +249,7 @@ fn launch(
 		report: 0,
 	};
 	runtime.spawn(control.run(inbox, configs, worker));
-	Ok(config_send)
+	Ok((config_send, weak))
 }
 
 fn rect(screen: (u32, u32)) -> ScreenRect {
@@ -226,17 +263,19 @@ fn rect(screen: (u32, u32)) -> ScreenRect {
 }
 
 /// Owns the injector on its own MMCSS thread, so a game's load cannot delay input; dropping
-/// it at the end releases everything still held. Input still queued when the host takes its
-/// PC back is dropped.
+/// it at the end releases everything still held and closes the administrator helper. Input
+/// still queued when the host takes its PC back is dropped.
 fn inject_loop(
 	rect: ScreenRect,
 	mut commands: mpsc::Receiver<Command>,
 	taken: &watch::Receiver<bool>,
 	refused: &AtomicU8,
+	input: &InputState,
 ) {
 	let _resolution = crate::timer::Resolution::acquire();
 	let mut injector = Injector::new(rect);
 	while let Some(command) = commands.blocking_recv() {
+		let helper = injector.helper_running();
 		match command {
 			Command::Apply(..) | Command::Sync(..) if *taken.borrow() => {}
 			Command::Apply(inputs, keyboard, mouse) => {
@@ -248,10 +287,8 @@ fn inject_loop(
 				injector.sync_held(&keys, &buttons, keyboard, mouse);
 			}
 			Command::ReleaseAll => injector.release_all(),
-			Command::Screen(rect) => {
-				injector.release_all();
-				injector = Injector::new(rect);
-			}
+			Command::Screen(rect) => injector.set_screen(rect),
+			Command::Helper(helper) => injector.use_helper(helper),
 		}
 		let noted = injector.take_refused();
 		let bits =
@@ -259,7 +296,15 @@ fn inject_loop(
 		if bits != 0 {
 			refused.fetch_or(bits, Ordering::Relaxed);
 		}
+		if noted.elevated {
+			input.elevated.fetch_add(1, Ordering::Relaxed);
+		}
+		// A write to the helper failed: it is gone.
+		if helper && !injector.helper_running() {
+			input.admin.store(false, Ordering::Relaxed);
+		}
 	}
+	input.admin.store(false, Ordering::Relaxed);
 }
 
 struct Control {
