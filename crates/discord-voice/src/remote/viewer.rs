@@ -20,7 +20,14 @@ pub struct ViewerStatus {
 	pub started: bool,
 	pub ended: Option<End>,
 	pub permission: Option<Permission>,
+	/// Paused by the host, or `taken`.
 	pub paused: bool,
+	/// The host holds its take-over key and uses its own mouse and keyboard.
+	pub taken: bool,
+	/// How many states reported a click or key that Leech on the host ignored.
+	pub refused_own: u32,
+	/// How many states reported input for a program running as administrator there.
+	pub refused_elevated: u32,
 	pub audio: bool,
 	/// Host screen in pixels.
 	pub screen: (u32, u32),
@@ -223,6 +230,13 @@ impl View {
 			started: true,
 			permission: state.permission,
 			paused: state.paused,
+			taken: state.taken,
+			refused_own: remote
+				.refused_own
+				.wrapping_add(u32::from(state.refused_own)),
+			refused_elevated: remote
+				.refused_elevated
+				.wrapping_add(u32::from(state.refused_elevated)),
 			audio: state.audio,
 			screen: (u32::from(state.screen.0), u32::from(state.screen.1)),
 			relative_mouse: state.relative_mouse,
@@ -234,6 +248,9 @@ impl View {
 				status.started,
 				status.permission,
 				status.paused,
+				status.taken,
+				status.refused_own,
+				status.refused_elevated,
 				status.audio,
 				status.screen,
 				status.relative_mouse,
@@ -564,6 +581,9 @@ mod tests {
 			let state = wire::State {
 				permission: Some(Permission::Full),
 				paused: false,
+				taken: false,
+				refused_own: true,
+				refused_elevated: false,
 				audio: true,
 				relative_mouse: false,
 				screen: (2560, 1080),
@@ -578,6 +598,7 @@ mod tests {
 			}
 			let status = viewer.status();
 			assert_eq!(status.permission, Some(Permission::Full));
+			assert_eq!((status.refused_own, status.refused_elevated), (1, 0));
 			assert_eq!(status.screen, (2560, 1080));
 			assert_eq!(status.content, [0.0, 0.125, 1.0, 0.75]);
 

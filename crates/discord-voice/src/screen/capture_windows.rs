@@ -2,11 +2,11 @@ use super::{
 	MAX_FRAME_HEIGHT, MAX_FRAME_WIDTH, MAX_RAW_BYTES, MAX_SOURCE_HEIGHT, MAX_SOURCE_WIDTH,
 	MAX_SOURCES, bounded_name,
 };
+use crate::screen::latest::Sender as SyncSender;
 use crate::screen::{AudioChunk, RawFrame, Settings as CaptureSettings, Source, SourceId, gpu};
 use std::sync::{
 	Arc, Mutex,
 	atomic::{AtomicBool, AtomicU64, Ordering},
-	mpsc::SyncSender,
 };
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{
@@ -110,7 +110,7 @@ pub(crate) fn sources() -> Result<Vec<Source>, &'static str> {
 
 #[derive(Clone)]
 struct Flags {
-	frames: SyncSender<RawFrame>,
+	frames: SyncSender,
 	stop: Arc<AtomicBool>,
 	pending: Arc<AtomicBool>,
 	next_frame: Instant,
@@ -135,15 +135,19 @@ impl Sink {
 		Self(flags, None)
 	}
 
-	/// Whether a picture arriving now is delivered; capture pacing and the encoder's single
-	/// picture in flight drop the rest.
+	/// Whether a picture arriving now is delivered. GPU pictures always are: the encoder
+	/// paces them and takes the newest, so the last change before a still screen is never
+	/// lost. Copies through memory are paced here, and wait for the encoder's single picture.
+	// ponytail: an early picture on the memory path is dropped, so its change shows with the
+	// next one; that path is the fallback for GPUs that cannot convert.
 	fn admit(&mut self) -> bool {
 		crate::stream_log::add(crate::stream_log::Count::Captured, 1);
 		let now = Instant::now();
+		let gpu = self.0.gpu.load(Ordering::Acquire);
 		if now + Duration::from_millis(2) < self.0.next_frame {
-			return false;
+			return gpu;
 		}
-		if self.0.pending.swap(true, Ordering::AcqRel) {
+		if !gpu && self.0.pending.swap(true, Ordering::AcqRel) {
 			crate::stream_log::add(crate::stream_log::Count::CaptureBusy, 1);
 			return false;
 		}
@@ -972,7 +976,7 @@ impl Capture {
 	#[allow(clippy::too_many_arguments)] // Media outputs of one explicitly started capture.
 	pub(crate) fn start(
 		settings: CaptureSettings,
-		frames: SyncSender<RawFrame>,
+		frames: SyncSender,
 		audio: Option<tokio::sync::mpsc::Sender<AudioChunk>>,
 		stop: Arc<AtomicBool>,
 		ready: Arc<AtomicBool>,
@@ -1187,7 +1191,7 @@ mod tests {
 	#[test]
 	#[ignore = "needs a desktop session and a GPU"]
 	fn duplication_delivers_converted_pictures() {
-		let (frames, received) = std::sync::mpsc::sync_channel(1);
+		let (frames, received) = crate::screen::latest::channel();
 		let pending = Arc::new(AtomicBool::new(false));
 		let stop = Arc::new(AtomicBool::new(false));
 		let flags = Flags {

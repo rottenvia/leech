@@ -597,16 +597,32 @@ Pause/Resume, the permission (full, keyboard, mouse, or Disable, which ends cont
 the PC's sound. The permission only changes while paused: a click on it before that keeps
 it and says to pause first, naming the pause key.
 
+The take-over key (0.1.25, set in the Keys part of the right-click menu, not set by default)
+is held, not toggled: while it is down this PC's own mouse and keyboard work and the
+controller's input is dropped, and everything the controller held is let go; releasing it
+hands control back. The hook thread flips it directly (`remote::Hand`), so it does not wait
+for a frame. The controller sees "They took over" in its label and no status card, so it can
+watch. Older viewers see it as a pause. The pause key wins when both are the same key.
+
+Leech on the controlled PC never takes the controller's presses: a click, wheel or key that
+would go to one of Leech's own windows (the window under the pointer, or the one in front
+for keys) is dropped, so the controller cannot leave the call, hang up or change settings
+there. Moving over Leech, Shift, Ctrl, Alt and Alt+Tab still pass, so the controller can
+switch away. Input for a program running as administrator is noted too: Windows drops it
+when Leech is not elevated (UIPI). Each kind tells the controller at most every 30 s.
+
 **Controlling.** When the other side finishes the setup, their screen fills Leech's window,
 which goes fullscreen, the way a watched screen share does (0.1.22 opened a separate black
 window). Nothing is over it but a small label at the top right ("Full control · Name's PC"),
 which the key chosen with right click on the button hides, and, for the first seconds, how
 to get out. The picture keeps the other screen's shape: a smaller monitor here sees it scaled
 down, the encoder's black bars never show, and the pointer maps exactly onto the other
-screen. Escape is a pause for yourself only: Leech comes back, nothing is sent, and the
-other side is not paused. Their screen stays first on the call stage ("Name's PC"); a
-double-click on it, or Take control in the right-click menu, returns to control.
-Shift+Escape sends Escape. The Windows key stops control. While a game there hides its
+screen. A tap on Escape goes to the other PC like any key; holding it for a second is a
+pause for yourself only: Leech comes back, the held keys there are let go, and the other
+side is not paused (with the keyboard not allowed, a tap is enough). Their screen stays
+first on the call stage ("Name's PC"); a double-click on it, or Take control in the
+right-click menu, returns to control. Before 0.1.25 a tap left and only Shift+Escape went
+through. The Windows key stops control. While a game there hides its
 pointer, raw motion drives it and this pointer is confined and hidden (after a quarter
 second, so typing does not flicker it).
 
@@ -665,7 +681,9 @@ Leech does not use.
   between 1 Mbps and the share cap, from 8 Mbps.
 - **Audio:** the PC's sound as 20 ms Opus frames, only while allowed; the controller plays it
   on the default output with a 60 ms prefill and drops above 200 ms.
-- **Input:** batched per frame, each datagram sent twice and repeating the previous batch;
+- **Input:** batched per frame and sent in the same frame (before 0.1.25 it waited for the
+  next one), one move per batch at the pointer's latest position before any press; each
+  datagram sent twice and repeating the previous batch;
   the controlled PC applies batches once, in order, through `SendInput` (scan codes, so games
   see keys; absolute moves over the virtual desktop that reach every edge pixel; relative
   moves while its pointer is hidden). Every 100 ms the controller sends what it holds, so a
@@ -679,6 +697,13 @@ against the owner's router only), adding the firewall rule through the UAC promp
 under real loss.
 Windows only for being controlled; injection cannot reach elevated windows, the UAC prompt
 or the lock screen unless Leech itself is elevated.
+
+**Latency (0.1.25).** Windows Graphics Capture only delivers a picture when the screen
+changes. The capture used to drop a picture that came sooner than the frame interval after
+the last one, and the encoder dropped one it got early, so the last change before the screen
+went still (a window let go, a menu opening) could stay unseen until something else moved.
+Now an early picture is kept and sent when its frame time comes; only the newest one waits.
+The duplication fallback still drops early pictures.
 
 ## Screen sharing
 

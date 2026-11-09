@@ -8026,6 +8026,7 @@ impl eframe::App for Desktop {
 		}
 		// Outside the signed-in branch so leaving an account still restores the window mode.
 		self.messaging.sync_remote_fullscreen(&ctx);
+		self.remote.flush_input(&mut self.messaging);
 		let video = self.messaging.video().take_fullscreen_request();
 		let voice = self.messaging.take_voice_fullscreen_request();
 		for fullscreen in [video, voice].into_iter().flatten() {

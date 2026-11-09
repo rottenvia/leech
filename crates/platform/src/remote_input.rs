@@ -55,6 +55,31 @@ pub struct ScreenRect {
 
 /// Bounds the held set against a misbehaving peer; no keyboard holds this many keys.
 const MAX_HELD_KEYS: usize = 64;
+const ALT: u16 = 0x38;
+const TAB: u16 = 0x0F;
+/// Left and right Shift, then Ctrl and Alt (either side).
+const MODIFIERS: [u16; 4] = [0x2A, 0x36, 0x1D, ALT];
+
+/// Where a press would land.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Target {
+	Open,
+	/// One of this program's own windows: Leech never takes the controller's presses, so the
+	/// controller cannot leave the call, end control or change what it may do.
+	Own,
+	/// A program running with more rights than this one (as administrator): Windows drops
+	/// the input. It is still sent, in case Windows lets it through.
+	Elevated,
+}
+
+/// Presses that did not reach their window since the last [`Injector::take_refused`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Refused {
+	/// Clicks and keys meant for Leech itself, which ignores them.
+	pub own: bool,
+	/// Input for a program running as administrator, which Windows blocks.
+	pub elevated: bool,
+}
 
 /// One injected event. A batch goes out as a single SendInput call.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -89,6 +114,9 @@ trait Output {
 	fn send(&mut self, events: &[Out]);
 	/// The host's cursor is hidden or captured, so moves go out relative.
 	fn captured(&self) -> bool;
+	/// Where a press goes: the window in front for keys (`None`), or the one under the
+	/// pointer, at the pixel this injector last moved it to when it knows it.
+	fn target(&mut self, pointer: Option<Option<(i32, i32)>>) -> Target;
 }
 
 struct System;
@@ -102,12 +130,19 @@ impl Output for System {
 	fn captured(&self) -> bool {
 		cursor_hidden()
 	}
+	fn target(&mut self, pointer: Option<Option<(i32, i32)>>) -> Target {
+		target(pointer)
+	}
 }
 
 pub struct Injector {
 	screen: ScreenRect,
 	keys: Vec<(u16, bool)>,
 	buttons: Vec<MouseButton>,
+	refused: Refused,
+	/// The pixel of the last absolute move; Windows may not have moved the cursor there yet
+	/// when the press right after it is checked.
+	at: Option<(i32, i32)>,
 }
 
 impl Injector {
@@ -116,7 +151,38 @@ impl Injector {
 			screen,
 			keys: Vec::new(),
 			buttons: Vec::new(),
+			refused: Refused::default(),
+			at: None,
 		}
+	}
+
+	/// What was refused since the last call.
+	pub fn take_refused(&mut self) -> Refused {
+		std::mem::take(&mut self.refused)
+	}
+
+	/// Whether a new press may go to its window; notes the ones that do not get there.
+	fn admits(&mut self, out: &mut impl Output, pointer: bool) -> bool {
+		match out.target(pointer.then_some(self.at)) {
+			Target::Open => true,
+			Target::Own => {
+				self.refused.own = true;
+				false
+			}
+			Target::Elevated => {
+				self.refused.elevated = true;
+				true
+			}
+		}
+	}
+
+	/// Whether a new key press may go to the window in front. Shift, Ctrl and Alt do nothing
+	/// alone and Alt+Tab goes to Windows, so they pass even into Leech: the controller can
+	/// still switch away from it.
+	fn admits_key(&mut self, out: &mut impl Output, scan: u16) -> bool {
+		MODIFIERS.contains(&scan)
+			|| (scan == TAB && self.keys.iter().any(|&(held, _)| held == ALT))
+			|| self.admits(out, false)
 	}
 
 	/// Applies one input when allowed; tracks what is held.
@@ -147,16 +213,22 @@ impl Injector {
 					if dx == 0 && dy == 0 {
 						return;
 					}
+					self.at = None;
 					Out::Relative { dx, dy }
 				} else {
-					Out::Absolute {
-						x: pixel(x, self.screen.x, self.screen.width),
-						y: pixel(y, self.screen.y, self.screen.height),
-					}
+					let at = (
+						pixel(x, self.screen.x, self.screen.width),
+						pixel(y, self.screen.y, self.screen.height),
+					);
+					self.at = Some(at);
+					Out::Absolute { x: at.0, y: at.1 }
 				};
 				out.send(&[event]);
 			}
 			Input::Wheel { dx, dy } if mouse => {
+				if !self.admits(out, true) {
+					return;
+				}
 				let mut events = Vec::with_capacity(2);
 				if dy != 0 {
 					events.push(Out::Wheel {
@@ -176,7 +248,7 @@ impl Injector {
 			Input::Button { button, down } => {
 				let held = self.buttons.contains(&button);
 				if down {
-					if !mouse || held {
+					if !mouse || held || !self.admits(out, true) {
 						return;
 					}
 					self.buttons.push(button);
@@ -196,7 +268,10 @@ impl Injector {
 				let held = self.keys.contains(&key);
 				if down {
 					// A down for a held key is auto-repeat and passes through.
-					if !keyboard || scan == 0 || (!held && self.keys.len() >= MAX_HELD_KEYS) {
+					if !keyboard
+						|| scan == 0 || (!held
+						&& (self.keys.len() >= MAX_HELD_KEYS || !self.admits_key(out, scan)))
+					{
 						return;
 					}
 					if !held {
@@ -267,6 +342,7 @@ impl Injector {
 				if scan != 0
 					&& self.keys.len() < MAX_HELD_KEYS
 					&& !self.keys.contains(&(scan, extended))
+					&& self.admits_key(out, scan)
 				{
 					self.keys.push((scan, extended));
 					events.push(Out::Key {
@@ -279,7 +355,7 @@ impl Injector {
 		}
 		if mouse {
 			for &button in buttons {
-				if !self.buttons.contains(&button) {
+				if !self.buttons.contains(&button) && self.admits(out, true) {
 					self.buttons.push(button);
 					events.push(Out::Button { button, down: true });
 				}
@@ -317,12 +393,20 @@ fn normalize(pixel: i32, origin: i32, size: i32) -> i32 {
 #[cfg(target_os = "windows")]
 pub use windows_input::cursor_hidden;
 #[cfg(target_os = "windows")]
-use windows_input::send;
+use windows_input::{send, target};
 
 #[cfg(target_os = "windows")]
 mod windows_input {
-	use super::{MouseButton, Out, normalize};
-	use windows::Win32::Foundation::RECT;
+	use super::{MouseButton, Out, Target, normalize};
+	use windows::Win32::Foundation::{CloseHandle, HANDLE, POINT, RECT};
+	use windows::Win32::Security::{
+		GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TOKEN_MANDATORY_LABEL,
+		TOKEN_QUERY, TokenIntegrityLevel,
+	};
+	use windows::Win32::System::Threading::{
+		GetCurrentProcess, GetCurrentProcessId, OpenProcess, OpenProcessToken,
+		PROCESS_QUERY_LIMITED_INFORMATION,
+	};
 	use windows::Win32::UI::Input::KeyboardAndMouse::{
 		INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
 		KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE,
@@ -332,9 +416,10 @@ mod windows_input {
 		SendInput, VIRTUAL_KEY,
 	};
 	use windows::Win32::UI::WindowsAndMessaging::{
-		CURSOR_SHOWING, CURSOR_SUPPRESSED, CURSORINFO, GetClipCursor, GetCursorInfo,
-		GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_SWAPBUTTON, SM_XVIRTUALSCREEN,
-		SM_YVIRTUALSCREEN, XBUTTON1, XBUTTON2,
+		CURSOR_SHOWING, CURSOR_SUPPRESSED, CURSORINFO, GetClipCursor, GetCursorInfo, GetCursorPos,
+		GetForegroundWindow, GetSystemMetrics, GetWindowThreadProcessId, SM_CXVIRTUALSCREEN,
+		SM_CYVIRTUALSCREEN, SM_SWAPBUTTON, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WindowFromPoint,
+		XBUTTON1, XBUTTON2,
 	};
 
 	/// A cursor clipped into a square this small (px) is captured by a game.
@@ -450,6 +535,96 @@ mod windows_input {
 		}
 	}
 
+	/// The window a press reaches: the one in front for keys, or the one under the pointer.
+	pub(super) fn target(pointer: Option<Option<(i32, i32)>>) -> Target {
+		// SAFETY: plain window queries; a window that is gone gives a null handle or pid 0.
+		let window = unsafe {
+			match pointer {
+				None => GetForegroundWindow(),
+				Some(Some((x, y))) => WindowFromPoint(POINT { x, y }),
+				Some(None) => {
+					let mut at = POINT::default();
+					if GetCursorPos(&mut at).is_err() {
+						return Target::Open;
+					}
+					WindowFromPoint(at)
+				}
+			}
+		};
+		if window.is_invalid() {
+			return Target::Open;
+		}
+		let mut process = 0;
+		// SAFETY: as above.
+		unsafe { GetWindowThreadProcessId(window, Some(&mut process)) };
+		if process == 0 {
+			return Target::Open;
+		}
+		// SAFETY: reads this process's id.
+		if process == unsafe { GetCurrentProcessId() } {
+			return Target::Own;
+		}
+		thread_local! {
+			/// The last process asked about and whether it outranks this one.
+			static LAST: std::cell::Cell<(u32, bool)> = const { std::cell::Cell::new((0, false)) };
+		}
+		let (known, elevated) = LAST.get();
+		let elevated = if known == process {
+			elevated
+		} else {
+			// A process whose rights cannot even be read runs above this one.
+			let elevated = integrity(Some(process))
+				.is_none_or(|theirs| integrity(None).is_some_and(|ours| theirs > ours));
+			LAST.set((process, elevated));
+			elevated
+		};
+		if elevated {
+			Target::Elevated
+		} else {
+			Target::Open
+		}
+	}
+
+	#[cfg(test)]
+	pub(super) fn integrity_of_self() -> Option<u32> {
+		integrity(None)
+	}
+
+	/// The mandatory integrity level (UIPI's rank) of a process, or of this one.
+	fn integrity(process: Option<u32>) -> Option<u32> {
+		// SAFETY: every handle opened here is closed here; the label is read from a buffer
+		// aligned for it that GetTokenInformation filled, and its SID points inside it.
+		unsafe {
+			let handle = match process {
+				Some(id) => OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, id).ok()?,
+				None => GetCurrentProcess(),
+			};
+			let mut token = HANDLE::default();
+			let opened = OpenProcessToken(handle, TOKEN_QUERY, &mut token);
+			if process.is_some() {
+				let _ = CloseHandle(handle);
+			}
+			opened.ok()?;
+			let mut buffer = [0_u64; 16];
+			let mut length = 0;
+			let read = GetTokenInformation(
+				token,
+				TokenIntegrityLevel,
+				Some(buffer.as_mut_ptr().cast()),
+				size_of_val(&buffer) as u32,
+				&mut length,
+			);
+			let _ = CloseHandle(token);
+			read.ok()?;
+			let label = &*buffer.as_ptr().cast::<TOKEN_MANDATORY_LABEL>();
+			let count = *GetSidSubAuthorityCount(label.Label.Sid);
+			Some(*GetSidSubAuthority(
+				label.Label.Sid,
+				u32::from(count).checked_sub(1)?,
+			))
+		}
+	}
+
 	/// True while the host's cursor is hidden (a game captured the mouse): the viewer then
 	/// sends relative motion and locks its own pointer.
 	pub fn cursor_hidden() -> bool {
@@ -477,6 +652,11 @@ mod windows_input {
 #[cfg(not(target_os = "windows"))]
 fn send(_events: &[Out]) {}
 
+#[cfg(not(target_os = "windows"))]
+fn target(_pointer: Option<Option<(i32, i32)>>) -> Target {
+	Target::Open
+}
+
 /// True while the host's cursor is hidden (a game captured the mouse): the viewer then sends
 /// relative motion and locks its own pointer.
 #[cfg(not(target_os = "windows"))]
@@ -488,10 +668,19 @@ pub fn cursor_hidden() -> bool {
 mod tests {
 	use super::*;
 
-	#[derive(Default)]
 	struct Recorder {
 		sent: Vec<Out>,
 		captured: bool,
+		target: Target,
+	}
+	impl Default for Recorder {
+		fn default() -> Self {
+			Self {
+				sent: Vec::new(),
+				captured: false,
+				target: Target::Open,
+			}
+		}
 	}
 	impl Output for Recorder {
 		fn send(&mut self, events: &[Out]) {
@@ -499,6 +688,9 @@ mod tests {
 		}
 		fn captured(&self) -> bool {
 			self.captured
+		}
+		fn target(&mut self, _pointer: Option<Option<(i32, i32)>>) -> Target {
+			self.target
 		}
 	}
 	impl Recorder {
@@ -745,6 +937,84 @@ mod tests {
 		assert_eq!(out.take(), [out_key(0x1E, false)]);
 		injector.release_all_to(&mut out);
 		assert_eq!(out.take().len(), 2);
+	}
+
+	#[test]
+	fn leech_itself_takes_no_presses_and_admin_apps_are_noted() {
+		let mut out = Recorder {
+			target: Target::Own,
+			..Recorder::default()
+		};
+		let mut injector = Injector::new(SCREEN);
+		let left = |down| Input::Button {
+			button: MouseButton::Left,
+			down,
+		};
+		injector.apply_to(&mut out, left(true), true, true);
+		injector.apply_to(&mut out, key(0x1E, true), true, true);
+		injector.apply_to(&mut out, Input::Wheel { dx: 0, dy: 120 }, true, true);
+		injector.sync_held_to(&mut out, &[(0x1E, false)], &[MouseButton::Left], true, true);
+		// Their ups have nothing to lift; moving over Leech is fine.
+		injector.apply_to(&mut out, left(false), true, true);
+		injector.apply_to(&mut out, key(0x1E, false), true, true);
+		let moved = Input::Move {
+			x: 0.0,
+			y: 0.0,
+			dx: 0,
+			dy: 0,
+		};
+		injector.apply_to(&mut out, moved, true, true);
+		assert_eq!(out.take(), [Out::Absolute { x: -1920, y: 0 }]);
+		assert_eq!(
+			injector.take_refused(),
+			Refused {
+				own: true,
+				elevated: false
+			}
+		);
+		assert_eq!(injector.take_refused(), Refused::default());
+		// A key held before Leech came to the front still repeats and lifts.
+		out.target = Target::Open;
+		injector.apply_to(&mut out, key(0x1E, true), true, true);
+		out.target = Target::Own;
+		injector.apply_to(&mut out, key(0x1E, true), true, true);
+		injector.apply_to(&mut out, key(0x1E, false), true, true);
+		assert_eq!(
+			out.take(),
+			[
+				out_key(0x1E, true),
+				out_key(0x1E, true),
+				out_key(0x1E, false)
+			]
+		);
+		// Alt+Tab still switches away from Leech; Alt+F4 does not close it.
+		for (scan, down) in [(0x38, true), (0x0F, true), (0x0F, false), (0x3E, true)] {
+			injector.apply_to(&mut out, key(scan, down), true, true);
+		}
+		assert_eq!(
+			out.take(),
+			[
+				out_key(0x38, true),
+				out_key(0x0F, true),
+				out_key(0x0F, false)
+			]
+		);
+		assert!(injector.take_refused().own);
+		injector.apply_to(&mut out, key(0x38, false), true, true);
+		assert_eq!(out.take(), [out_key(0x38, false)]);
+		// Admin apps get the input anyway, and it is noted.
+		out.target = Target::Elevated;
+		injector.apply_to(&mut out, left(true), true, true);
+		assert_eq!(out.take().len(), 1);
+		assert!(injector.take_refused().elevated);
+		injector.release_all_to(&mut out);
+	}
+
+	/// This test binary runs at the same level as itself.
+	#[cfg(target_os = "windows")]
+	#[test]
+	fn this_process_reads_its_own_integrity() {
+		assert!(windows_input::integrity_of_self().is_some());
 	}
 
 	#[cfg(target_os = "windows")]

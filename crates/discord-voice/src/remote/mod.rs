@@ -14,7 +14,7 @@ mod upnp;
 mod viewer;
 mod wire;
 
-pub use host::{Host, HostConfig, HostStatus};
+pub use host::{Hand, Host, HostConfig, HostStatus};
 pub use platform::remote_input::{Input, MouseButton};
 pub use viewer::{Viewer, ViewerStatus};
 

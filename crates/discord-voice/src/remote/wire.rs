@@ -211,6 +211,12 @@ impl<'a> Reader<'a> {
 pub(super) struct State {
 	pub(super) permission: Option<Permission>,
 	pub(super) paused: bool,
+	/// The host holds its take-over key (`paused` is set too, for older viewers).
+	pub(super) taken: bool,
+	/// Since the last state, a click or key went to Leech itself, which ignored it.
+	pub(super) refused_own: bool,
+	/// Since the last state, input went to a program running as administrator.
+	pub(super) refused_elevated: bool,
 	pub(super) audio: bool,
 	pub(super) relative_mouse: bool,
 	/// Host display in pixels.
@@ -229,8 +235,12 @@ impl State {
 			Some(Permission::Mouse) => 2,
 			Some(Permission::Full) => 3,
 		};
-		out[1] =
-			u8::from(self.paused) | u8::from(self.audio) << 1 | u8::from(self.relative_mouse) << 2;
+		out[1] = u8::from(self.paused)
+			| u8::from(self.audio) << 1
+			| u8::from(self.relative_mouse) << 2
+			| u8::from(self.taken) << 3
+			| u8::from(self.refused_own) << 4
+			| u8::from(self.refused_elevated) << 5;
 		let values = [
 			self.screen.0,
 			self.screen.1,
@@ -263,6 +273,9 @@ impl State {
 			paused: flags & 1 != 0,
 			audio: flags & 2 != 0,
 			relative_mouse: flags & 4 != 0,
+			taken: flags & 8 != 0,
+			refused_own: flags & 16 != 0,
+			refused_elevated: flags & 32 != 0,
 			screen: (value()?, value()?),
 			stream: (value()?, value()?),
 			content: [value()?, value()?, value()?, value()?],
@@ -753,6 +766,9 @@ mod tests {
 		let state = State {
 			permission: Some(Permission::Mouse),
 			paused: true,
+			taken: true,
+			refused_own: false,
+			refused_elevated: true,
 			audio: false,
 			relative_mouse: true,
 			screen: (2560, 1080),

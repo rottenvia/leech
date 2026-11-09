@@ -107,6 +107,8 @@ pub struct AppPreferences {
 pub struct RemoteKeys {
 	/// Pauses the controller while this PC is controlled.
 	pub pause: Option<(u16, bool)>,
+	/// Held to use this PC's own mouse and keyboard while it is controlled.
+	pub take_over: Option<(u16, bool)>,
 	/// Hides the label over a controlled screen.
 	pub overlay: Option<(u16, bool)>,
 	/// The pause key warning was dismissed for good.
@@ -183,10 +185,14 @@ impl AppPreferences {
 			&& self
 				.splash_colors
 				.is_none_or(|colors| colors.canvas[3] == u8::MAX)
-			&& [self.remote_keys.pause, self.remote_keys.overlay]
-				.into_iter()
-				.flatten()
-				.all(|(scan, _)| scan != 0 && scan < 0x200)
+			&& [
+				self.remote_keys.pause,
+				self.remote_keys.take_over,
+				self.remote_keys.overlay,
+			]
+			.into_iter()
+			.flatten()
+			.all(|(scan, _)| scan != 0 && scan < 0x200)
 			&& [&self.voice_input, &self.voice_output]
 				.into_iter()
 				.all(|value| value.as_ref().is_none_or(|value| value.len() <= 1024))

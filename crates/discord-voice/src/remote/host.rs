@@ -6,7 +6,7 @@ use opus2::{Application, Bitrate, Channels, Encoder};
 use platform::remote_input::{Injector, ScreenRect, cursor_hidden};
 use std::sync::{
 	Arc,
-	atomic::{AtomicBool, AtomicU32, Ordering},
+	atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering},
 };
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
@@ -57,7 +57,24 @@ pub struct Host {
 	link: Link,
 	config: watch::Sender<HostConfig>,
 	kbps: Arc<AtomicU32>,
+	hand: Hand,
 }
+
+/// The host taking its PC back while a key is held: the controller's input is ignored and
+/// everything it held is let go, until the key is released. The keyboard hook holds a clone.
+#[derive(Clone)]
+pub struct Hand(Arc<watch::Sender<bool>>);
+
+impl Hand {
+	pub fn hold(&self, held: bool) {
+		self.0
+			.send_if_modified(|now| std::mem::replace(now, held) != held);
+	}
+}
+
+/// Refusals the injector noted, reported in the next state.
+const REFUSED_OWN: u8 = 1;
+const REFUSED_ELEVATED: u8 = 2;
 
 impl Host {
 	/// Starts capture and the session on `link`. `wake` runs when the session ends. Tasks run
@@ -78,8 +95,14 @@ impl Host {
 			return Err("Remote control is turned off");
 		}
 		let kbps = Arc::new(AtomicU32::new(0));
-		match launch(&mut link, config, kbps.clone()) {
-			Ok(config) => Ok(Self { link, config, kbps }),
+		let hand = Hand(Arc::new(watch::channel(false).0));
+		match launch(&mut link, config, kbps.clone(), &hand) {
+			Ok(config) => Ok(Self {
+				link,
+				config,
+				kbps,
+				hand,
+			}),
 			Err(error) => {
 				shared.finish(End::Failed(error), Some(wire::BYE_FAILED));
 				Err(error)
@@ -108,12 +131,17 @@ impl Host {
 	pub fn end(&self) {
 		self.link.shared.finish(End::ByHost, Some(wire::BYE_ENDED));
 	}
+
+	pub fn hand(&self) -> Hand {
+		self.hand.clone()
+	}
 }
 
 fn launch(
 	link: &mut Link,
 	config: HostConfig,
 	kbps: Arc<AtomicU32>,
+	hand: &Hand,
 ) -> Result<watch::Sender<HostConfig>, &'static str> {
 	let shared = link.shared.clone();
 	let mut inbox = link
@@ -149,9 +177,11 @@ fn launch(
 
 	let (inject, commands) = mpsc::channel(COMMANDS);
 	let rect = rect(screen);
+	let refused = Arc::new(AtomicU8::new(0));
+	let (taken, noted) = (hand.0.subscribe(), refused.clone());
 	std::thread::Builder::new()
 		.name("remote-input".into())
-		.spawn(move || inject_loop(rect, commands))
+		.spawn(move || inject_loop(rect, commands, &taken, &noted))
 		.map_err(|_| "Remote control input could not start")?;
 
 	let audio = Arc::new(AtomicBool::new(config.audio));
@@ -177,6 +207,9 @@ fn launch(
 		keyframe_at: Instant::now(),
 		kbps,
 		measured: (Instant::now(), 0),
+		taken: hand.0.subscribe(),
+		refused,
+		report: 0,
 	};
 	runtime.spawn(control.run(inbox, configs, worker));
 	Ok(config_send)
@@ -193,12 +226,19 @@ fn rect(screen: (u32, u32)) -> ScreenRect {
 }
 
 /// Owns the injector on its own MMCSS thread, so a game's load cannot delay input; dropping
-/// it at the end releases everything still held.
-fn inject_loop(rect: ScreenRect, mut commands: mpsc::Receiver<Command>) {
+/// it at the end releases everything still held. Input still queued when the host takes its
+/// PC back is dropped.
+fn inject_loop(
+	rect: ScreenRect,
+	mut commands: mpsc::Receiver<Command>,
+	taken: &watch::Receiver<bool>,
+	refused: &AtomicU8,
+) {
 	let _resolution = crate::timer::Resolution::acquire();
 	let mut injector = Injector::new(rect);
 	while let Some(command) = commands.blocking_recv() {
 		match command {
+			Command::Apply(..) | Command::Sync(..) if *taken.borrow() => {}
 			Command::Apply(inputs, keyboard, mouse) => {
 				for input in inputs {
 					injector.apply(input, keyboard, mouse);
@@ -212,6 +252,12 @@ fn inject_loop(rect: ScreenRect, mut commands: mpsc::Receiver<Command>) {
 				injector.release_all();
 				injector = Injector::new(rect);
 			}
+		}
+		let noted = injector.take_refused();
+		let bits =
+			(u8::from(noted.own) * REFUSED_OWN) | (u8::from(noted.elevated) * REFUSED_ELEVATED);
+		if bits != 0 {
+			refused.fetch_or(bits, Ordering::Relaxed);
 		}
 	}
 }
@@ -232,6 +278,12 @@ struct Control {
 	keyframe_at: Instant,
 	kbps: Arc<AtomicU32>,
 	measured: (Instant, u64),
+	/// The host holds its take-over key.
+	taken: watch::Receiver<bool>,
+	/// Refusals noted by the injector since the last look.
+	refused: Arc<AtomicU8>,
+	/// Refusals going out with the next state.
+	report: u8,
 }
 
 impl Control {
@@ -261,10 +313,20 @@ impl Control {
 					self.configure(config);
 					self.send_state().await;
 				}
+				changed = self.taken.changed() => {
+					if changed.is_err() {
+						break;
+					}
+					if *self.taken.borrow_and_update() {
+						self.command(Command::ReleaseAll, true);
+					}
+					self.send_state().await;
+				}
 				_ = tick.tick() => {
 					ticks = ticks.wrapping_add(1);
 					let relative_mouse = cursor_hidden();
-					let mut changed = relative_mouse != self.relative_mouse;
+					self.report |= self.refused.swap(0, Ordering::Relaxed);
+					let mut changed = relative_mouse != self.relative_mouse || self.report != 0;
 					self.relative_mouse = relative_mouse;
 					if ticks.is_multiple_of(STATE_TICKS) {
 						if let Some(result) = worker.result() {
@@ -286,7 +348,10 @@ impl Control {
 	}
 
 	fn allowed(&self) -> (bool, bool) {
-		match (self.config.paused, self.config.permission) {
+		match (
+			self.config.paused || *self.taken.borrow(),
+			self.config.permission,
+		) {
 			(false, Some(permission)) => (permission.keyboard(), permission.mouse()),
 			_ => (false, false),
 		}
@@ -373,17 +438,23 @@ impl Control {
 		self.measured = (Instant::now(), sent);
 	}
 
-	async fn send_state(&self) {
+	async fn send_state(&mut self) {
 		let narrow = |value: u32| value.min(u32::from(u16::MAX)) as u16;
+		let taken = *self.taken.borrow();
 		let state = wire::State {
 			permission: self.config.permission,
-			paused: self.config.paused,
+			// Viewers from before the take-over key show it as a pause.
+			paused: self.config.paused || taken,
+			taken,
+			refused_own: self.report & REFUSED_OWN != 0,
+			refused_elevated: self.report & REFUSED_ELEVATED != 0,
 			audio: self.config.audio,
 			relative_mouse: self.relative_mouse,
 			screen: (narrow(self.screen.0), narrow(self.screen.1)),
 			stream: (narrow(self.stream.0), narrow(self.stream.1)),
 			content: content(self.screen, self.stream).map(narrow),
 		};
+		self.report = 0;
 		self.shared.send(wire::STATE, &state.encode()).await;
 	}
 }
