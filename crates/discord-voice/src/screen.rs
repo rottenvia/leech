@@ -60,6 +60,88 @@ pub const MAX_ENCODED_BYTES: usize = 2 * 1024 * 1024;
 #[cfg(not(target_os = "linux"))]
 pub(crate) const PREVIEW_INTERVAL: Duration = Duration::from_millis(66);
 
+/// Windows capture hands the encoder only its newest picture: one not taken yet is replaced.
+/// Capture delivers pictures only when the screen changes, so a dropped picture could be the
+/// last change before the screen stays still, shown only when something else changed.
+#[cfg(target_os = "windows")]
+pub(crate) mod latest {
+	use super::RawFrame;
+	use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc::RecvTimeoutError};
+	use std::time::{Duration, Instant};
+
+	/// The waiting picture and how many senders are left.
+	struct Inner {
+		slot: Mutex<(Option<RawFrame>, usize)>,
+		ready: Condvar,
+	}
+
+	impl Inner {
+		fn lock(&self) -> MutexGuard<'_, (Option<RawFrame>, usize)> {
+			self.slot.lock().unwrap_or_else(PoisonError::into_inner)
+		}
+	}
+
+	pub(crate) struct Sender(Arc<Inner>);
+	pub(crate) struct Receiver(Arc<Inner>);
+
+	pub(crate) fn channel() -> (Sender, Receiver) {
+		let inner = Arc::new(Inner {
+			slot: Mutex::new((None, 1)),
+			ready: Condvar::new(),
+		});
+		(Sender(inner.clone()), Receiver(inner))
+	}
+
+	impl Sender {
+		/// Never fails: a picture the encoder has not taken yet is replaced.
+		pub(crate) fn try_send(&self, frame: RawFrame) -> Result<(), RawFrame> {
+			let older = self.0.lock().0.replace(frame);
+			self.0.ready.notify_one();
+			drop(older);
+			Ok(())
+		}
+	}
+
+	impl Clone for Sender {
+		fn clone(&self) -> Self {
+			self.0.lock().1 += 1;
+			Self(self.0.clone())
+		}
+	}
+
+	impl Drop for Sender {
+		fn drop(&mut self) {
+			self.0.lock().1 -= 1;
+			self.0.ready.notify_one();
+		}
+	}
+
+	impl Receiver {
+		pub(crate) fn recv_timeout(&self, timeout: Duration) -> Result<RawFrame, RecvTimeoutError> {
+			let deadline = Instant::now() + timeout;
+			let mut slot = self.0.lock();
+			loop {
+				if let Some(frame) = slot.0.take() {
+					return Ok(frame);
+				}
+				if slot.1 == 0 {
+					return Err(RecvTimeoutError::Disconnected);
+				}
+				let left = deadline.saturating_duration_since(Instant::now());
+				if left.is_zero() {
+					return Err(RecvTimeoutError::Timeout);
+				}
+				slot = self
+					.0
+					.ready
+					.wait_timeout(slot, left)
+					.unwrap_or_else(PoisonError::into_inner)
+					.0;
+			}
+		}
+	}
+}
+
 /// Frames between scheduled IDR pictures: libwebrtc's H.264 default. Viewers that lose a
 /// picture ask for one with PLI or FIR, and every DAVE transition (a viewer joining) already
 /// forces one, so frequent periodic IDRs only add a large burst and a blurry frame each time.
@@ -333,7 +415,7 @@ impl LocalCapture {
 				.name("local-capture".into())
 				.spawn(move || {
 					let pending = Arc::new(AtomicBool::new(false));
-					let (send, raw) = mpsc::sync_channel::<RawFrame>(1);
+					let (send, raw) = latest::channel();
 					// The stream size and the GPU path only concern the encoder; pictures in
 					// memory arrive at the source's own size.
 					let capture = capture::Capture::start(
@@ -502,6 +584,9 @@ fn encode_loop(
 		return Ok(());
 	}
 	let origin = Instant::now();
+	#[cfg(target_os = "windows")]
+	let (raw_send, raw) = latest::channel();
+	#[cfg(not(target_os = "windows"))]
 	let (raw_send, raw) = mpsc::sync_channel(1);
 	let capture_stop = Arc::new(AtomicBool::new(false));
 	#[cfg(target_os = "windows")]
@@ -540,6 +625,9 @@ fn encode_loop(
 	let mut next_frame = Instant::now();
 	let mut next_preview = Instant::now();
 	let mut latest_frame = None;
+	// A picture (or a keyframe request) waits for its turn: pacing delays it, never drops it.
+	let mut waiting = false;
+	let interval = Duration::from_secs_f64(1.0 / f64::from(settings.fps));
 
 	while !stop.load(Ordering::Acquire) && !send.is_closed() {
 		#[cfg(target_os = "windows")]
@@ -550,7 +638,14 @@ fn encode_loop(
 		if capture_stop.load(Ordering::Acquire) {
 			return Err("The selected screen or window stopped sharing");
 		}
-		let frame = match raw.recv_timeout(Duration::from_millis(100)) {
+		let wait = if waiting {
+			next_frame
+				.saturating_duration_since(Instant::now() + interval / 4)
+				.max(Duration::from_millis(1))
+		} else {
+			Duration::from_millis(100)
+		};
+		let frame = match raw.recv_timeout(wait) {
 			Ok(frame) => {
 				#[cfg(target_os = "windows")]
 				raw_pending.store(false, Ordering::Release);
@@ -587,7 +682,7 @@ fn encode_loop(
 				wake();
 			}
 		}
-		let encode = retain_screen_frame(
+		waiting |= retain_screen_frame(
 			&mut latest_frame,
 			frame,
 			ready.load(Ordering::Acquire),
@@ -596,26 +691,24 @@ fn encode_loop(
 		// Local capture remains available while alone; only secure media is encoded or queued.
 		if !ready.load(Ordering::Acquire) {
 			encoding = None;
+			waiting = false;
 			keyframe.store(true, Ordering::Release);
 			continue;
 		}
-		if !encode {
-			continue;
-		}
-		// Pace on an accumulating schedule with tolerance: capture already paces, and its
-		// delivery jitter must not drop frames here. A stalled encoder resumes from now
-		// instead of bursting.
-		let interval = Duration::from_secs_f64(1.0 / f64::from(settings.fps));
-		if now + interval / 4 < next_frame {
+		// Pace on an accumulating schedule with tolerance, so capture's delivery jitter never
+		// skips a picture. One that comes early waits (the loop wakes for it) and is replaced
+		// by any newer one meanwhile. A stalled encoder resumes from now instead of bursting.
+		if !waiting || now + interval / 4 < next_frame {
 			continue;
 		}
 		next_frame = (next_frame + interval).max(now + interval / 2);
-		// Drop before encoding while the transport is behind, so the encoder never references
-		// a picture the receiver did not get.
+		// Wait while the transport is behind, so the encoder never references a picture the
+		// receiver did not get; the newest picture goes once there is room.
 		if send.capacity() == 0 {
 			crate::stream_log::add(crate::stream_log::Count::Behind, 1);
 			continue;
 		}
+		waiting = false;
 		let target = bitrate
 			.load(Ordering::Acquire)
 			.clamp(250_000, settings.bit_rate());

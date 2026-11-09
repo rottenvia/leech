@@ -90,6 +90,12 @@ impl Settings {
 					.pause
 					.as_ref()
 					.map(|key| (key.scan, key.extended)),
+				take_over: ui
+					.remote
+					.keys
+					.take_over
+					.as_ref()
+					.map(|key| (key.scan, key.extended)),
 				overlay: ui
 					.remote
 					.keys
@@ -158,6 +164,7 @@ impl Settings {
 		};
 		ui.remote.keys = ui::remote::Keys {
 			pause: value.remote_keys.pause.map(key),
+			take_over: value.remote_keys.take_over.map(key),
 			overlay: value.remote_keys.overlay.map(key),
 			skip_warning: value.remote_keys.skip_warning,
 		};

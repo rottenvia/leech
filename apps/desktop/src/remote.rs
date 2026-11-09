@@ -19,12 +19,14 @@ use ui::remote::{Grant, MouseButton, MouseInput, Permission, Phase, Request, Vie
 const CONNECT: Duration = Duration::from_secs(10);
 /// How often the controller tells the other PC what it holds.
 const HELD_EVERY: Duration = Duration::from_millis(100);
+/// The controller hears again that a click went nowhere after this long.
+const NOTICE_EVERY: Duration = Duration::from_secs(30);
+/// Escape held this long gives Leech back; a shorter press goes to the other PC.
+const LEAVE_AFTER: Duration = Duration::from_secs(1);
 
 const VK_ESCAPE: u16 = 0x1B;
 const VK_LWIN: u16 = 0x5B;
 const VK_RWIN: u16 = 0x5C;
-/// Left and right Shift scan codes.
-const SHIFTS: [(u16, bool); 2] = [(0x2A, false), (0x36, false)];
 
 type Gathered = mpsc::Receiver<Result<Endpoint, &'static str>>;
 type Connected = mpsc::Receiver<Result<Link, &'static str>>;
@@ -58,6 +60,8 @@ struct Session {
 	grant: Option<Grant>,
 	texture: VideoTexture,
 	held_at: Instant,
+	/// Refusal counts already shown (Leech itself, administrator apps) and when.
+	refusals: [(u32, Option<Instant>); 2],
 }
 
 #[derive(Default)]
@@ -66,8 +70,13 @@ enum Mode {
 	Pass,
 	/// The next key binds.
 	Bind,
-	/// This PC is controlled: the pause key pauses.
-	Host { pause: Option<(u16, bool)> },
+	/// This PC is controlled: the pause key pauses, and holding the take-over key gives this
+	/// PC's own mouse and keyboard back.
+	Host {
+		pause: Option<(u16, bool)>,
+		take_over: Option<(u16, bool)>,
+		hand: Option<net::Hand>,
+	},
 	/// This PC controls: keys go to the other one.
 	View {
 		viewer: Arc<Mutex<Viewer>>,
@@ -94,6 +103,10 @@ struct Shared {
 	/// Keys pressed on the other PC.
 	forwarded: Vec<(u16, bool)>,
 	caught: Vec<Caught>,
+	/// The take-over key is down: its release hands control back.
+	taking: Option<((u16, bool), net::Hand)>,
+	/// When Escape went down on the other PC; held long enough, it leaves control.
+	escape_at: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -144,6 +157,7 @@ impl Remote {
 				format!("Remote control ended: {name} is no longer in the call"),
 			);
 		}
+		self.notify_refusals(ui);
 		self.sync_hook(ui, ctx, state.demo);
 		#[cfg(feature = "demo")]
 		self.demo(ui, state, ctx);
@@ -187,6 +201,7 @@ impl Remote {
 					grant: None,
 					texture: VideoTexture::default(),
 					held_at: Instant::now(),
+					refusals: [(0, None); 2],
 				});
 				ui.remote.phase = Phase::Incoming {
 					peer: from,
@@ -260,6 +275,7 @@ impl Remote {
 					grant: None,
 					texture: VideoTexture::default(),
 					held_at: Instant::now(),
+					refusals: [(0, None); 2],
 				});
 			}
 			Request::Answer(true) => {
@@ -442,6 +458,7 @@ impl Remote {
 						net::Permission::Full => Permission::Full,
 					});
 					viewing.paused = status.paused;
+					viewing.taken = status.taken;
 					viewing.audio = status.audio;
 					viewing.screen = [status.screen.0, status.screen.1];
 					viewing.relative = status.relative_mouse;
@@ -503,7 +520,64 @@ impl Remote {
 		ui.remote.menu = ui::remote::Menu::None;
 		let mut shared = lock(&self.shared);
 		shared.forwarded.clear();
+		shared.taking = None;
 		shared.mode = Mode::Pass;
+	}
+
+	/// Tells the controller, now and then, that a click or key did not get through.
+	fn notify_refusals(&mut self, ui: &mut ui::MessagingUi) {
+		let Some(Session {
+			stage: Stage::Viewing(viewer),
+			name,
+			refusals,
+			..
+		}) = &mut self.session
+		else {
+			return;
+		};
+		let status = lock(viewer).status();
+		for ((seen, shown), (count, text)) in refusals.iter_mut().zip([
+			(
+				status.refused_own,
+				"Leech on {name}'s PC ignores your clicks and keys, so their call stays theirs. Click another window there to type",
+			),
+			(
+				status.refused_elevated,
+				"That app runs as administrator on {name}'s PC, so Windows blocks your mouse and keyboard there",
+			),
+		]) {
+			if count == *seen {
+				continue;
+			}
+			*seen = count;
+			if shown.is_none_or(|at| at.elapsed() >= NOTICE_EVERY) {
+				*shown = Some(Instant::now());
+				ui.toasts
+					.push(ui::design::Level::Info, text.replace("{name}", name));
+			}
+		}
+	}
+
+	/// Sends the pointer input this frame collected at once, rather than with the next frame.
+	pub fn flush_input(&mut self, ui: &mut ui::MessagingUi) {
+		let (
+			Some(Session {
+				stage: Stage::Viewing(viewer),
+				..
+			}),
+			Phase::Viewing(viewing),
+		) = (&self.session, &mut ui.remote.phase)
+		else {
+			return;
+		};
+		if viewing.inputs.is_empty() {
+			return;
+		}
+		let inputs = std::mem::take(&mut viewing.inputs)
+			.into_iter()
+			.map(input)
+			.collect::<Vec<_>>();
+		lock(viewer).send(&inputs);
 	}
 
 	/// Keeps one keyboard hook while anything needs it, in the mode the phase calls for, and
@@ -513,8 +587,16 @@ impl Remote {
 		let key = |key: &Option<ui::remote::Key>| key.as_ref().map(|key| (key.scan, key.extended));
 		let mode = match (&remote.phase, &self.session) {
 			_ if remote.binding.is_some() => Mode::Bind,
-			(Phase::Hosting { .. }, _) => Mode::Host {
+			(Phase::Hosting { .. }, session) => Mode::Host {
 				pause: key(&remote.keys.pause),
+				take_over: key(&remote.keys.take_over),
+				hand: match session {
+					Some(Session {
+						stage: Stage::Hosting(host),
+						..
+					}) => Some(host.hand()),
+					_ => None,
+				},
 			},
 			(
 				Phase::Viewing(viewing),
@@ -629,7 +711,7 @@ impl Remote {
 	/// `--demo --demo-call --demo-remote=<phase>`: one phase with the call's peer, for
 	/// screenshots, without any signal, connection or hook. Phases: menu, who, keys, waiting,
 	/// setting-up, incoming, answer, setup, key, warning, hosting, access, access-paused,
-	/// viewing, paused, stage, viewer-menu.
+	/// viewing, paused, taken, stage, viewer-menu.
 	fn demo(&mut self, ui: &mut ui::MessagingUi, state: &State, ctx: &egui::Context) {
 		use ui::remote::{Menu, Step};
 		if !state.demo || self.demo.is_some() {
@@ -726,6 +808,13 @@ impl Remote {
 			"access-paused" => (hosting(true), false, Menu::Manage),
 			"viewing" => (viewing(false, true, true, true), false, Menu::None),
 			"paused" => (viewing(true, true, true, true), false, Menu::None),
+			"taken" => {
+				let mut phase = viewing(true, true, true, true);
+				if let Phase::Viewing(viewing) = &mut phase {
+					viewing.taken = true;
+				}
+				(phase, false, Menu::None)
+			}
 			"stage" => (viewing(false, true, true, false), false, Menu::None),
 			"viewer-menu" => (viewing(false, true, true, false), false, Menu::Manage),
 			_ => return,
@@ -738,6 +827,13 @@ impl Remote {
 				scan: 0x42,
 				extended: false,
 				name: "F8".into(),
+			});
+		}
+		if matches!(which.as_str(), "access" | "access-paused" | "keys") {
+			ui.remote.keys.take_over = Some(ui::remote::Key {
+				scan: 0x43,
+				extended: false,
+				name: "F9".into(),
 			});
 		}
 		ui.remote.phase = phase;
@@ -753,6 +849,14 @@ fn filter(shared: &Mutex<Shared>, wake: &egui::Context, event: KeyEvent) -> bool
 	let mut shared = lock(shared);
 	let key = (event.scan, event.extended);
 	if !event.down {
+		if shared.taking.as_ref().is_some_and(|(held, _)| *held == key)
+			&& let Some((_, hand)) = shared.taking.take()
+		{
+			hand.hold(false);
+		}
+		if event.vk == VK_ESCAPE {
+			shared.escape_at = None;
+		}
 		let Some(index) = shared.swallowed.iter().position(|held| *held == key) else {
 			return false;
 		};
@@ -785,22 +889,42 @@ fn filter(shared: &Mutex<Shared>, wake: &egui::Context, event: KeyEvent) -> bool
 				Caught::Bound(key.0, key.1)
 			})
 		}
-		Mode::Host { pause } => {
-			if *pause != Some(key) {
+		Mode::Host {
+			pause,
+			take_over,
+			hand,
+		} => {
+			if *take_over == Some(key) {
+				// Straight from this thread, so the controller stops at once.
+				if let Some(hand) = hand
+					&& shared.taking.is_none()
+				{
+					hand.hold(true);
+					shared.taking = Some((key, hand.clone()));
+				}
+				None
+			} else if *pause == Some(key) {
+				(!repeat).then_some(Caught::Pause)
+			} else {
 				return false;
 			}
-			(!repeat).then_some(Caught::Pause)
 		}
 		Mode::View {
 			viewer,
 			overlay,
 			keyboard,
 		} => {
-			let shifted = SHIFTS.iter().any(|shift| shared.forwarded.contains(shift));
 			if event.vk == VK_LWIN || event.vk == VK_RWIN {
 				(!repeat).then_some(Caught::Stop)
-			} else if event.vk == VK_ESCAPE && !shifted {
-				(!repeat).then_some(Caught::Minimize)
+			} else if event.vk == VK_ESCAPE
+				&& (!*keyboard
+					|| shared
+						.escape_at
+						.is_some_and(|at| at.elapsed() >= LEAVE_AFTER))
+			{
+				// With the keyboard there a tap goes there and holding leaves; without it a
+				// tap leaves. Repeats after leaving ask again, which changes nothing.
+				(!repeat || *keyboard).then_some(Caught::Minimize)
 			} else if *overlay == Some(key) {
 				(!repeat).then_some(Caught::Overlay)
 			} else if *keyboard {
@@ -811,6 +935,9 @@ fn filter(shared: &Mutex<Shared>, wake: &egui::Context, event: KeyEvent) -> bool
 				}]);
 				if !shared.forwarded.contains(&key) {
 					shared.forwarded.push(key);
+				}
+				if event.vk == VK_ESCAPE && !repeat {
+					shared.escape_at = Some(Instant::now());
 				}
 				None
 			} else {

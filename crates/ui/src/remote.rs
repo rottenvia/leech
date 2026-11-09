@@ -4,9 +4,11 @@
 //! see a notification of their own with a 15 second countdown, answer in Leech, and choose
 //! keyboard, mouse or both, whether their PC's sound goes along, and one pause key. The one
 //! in control then sees the other screen fullscreen over Leech, like a watched screen share.
-//! Escape gives them Leech back without pausing anyone; the screen stays in the call, and a
-//! double-click on it takes control again. A left click on the button ends control on either
-//! side; a right click holds the keys and, for the one controlled, what the other may do.
+//! Holding Escape gives them Leech back without pausing anyone (a tap goes to the other PC);
+//! the screen stays in the call, and a double-click on it takes control again. A left click
+//! on the button ends control on either side; a right click holds the keys and, for the one
+//! controlled, what the other may do. Holding the take-over key gives the one controlled
+//! their own mouse and keyboard back for as long as it is held.
 //!
 //! The interface only draws; the desktop signals, connects, captures, injects and fills in
 //! [`Phase`] as the session moves on.
@@ -69,6 +71,9 @@ pub struct Key {
 pub struct Keys {
 	/// Pauses and resumes the controller while this PC is controlled.
 	pub pause: Option<Key>,
+	/// Held while this PC is controlled: this PC's own mouse and keyboard work, the
+	/// controller's do not.
+	pub take_over: Option<Key>,
 	/// Hides and shows the label over the controlled screen.
 	pub overlay: Option<Key>,
 	/// The pause key warning was dismissed for good.
@@ -78,6 +83,7 @@ pub struct Keys {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Bind {
 	Pause,
+	TakeOver,
 	Overlay,
 }
 
@@ -148,7 +154,10 @@ pub struct Viewing {
 	/// The other side finished its setup.
 	pub started: bool,
 	pub permission: Option<Permission>,
+	/// Paused by them, or `taken`.
 	pub paused: bool,
+	/// They hold their take-over key and use their own mouse and keyboard.
+	pub taken: bool,
 	pub audio: bool,
 	/// A game there captured the mouse: motion goes as raw deltas and the pointer is locked.
 	pub relative: bool,
@@ -160,7 +169,9 @@ pub struct Viewing {
 	pub inputs: Vec<MouseInput>,
 	/// Buttons held down on the screen now.
 	pub held: Vec<MouseButton>,
-	/// Fullscreen, focused and allowed to steer: the keyboard goes there too.
+	/// Where the pointer was last sent on the other screen, as fractions.
+	pointer: Option<(f32, f32)>,
+	/// Filling the window, focused and allowed to steer: the keyboard goes there too.
 	pub capturing: bool,
 	/// When the session began, for the waiting dialog's seconds.
 	since: f64,
@@ -182,12 +193,14 @@ impl Viewing {
 			started: false,
 			permission: None,
 			paused: false,
+			taken: false,
 			audio: false,
 			relative: false,
 			rtt_ms: 0,
 			content: [0.0, 0.0, 1.0, 1.0],
 			inputs: Vec::new(),
 			held: Vec::new(),
+			pointer: None,
 			capturing: false,
 			since: f64::NAN,
 			full_since: f64::NAN,
@@ -295,8 +308,20 @@ impl Remote {
 
 	/// The hook caught a key for the binding in progress.
 	pub fn bound(&mut self, key: Key) {
+		let same = |held: &Option<Key>| {
+			held.as_ref()
+				.is_some_and(|held| (held.scan, held.extended) == (key.scan, key.extended))
+		};
 		match self.binding.take() {
-			Some(Bind::Pause) => self.keys.pause = Some(key),
+			Some(Bind::Pause) => {
+				// One key cannot both pause and take over; the pause key matters more.
+				if same(&self.keys.take_over) {
+					self.keys.take_over = None;
+				}
+				self.keys.pause = Some(key);
+			}
+			Some(Bind::TakeOver) if same(&self.keys.pause) => return,
+			Some(Bind::TakeOver) => self.keys.take_over = Some(key),
 			Some(Bind::Overlay) => self.keys.overlay = Some(key),
 			None => return,
 		}
@@ -615,6 +640,11 @@ impl crate::MessagingUi {
 		for (bind, title, detail) in [
 			(Bind::Pause, "Pause key", "While someone controls your PC"),
 			(
+				Bind::TakeOver,
+				"Take over key",
+				"Hold it to use your PC yourself",
+			),
+			(
 				Bind::Overlay,
 				"Hide the control label",
 				"While you control someone's PC",
@@ -622,6 +652,7 @@ impl crate::MessagingUi {
 		] {
 			let key = match bind {
 				Bind::Pause => &mut remote.keys.pause,
+				Bind::TakeOver => &mut remote.keys.take_over,
 				Bind::Overlay => &mut remote.keys.overlay,
 			};
 			// The pause key stays while it is the only way to stop the controller.
@@ -659,6 +690,12 @@ impl crate::MessagingUi {
 		let colors = design::palette(ui);
 		let pause_name = self.remote.pause_name();
 		let pause_key = self.remote.keys.pause.as_ref().map(|key| key.name.clone());
+		let take_over = self
+			.remote
+			.keys
+			.take_over
+			.as_ref()
+			.map(|key| key.name.clone());
 		let remote = &mut self.remote;
 		let Phase::Hosting { name, grant, .. } = &mut remote.phase else {
 			return;
@@ -694,6 +731,17 @@ impl crate::MessagingUi {
 		};
 		if key_hint_item(ui, label, pause_key.as_deref()).clicked() {
 			grant.paused = !grant.paused;
+		}
+		if let Some(key) = &take_over {
+			ui.horizontal(|ui| {
+				ui.add_space(10.0);
+				ui.label(
+					egui::RichText::new(format!("Hold {key} to use your own mouse and keyboard"))
+						.size(12.0)
+						.color(colors.muted),
+				);
+			});
+			ui.add_space(2.0);
 		}
 		menu_heading(
 			ui,
@@ -748,6 +796,8 @@ impl crate::MessagingUi {
 		};
 		let state = if !viewing.started {
 			"Setting up".to_owned()
+		} else if viewing.taken {
+			format!("{} is using their mouse and keyboard", viewing.name)
 		} else if viewing.paused {
 			format!("Paused by {}", viewing.name)
 		} else {
@@ -1871,7 +1921,7 @@ fn answer_card(
 			));
 			ui.label(
 				egui::RichText::new(if give {
-					"You will see their screen fullscreen and steer it. Escape gives Leech back to you; the Windows key stops."
+					"You will see their screen fullscreen and steer it. Holding Escape gives Leech back to you; the Windows key stops."
 				} else {
 					"Next you choose keyboard, mouse or both, and a key that pauses them at once."
 				})
@@ -2268,6 +2318,9 @@ pub(crate) fn screen_status(viewing: &Viewing) -> Option<(String, String, bool)>
 			"Control starts when they finish".to_owned(),
 			true,
 		))
+	} else if viewing.taken {
+		// They are showing something: nothing covers it.
+		None
 	} else if viewing.paused {
 		Some((
 			format!("{} paused your control", viewing.name),
@@ -2361,15 +2414,11 @@ fn controlled_screen(
 	now: f64,
 ) -> bool {
 	ui.painter().rect_filled(rect, 0, egui::Color32::BLACK);
-	let (focused, fullscreen) = ui.input(|input| {
-		(
-			input.viewport().focused == Some(true),
-			input.viewport().fullscreen == Some(true),
-		)
-	});
+	// The screen fills the window whether or not Windows made it fullscreen, so control never
+	// waits on that.
+	let focused = ui.input(|input| input.viewport().focused == Some(true));
 	let content = paint_screen(ui, viewing, rect, 0);
-	let steering =
-		fullscreen && focused && viewing.started && !viewing.paused && viewing.permission.is_some();
+	let steering = focused && viewing.started && !viewing.paused && viewing.permission.is_some();
 	if steering {
 		viewing.capturing = true;
 	} else {
@@ -2404,6 +2453,8 @@ fn controlled_screen(
 		// What this control allows, small at the top right.
 		let what = if !viewing.started {
 			"Starting"
+		} else if viewing.taken {
+			"They took over"
 		} else if viewing.paused {
 			"Paused"
 		} else {
@@ -2443,7 +2494,7 @@ fn controlled_screen(
 	let since = (now - viewing.full_since) as f32;
 	if since < 6.0 {
 		let fade = (1.0 - (since - 4.5).max(0.0) / 1.5).clamp(0.0, 1.0);
-		let text = "Esc returns to Leech · Windows key ends control · Shift+Esc sends Esc";
+		let text = "Hold Esc to return to Leech · Windows key ends control";
 		let galley = ui.painter().layout_no_wrap(
 			text.to_owned(),
 			egui::FontId::proportional(13.0),
@@ -2468,33 +2519,36 @@ fn controlled_screen(
 	lock
 }
 
-/// Turns the window's pointer events into input for the other screen.
+/// Turns the window's pointer events into input for the other screen. Motion is merged into
+/// one move per pass (the position and the raw motion together), sent before any press or
+/// wheel so each lands where the pointer was.
 fn collect_pointer(ui: &egui::Ui, viewing: &mut Viewing, content: egui::Rect) {
 	let to_screen = |pos: egui::Pos2| {
 		let at = (pos - content.min) / content.size();
 		(at.x.clamp(0.0, 1.0), at.y.clamp(0.0, 1.0))
 	};
 	let inside = |pos: egui::Pos2| content.contains(pos);
-	let mut last = ui.input(|input| input.pointer.latest_pos());
+	let mut moved = false;
+	let mut motion = egui::Vec2::ZERO;
+	let flush = |viewing: &mut Viewing, moved: &mut bool, motion: &mut egui::Vec2| {
+		let (dx, dy) = (motion.x.round() as i32, motion.y.round() as i32);
+		if *moved || dx != 0 || dy != 0 {
+			// Raw motion always goes along: the other PC uses it whenever its pointer is
+			// hidden, even before this window hears about it.
+			let (x, y) = viewing.pointer.unwrap_or((0.5, 0.5));
+			viewing.inputs.push(MouseInput::Move { x, y, dx, dy });
+		}
+		*moved = false;
+		*motion -= egui::vec2(dx as f32, dy as f32);
+	};
 	ui.input(|input| {
 		for event in &input.events {
 			match event {
 				egui::Event::PointerMoved(pos) => {
-					last = Some(*pos);
-					let (x, y) = to_screen(*pos);
-					viewing.inputs.push(MouseInput::Move { x, y, dx: 0, dy: 0 });
+					viewing.pointer = Some(to_screen(*pos));
+					moved = true;
 				}
-				// Raw motion always goes along: the other PC uses it whenever its pointer is
-				// hidden, even before this window hears about it.
-				egui::Event::MouseMoved(delta) => {
-					let (x, y) = last.map_or((0.5, 0.5), to_screen);
-					viewing.inputs.push(MouseInput::Move {
-						x,
-						y,
-						dx: delta.x.round() as i32,
-						dy: delta.y.round() as i32,
-					});
-				}
+				egui::Event::MouseMoved(delta) => motion += *delta,
 				egui::Event::PointerButton {
 					pos,
 					button,
@@ -2510,13 +2564,15 @@ fn collect_pointer(ui: &egui::Ui, viewing: &mut Viewing, content: egui::Rect) {
 					};
 					let held = viewing.held.contains(&button);
 					if *pressed && (inside(*pos) || viewing.relative) && !held {
-						let (x, y) = to_screen(*pos);
-						viewing.inputs.push(MouseInput::Move { x, y, dx: 0, dy: 0 });
+						viewing.pointer = Some(to_screen(*pos));
+						flush(viewing, &mut true, &mut motion);
 						viewing
 							.inputs
 							.push(MouseInput::Button { button, down: true });
 						viewing.held.push(button);
+						moved = false;
 					} else if !*pressed && held {
+						flush(viewing, &mut moved, &mut motion);
 						viewing.inputs.push(MouseInput::Button {
 							button,
 							down: false,
@@ -2535,6 +2591,7 @@ fn collect_pointer(ui: &egui::Ui, viewing: &mut Viewing, content: egui::Rect) {
 						(delta.y * scale).round() as i32,
 					);
 					if dx != 0 || dy != 0 {
+						flush(viewing, &mut moved, &mut motion);
 						viewing.inputs.push(MouseInput::Wheel { dx, dy });
 					}
 				}
@@ -2542,6 +2599,7 @@ fn collect_pointer(ui: &egui::Ui, viewing: &mut Viewing, content: egui::Rect) {
 			}
 		}
 	});
+	flush(viewing, &mut moved, &mut motion);
 }
 
 /// Remote control: a screen with a pointer reaching into it, on Phosphor's grid.
@@ -2646,6 +2704,21 @@ mod tests {
 		});
 		assert_eq!(remote.keys.pause.as_ref().map(|key| key.scan), Some(0x42));
 		assert!(remote.keys_changed && remote.binding.is_none());
+		// One key never both pauses and takes over: the pause key keeps it.
+		let f = |scan| Key {
+			scan,
+			extended: false,
+			name: String::new(),
+		};
+		remote.binding = Some(Bind::TakeOver);
+		remote.bound(f(0x42));
+		assert!(remote.keys.take_over.is_none());
+		remote.binding = Some(Bind::TakeOver);
+		remote.bound(f(0x43));
+		remote.binding = Some(Bind::Pause);
+		remote.bound(f(0x43));
+		assert_eq!(remote.keys.pause.as_ref().map(|key| key.scan), Some(0x43));
+		assert!(remote.keys.take_over.is_none());
 	}
 
 	#[test]
