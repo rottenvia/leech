@@ -624,6 +624,21 @@ Both sides punch every 50 ms for up to 10 s; the first authenticated packet pick
 Keys per direction come from the shared secret and session id (ChaCha20-Poly1305, counter
 nonces, replay window of 64). Keepalives every second; 6 s of silence ends the session.
 
+**Relay** (from 0.1.24, `remote/turn.rs`). Two PCs behind a symmetric or carrier-grade NAT,
+or a firewall that only lets replies in, never reach each other directly; 0.1.23 then said
+"Could not reach the other PC". Each side now also takes an address on Cloudflare's TURN relay
+(`turn.cloudflare.com:3478`, UDP) on the same socket, with a one-day login from Leech's
+credential service (`tools/stats-worker`, `POST /v1/relay`), and lists it first in its offer.
+The direct path gets a two-second head start: only then does each side let the other's public
+addresses through its relay (CreatePermission, renewed every two minutes with the allocation)
+and punch through it too. Datagrams through the relay are the same sealed ones in Send/Data
+indications, so the relay sees only ciphertext. Replies follow the newest authenticated
+datagram (a NAT that moved, or the other side settling on the relay), but a direct path, once
+found, is kept. The allocation is given back when the session ends. Without a login (the
+service down or not set up) remote control is direct-only as before. The connection journal
+records how each session connected, or how many datagrams arrived when it did not, never an
+address.
+
 - **Video:** the primary display, captured and encoded like a Go Live share (1080p60, or
   720p60 for smaller displays, low-latency CBR without B-frames, no cursor drawn: the
   controller's own pointer is the cursor). Frames go in datagrams of at most 1200 bytes,
@@ -642,7 +657,8 @@ nonces, replay window of 64). Keepalives every second; 6 s of silence ends the s
 - Media and input run on the link's own thread and runtime with the 1 ms timer and MMCSS
   priority, like calls, so a game's load does not delay them.
 
-Not verified on real networks yet: NAT traversal beyond loopback, behaviour under real loss.
+Not verified on real networks yet: direct NAT traversal beyond loopback, behaviour under
+real loss.
 Windows only for being controlled; injection cannot reach elevated windows, the UAC prompt
 or the lock screen unless Leech itself is elevated.
 

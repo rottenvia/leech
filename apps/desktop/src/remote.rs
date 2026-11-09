@@ -17,6 +17,10 @@ use ui::remote::{Grant, MouseButton, MouseInput, Permission, Phase, Request, Vie
 
 /// How long hole punching may take.
 const CONNECT: Duration = Duration::from_secs(10);
+/// Leech's credential service hands out short-lived logins for Cloudflare's TURN relay, used
+/// when the two PCs cannot reach each other directly. The relay sees only sealed datagrams.
+const RELAY_LOGIN: &str = "https://leech-stats.leech-stats.workers.dev/v1/relay";
+const RELAY_SERVER: &str = "turn.cloudflare.com:3478";
 /// How often the controller tells the other PC what it holds.
 const HELD_EVERY: Duration = Duration::from_millis(100);
 
@@ -35,7 +39,7 @@ enum Stage {
 	Asked,
 	Gathering(Gathered),
 	/// This side's offer is out; the other side's is still to come.
-	Ready(Endpoint),
+	Ready(Box<Endpoint>),
 	Connecting(Connected),
 	/// Connected while the host's setup is still open.
 	Linked(Link),
@@ -317,7 +321,7 @@ impl Remote {
 							token: endpoint.offer().to_token(),
 						},
 					));
-					Stage::Ready(endpoint)
+					Stage::Ready(Box::new(endpoint))
 				}
 				Ok(Err(error)) => {
 					failed = Some(error);
@@ -335,7 +339,7 @@ impl Remote {
 					let wake = ctx.clone();
 					let host = session.host;
 					runtime.spawn(async move {
-						let _ = send.send(endpoint.connect(&theirs, host, CONNECT).await);
+						let _ = send.send((*endpoint).connect(&theirs, host, CONNECT).await);
 						wake.request_repaint();
 					});
 					Stage::Connecting(receive)
@@ -838,10 +842,33 @@ fn gather(id: u64, ctx: &egui::Context, runtime: &tokio::runtime::Handle) -> Gat
 	let (send, receive) = mpsc::sync_channel(1);
 	let wake = ctx.clone();
 	runtime.spawn(async move {
-		let _ = send.send(Endpoint::gather(id).await);
+		let login = relay_login().await;
+		let _ = send.send(Endpoint::gather(id, login).await);
 		wake.request_repaint();
 	});
 	receive
+}
+
+/// A relay login, when the credential service answers within three seconds.
+async fn relay_login() -> Option<net::RelayLogin> {
+	let client = reqwest::Client::builder()
+		.https_only(true)
+		.no_proxy()
+		.user_agent(concat!("Leech/", env!("CARGO_PKG_VERSION")))
+		.timeout(Duration::from_secs(3))
+		.redirect(reqwest::redirect::Policy::none())
+		.build()
+		.ok()?;
+	let (response, server) = tokio::join!(
+		client.post(RELAY_LOGIN).send(),
+		tokio::net::lookup_host(RELAY_SERVER)
+	);
+	let login: serde_json::Value = response.ok()?.error_for_status().ok()?.json().await.ok()?;
+	Some(net::RelayLogin {
+		server: server.ok()?.find(std::net::SocketAddr::is_ipv4)?,
+		username: login["username"].as_str()?.to_owned(),
+		password: login["credential"].as_str()?.to_owned(),
+	})
 }
 
 fn config(grant: Grant) -> HostConfig {

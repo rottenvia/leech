@@ -1556,9 +1556,11 @@ dependencies = [
  "gstreamer",
  "gstreamer-app",
  "gstreamer-video",
+ "hmac 0.13.0",
  "image",
  "libc",
  "libpulse-sys",
+ "md-5",
  "model",
  "nnnoiseless",
  "objc2 0.6.4",
@@ -1577,6 +1579,7 @@ dependencies = [
  "rtrb",
  "screencapturekit",
  "serde_json",
+ "sha1",
  "sha2 0.10.9",
  "sha3",
  "socket2",
@@ -3973,6 +3976,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "md-5"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98"
+dependencies = [
+ "cfg-if",
+ "digest 0.11.3",
+]
+
+[[package]]
 name = "md4"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4959,7 +4972,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.45.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

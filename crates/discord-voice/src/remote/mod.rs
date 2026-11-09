@@ -1,24 +1,27 @@
 //! Remote control between two Leech users of one call: the host's primary display goes to the
 //! viewer as H.264 (plus optional system audio) and the viewer's mouse and keyboard come back,
-//! peer to peer over one hole-punched, encrypted UDP path. Offers travel over the users' own
-//! Discord DMs; nothing passes through a relay or server of ours.
+//! peer to peer over one hole-punched, encrypted UDP path, or through a TURN relay when the
+//! two PCs cannot reach each other directly (`turn.rs`). Offers travel over the users' own
+//! Discord DMs; the relay only forwards datagrams that are already sealed.
 //!
 //! Wire: datagrams of at most 1200 bytes with a plaintext header (magic, version, type,
 //! session, counter) authenticated as AAD, ChaCha20-Poly1305 with one key per direction from
 //! the X25519 secret, and a 64-packet replay window. Unverified against real NATs.
 mod host;
 mod playback;
+mod turn;
 mod viewer;
 mod wire;
 
 pub use host::{Host, HostConfig, HostStatus};
 pub use platform::remote_input::{Input, MouseButton};
+pub use turn::RelayLogin;
 pub use viewer::{Viewer, ViewerStatus};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{
-	Arc, Mutex, OnceLock, PoisonError,
+	Arc, Mutex, PoisonError,
 	atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant};
@@ -138,6 +141,22 @@ const CONNECTED_WITHIN: Duration = Duration::from_secs(3);
 const INBOX: usize = 1024;
 /// Goodbyes go out three times, this far apart.
 const BYE_SPACING: Duration = Duration::from_millis(20);
+/// The direct path gets this head start before the relay lets the other PC through.
+const RELAY_AFTER: Duration = Duration::from_secs(2);
+/// How often permissions go out while connecting, and how long an allocation is asked for.
+const RELAY_PERMIT: Duration = Duration::from_secs(1);
+const RELAY_LIFETIME: u32 = 600;
+/// Permissions last five minutes and allocations ten; both are renewed this often.
+const RELAY_RENEW: Duration = Duration::from_secs(120);
+
+/// Where datagrams for the other PC go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Path {
+	/// Straight to this address (which may be the other PC's relay).
+	Direct(SocketAddr),
+	/// Through this PC's relay, to the other PC at this address.
+	Relayed(SocketAddr),
+}
 
 /// A bound UDP socket with its public and local candidates, ready to connect.
 pub struct Endpoint {
@@ -145,31 +164,63 @@ pub struct Endpoint {
 	session: u64,
 	secret: StaticSecret,
 	addrs: Vec<SocketAddr>,
+	relay: Option<turn::Relay>,
 }
 
 impl Endpoint {
 	/// Binds UDP, asks STUN (stun.l.google.com:19302, stun.cloudflare.com:3478; 1.5 s) for the
-	/// public address, adds local IPv4 interface addresses, makes an X25519 secret.
-	pub async fn gather(session: u64) -> Result<Self, &'static str> {
-		Self::open(session, Ipv4Addr::UNSPECIFIED, true).await
+	/// public address, allocates an address on the relay when there is a login (2.5 s), adds
+	/// local IPv4 interface addresses, makes an X25519 secret.
+	pub async fn gather(session: u64, relay: Option<RelayLogin>) -> Result<Self, &'static str> {
+		Self::open(session, Ipv4Addr::UNSPECIFIED, true, relay).await
 	}
 
 	/// Loopback only, without STUN, for tests.
 	#[cfg(test)]
 	async fn local(session: u64) -> Result<Self, &'static str> {
-		Self::open(session, Ipv4Addr::LOCALHOST, false).await
+		Self::open(session, Ipv4Addr::LOCALHOST, false, None).await
 	}
 
-	async fn open(session: u64, ip: Ipv4Addr, public: bool) -> Result<Self, &'static str> {
+	async fn open(
+		session: u64,
+		ip: Ipv4Addr,
+		public: bool,
+		login: Option<RelayLogin>,
+	) -> Result<Self, &'static str> {
 		let failed = "Remote control could not open a network socket";
 		// Registered with the caller's runtime for STUN, then handed to the link's own.
 		let socket = tokio::net::UdpSocket::from_std(bind(ip)?).map_err(|_| failed)?;
 		let port = socket.local_addr().map_err(|_| failed)?.port();
-		let (mut addrs, interfaces) = if public {
+		let (stun, interfaces) = if public {
 			(discover(&socket).await, local_ipv4())
 		} else {
 			(Vec::new(), vec![ip])
 		};
+		let relay = match &login {
+			Some(login) => turn::Relay::allocate(&socket, login).await,
+			None => Err("no login"),
+		};
+		client_core::journal::note(
+			"remote",
+			format!(
+				"gathered: {} public from STUN, relay {}, {} local",
+				stun.len(),
+				relay.as_ref().map_or_else(|why| *why, |_| "ready"),
+				interfaces.len()
+			),
+		);
+		let relay = relay.ok();
+		// The relay goes first so it is never cut; what the relay sees of this PC is a
+		// public address too, when STUN found none.
+		let mut addrs: Vec<SocketAddr> = relay.iter().map(|relay| relay.relayed).collect();
+		for addr in stun
+			.into_iter()
+			.chain(relay.as_ref().and_then(|relay| relay.mapped))
+		{
+			if !addrs.contains(&addr) {
+				addrs.push(addr);
+			}
+		}
 		for ip in interfaces {
 			let addr = SocketAddr::from((ip, port));
 			if !addrs.contains(&addr) {
@@ -185,6 +236,7 @@ impl Endpoint {
 			session,
 			secret: secret()?,
 			addrs,
+			relay,
 		})
 	}
 
@@ -196,8 +248,9 @@ impl Endpoint {
 		}
 	}
 
-	/// Punches to every peer address for up to `timeout`; keepalives start at once. The link
-	/// then runs on its own media thread until it ends or is dropped.
+	/// Punches to every peer address for up to `timeout`, and after two seconds through this
+	/// PC's relay too; keepalives start at once. The link then runs on its own media thread
+	/// until it ends or is dropped.
 	pub async fn connect(
 		self,
 		peer: &Offer,
@@ -216,6 +269,15 @@ impl Endpoint {
 			.collect();
 		if candidates.is_empty() {
 			return Err("The other PC sent no reachable address");
+		}
+		let mut permit = Vec::new();
+		for ip in candidates
+			.iter()
+			.filter_map(|addr| turn::routable(addr.ip()))
+		{
+			if !permit.contains(&ip) {
+				permit.push(ip);
+			}
 		}
 		let public = PublicKey::from(&self.secret).to_bytes();
 		let secret = self.secret.diffie_hellman(&PublicKey::from(peer.key));
@@ -245,7 +307,10 @@ impl Endpoint {
 			cipher,
 			host,
 			counter: AtomicU64::new(1),
-			peer: OnceLock::new(),
+			peer: Mutex::new(None),
+			relay: self.relay,
+			permit,
+			datagrams: AtomicU64::new(0),
 			epoch: Instant::now(),
 			heard: AtomicU64::new(0),
 			received: AtomicU64::new(0),
@@ -257,9 +322,22 @@ impl Endpoint {
 			stop: watch::channel(false).0,
 			wake: Mutex::new(None),
 		});
+		client_core::journal::note(
+			"remote",
+			format!(
+				"connecting to {} addresses{}",
+				candidates.len(),
+				if shared.relay.is_some() {
+					", relay ready"
+				} else {
+					""
+				}
+			),
+		);
+		let started = Instant::now();
 		let (inbox_send, inbox) = mpsc::channel(INBOX);
 		let (locked_send, locked) = oneshot::channel();
-		let task = run(shared.clone(), candidates, inbox_send, locked_send);
+		let task = run(shared.clone(), candidates.clone(), inbox_send, locked_send);
 		std::thread::Builder::new()
 			.name("remote-link".into())
 			.spawn(move || {
@@ -273,11 +351,33 @@ impl Endpoint {
 			shared,
 			inbox: Some(inbox),
 		};
-		match tokio::time::timeout(timeout, locked).await {
-			Ok(Ok(())) => Ok(link),
-			_ => Err(
-				"Could not reach the other PC; one of the networks may block direct connections",
+		let reached = matches!(tokio::time::timeout(timeout, locked).await, Ok(Ok(())));
+		// The connection journal says how (or why not), never where.
+		let how = match link.shared.path() {
+			Some(Path::Relayed(_)) => "connected through this PC's relay".to_owned(),
+			Some(Path::Direct(addr)) => match candidates.iter().position(|known| *known == addr) {
+				Some(index) => format!(
+					"connected to their address {} of {}",
+					index + 1,
+					candidates.len()
+				),
+				None => "connected to an address they did not list".to_owned(),
+			},
+			None => format!(
+				"no answer: {} datagrams heard, none from them",
+				link.shared.datagrams.load(Ordering::Relaxed)
 			),
+		};
+		client_core::journal::note(
+			"remote",
+			format!("{how} after {} ms", started.elapsed().as_millis()),
+		);
+		if reached {
+			Ok(link)
+		} else if link.shared.relay.is_some() {
+			Err("Could not reach the other PC, even through the relay")
+		} else {
+			Err("Could not reach the other PC; one of the networks may block direct connections")
 		}
 	}
 }
@@ -413,8 +513,14 @@ struct Shared {
 	host: bool,
 	/// Next datagram counter; never repeats under this link's keys.
 	counter: AtomicU64,
-	/// The address of the first authenticated datagram; the only one used from then on.
-	peer: OnceLock<SocketAddr>,
+	/// Where the newest authenticated datagram came from, so replies follow a NAT that moved;
+	/// a direct path, once found, is kept over the relay.
+	peer: Mutex<Option<Path>>,
+	relay: Option<turn::Relay>,
+	/// The other PC's public addresses, which the relay must let through.
+	permit: Vec<Ipv4Addr>,
+	/// Every datagram that arrived, for the journal when nothing authenticated did.
+	datagrams: AtomicU64,
 	epoch: Instant,
 	/// Microseconds since `epoch` of the last authenticated datagram.
 	heard: AtomicU64,
@@ -442,11 +548,32 @@ impl Shared {
 		Some((datagram, len))
 	}
 
+	fn path(&self) -> Option<Path> {
+		*self.peer.lock().unwrap_or_else(PoisonError::into_inner)
+	}
+
+	/// The datagram as it leaves this socket, and where to: through the relay it is wrapped
+	/// in a Send indication for the relay server.
+	fn route<'a>(
+		&self,
+		datagram: &'a [u8],
+		path: Path,
+	) -> Option<(std::borrow::Cow<'a, [u8]>, SocketAddr)> {
+		match path {
+			Path::Direct(to) => Some((datagram.into(), to)),
+			Path::Relayed(to) => {
+				let relay = self.relay.as_ref()?;
+				Some((relay.send(to, datagram)?.into(), relay.server))
+			}
+		}
+	}
+
 	/// Sends to the peer, waiting for socket buffer space.
 	async fn send(&self, kind: u8, payload: &[u8]) {
-		if let Some(&peer) = self.peer.get()
+		if let Some(path) = self.path()
 			&& let Some((datagram, len)) = self.seal(kind, payload)
-			&& self.socket.send_to(&datagram[..len], peer).await.is_ok()
+			&& let Some((bytes, to)) = self.route(&datagram[..len], path)
+			&& self.socket.send_to(&bytes, to).await.is_ok()
 		{
 			self.sent.fetch_add(len as u64, Ordering::Relaxed);
 		}
@@ -454,16 +581,33 @@ impl Shared {
 
 	/// Sends to the peer now, from any thread; drops the datagram if the socket is full.
 	fn try_send(&self, kind: u8, payload: &[u8]) {
-		if let Some(&peer) = self.peer.get() {
-			self.try_send_to(kind, payload, peer);
+		if let Some(path) = self.path() {
+			self.try_send_to(kind, payload, path);
 		}
 	}
 
-	fn try_send_to(&self, kind: u8, payload: &[u8], to: SocketAddr) {
+	fn try_send_to(&self, kind: u8, payload: &[u8], path: Path) {
 		if let Some((datagram, len)) = self.seal(kind, payload)
-			&& self.socket.try_send_to(&datagram[..len], to).is_ok()
+			&& let Some((bytes, to)) = self.route(&datagram[..len], path)
+			&& self.socket.try_send_to(&bytes, to).is_ok()
 		{
 			self.sent.fetch_add(len as u64, Ordering::Relaxed);
+		}
+	}
+
+	/// Lets the other PC's addresses through the relay, and with `refresh` keeps the
+	/// allocation too.
+	fn renew_relay(&self, refresh: bool) {
+		let Some(relay) = &self.relay else {
+			return;
+		};
+		if refresh {
+			let _ = self
+				.socket
+				.try_send_to(&relay.refresh(RELAY_LIFETIME), relay.server);
+		}
+		for &ip in &self.permit {
+			let _ = self.socket.try_send_to(&relay.permission(ip), relay.server);
 		}
 	}
 
@@ -472,7 +616,7 @@ impl Shared {
 	}
 
 	fn connected(&self) -> bool {
-		self.peer.get().is_some()
+		self.path().is_some()
 			&& self.ended().is_none()
 			&& self
 				.micros()
@@ -526,20 +670,37 @@ impl Shared {
 		inbox: &mpsc::Sender<Packet>,
 		locked: &mut Option<oneshot::Sender<()>>,
 	) {
-		if self.peer.get().is_some_and(|peer| *peer != from) {
-			return;
-		}
-		let Some((kind, counter, payload)) = self.cipher.open(datagram, window) else {
+		self.datagrams.fetch_add(1, Ordering::Relaxed);
+		let (path, range) = match &self.relay {
+			Some(relay) if from == relay.server => match relay.receive(datagram) {
+				Some(turn::Incoming::Data(peer, range)) => (Path::Relayed(peer), range),
+				Some(turn::Incoming::Retry) => {
+					self.renew_relay(true);
+					return;
+				}
+				None => return,
+			},
+			_ => (Path::Direct(from), 0..datagram.len()),
+		};
+		let Some((kind, counter, payload)) = self.cipher.open(&mut datagram[range], window) else {
 			return;
 		};
-		if self.peer.set(from).is_ok()
-			&& let Some(locked) = locked.take()
+		let newest = self.highest.fetch_max(counter, Ordering::Relaxed) < counter;
 		{
-			let _ = locked.send(());
+			let mut peer = self.peer.lock().unwrap_or_else(PoisonError::into_inner);
+			let first = peer.is_none();
+			if first
+				|| (newest
+					&& (matches!(path, Path::Direct(_)) || matches!(*peer, Some(Path::Relayed(_)))))
+			{
+				*peer = Some(path);
+			}
+			if first && let Some(locked) = locked.take() {
+				let _ = locked.send(());
+			}
 		}
 		self.heard.store(self.micros(), Ordering::Relaxed);
 		self.received.fetch_add(1, Ordering::Relaxed);
-		self.highest.fetch_max(counter, Ordering::Relaxed);
 		match kind {
 			wire::HELLO => self.try_send(wire::HELLO_ACK, &[]),
 			wire::HELLO_ACK => {}
@@ -584,6 +745,9 @@ async fn run(
 	let mut punch = tokio::time::interval(PUNCH);
 	let mut keepalive = tokio::time::interval(KEEPALIVE);
 	keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+	let mut permit = tokio::time::interval(RELAY_PERMIT);
+	let started = Instant::now();
+	let mut renewed = Instant::now();
 	loop {
 		tokio::select! {
 			() = stopped(&mut stop) => break,
@@ -596,13 +760,27 @@ async fn run(
 				// error; anything persistent must not spin.
 				Err(_) => tokio::time::sleep(Duration::from_millis(1)).await,
 			},
-			_ = punch.tick(), if shared.peer.get().is_none() => {
+			_ = punch.tick(), if shared.path().is_none() => {
+				let relayed = shared.relay.is_some() && started.elapsed() >= RELAY_AFTER;
 				for &candidate in &candidates {
-					shared.try_send_to(wire::HELLO, &[], candidate);
+					shared.try_send_to(wire::HELLO, &[], Path::Direct(candidate));
+					if relayed && turn::routable(candidate.ip()).is_some() {
+						shared.try_send_to(wire::HELLO, &[], Path::Relayed(candidate));
+					}
+				}
+			}
+			_ = permit.tick(), if shared.relay.is_some() => {
+				if shared.path().is_none() {
+					if started.elapsed() >= RELAY_AFTER {
+						shared.renew_relay(false);
+					}
+				} else if renewed.elapsed() >= RELAY_RENEW {
+					renewed = Instant::now();
+					shared.renew_relay(true);
 				}
 			}
 			_ = keepalive.tick() => {
-				if shared.peer.get().is_some() {
+				if shared.path().is_some() {
 					let silence = shared.micros().saturating_sub(shared.heard.load(Ordering::Relaxed));
 					if silence > LOST_AFTER.as_micros() as u64 {
 						shared.finish(End::Lost, None);
@@ -619,6 +797,10 @@ async fn run(
 			tokio::time::sleep(BYE_SPACING).await;
 			shared.try_send(wire::BYE, &[reason]);
 		}
+	}
+	// The allocation is given back rather than left to expire.
+	if let Some(relay) = &shared.relay {
+		let _ = shared.socket.try_send_to(&relay.refresh(0), relay.server);
 	}
 }
 
@@ -716,6 +898,50 @@ mod tests {
 	}
 
 	#[test]
+	fn links_meet_through_the_relay_when_no_direct_path_exists() {
+		runtime().block_on(async {
+			let login = turn::test_relay().await;
+			let host = Endpoint::open(81, Ipv4Addr::LOCALHOST, false, Some(login))
+				.await
+				.unwrap();
+			let viewer = Endpoint::local(81).await.unwrap();
+			// The viewer only knows the host's relay, the host only a dead address of the
+			// viewer's: the one path left goes through the relay.
+			let relayed = host.relay.as_ref().unwrap().relayed;
+			assert_eq!(host.offer().addrs[0], relayed);
+			let host_offer = Offer {
+				addrs: vec![relayed],
+				..host.offer()
+			};
+			let viewer_offer = Offer {
+				addrs: vec!["127.0.0.1:9".parse().unwrap()],
+				..viewer.offer()
+			};
+			let timeout = Duration::from_secs(5);
+			let (host, viewer) = tokio::join!(
+				host.connect(&viewer_offer, true, timeout),
+				viewer.connect(&host_offer, false, timeout)
+			);
+			let (mut host, viewer) = (host.unwrap(), viewer.unwrap());
+			assert!(matches!(host.shared.path(), Some(Path::Relayed(_))));
+			assert_eq!(viewer.shared.path(), Some(Path::Direct(relayed)));
+			// Session traffic crosses the relay both ways.
+			viewer.shared.try_send(wire::KEYFRAME, &[]);
+			let inbox = host.inbox.as_mut().unwrap();
+			let packet = tokio::time::timeout(Duration::from_secs(5), inbox.recv())
+				.await
+				.unwrap();
+			assert_eq!(packet, Some((wire::KEYFRAME, Vec::new())));
+			tokio::time::sleep(Duration::from_millis(10)).await;
+			let sent = viewer.shared.micros() - 5_000;
+			viewer.shared.try_send(wire::PING, &sent.to_le_bytes());
+			until(|| viewer.shared.rtt() >= 5).await;
+			host.decline();
+			until(|| viewer.ended() == Some(End::Declined)).await;
+		});
+	}
+
+	#[test]
 	fn dropping_a_link_ends_the_session_on_both_sides() {
 		runtime().block_on(async {
 			let (host, viewer) = pair(78).await;
@@ -748,6 +974,66 @@ mod tests {
 				other.connect(&one_offer, true, timeout)
 			);
 			assert!(one.is_err() && other.is_err());
+		});
+	}
+
+	/// Both ends on this PC, forced through the real relay: the viewer's offer carries its
+	/// public address with a port nobody listens on, so only the host's relay connects them.
+	/// Needs a login: `LEECH_RELAY_USER` and `LEECH_RELAY_PASS` (from `POST /v1/relay`), then
+	/// `cargo test -p discord-voice relay_live -- --ignored`.
+	#[test]
+	#[ignore]
+	fn relay_live_through_cloudflare() {
+		runtime().block_on(async {
+			let server = tokio::net::lookup_host("turn.cloudflare.com:3478")
+				.await
+				.unwrap()
+				.find(SocketAddr::is_ipv4)
+				.unwrap();
+			let login = RelayLogin {
+				server,
+				username: std::env::var("LEECH_RELAY_USER").unwrap(),
+				password: std::env::var("LEECH_RELAY_PASS").unwrap(),
+			};
+			let host = Endpoint::gather(82, Some(login)).await.unwrap();
+			let viewer = Endpoint::gather(82, None).await.unwrap();
+			let relayed = host.relay.as_ref().expect("no allocation").relayed;
+			let public = viewer
+				.addrs
+				.iter()
+				.find(|addr| turn::routable(addr.ip()).is_some())
+				.expect("no public address from STUN")
+				.ip();
+			let host_offer = Offer {
+				addrs: vec![relayed],
+				..host.offer()
+			};
+			let viewer_offer = Offer {
+				addrs: vec![SocketAddr::new(public, 9)],
+				..viewer.offer()
+			};
+			let started = Instant::now();
+			let timeout = Duration::from_secs(10);
+			let (host, viewer) = tokio::join!(
+				host.connect(&viewer_offer, true, timeout),
+				viewer.connect(&host_offer, false, timeout)
+			);
+			let (mut host, viewer) = (host.unwrap(), viewer.unwrap());
+			eprintln!("connected through the relay after {:?}", started.elapsed());
+			assert!(matches!(host.shared.path(), Some(Path::Relayed(_))));
+			// A keyframe request one way, a measured round trip the other.
+			viewer.shared.try_send(wire::KEYFRAME, &[]);
+			let inbox = host.inbox.as_mut().unwrap();
+			let packet = tokio::time::timeout(Duration::from_secs(5), inbox.recv())
+				.await
+				.unwrap();
+			assert_eq!(packet, Some((wire::KEYFRAME, Vec::new())));
+			let sent = viewer.shared.micros();
+			viewer.shared.try_send(wire::PING, &sent.to_le_bytes());
+			until(|| viewer.shared.rtt() > 0).await;
+			eprintln!("round trip through the relay: {} ms", viewer.shared.rtt());
+			host.decline();
+			until(|| viewer.ended() == Some(End::Declined)).await;
 		});
 	}
 

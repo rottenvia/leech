@@ -2,6 +2,10 @@
 // them in D1, where only the owner of the Cloudflare account can read them. Nothing else is
 // stored: no address and no headers, only the lines, the installation's random name and when
 // they came.
+//
+// Also hands out relay logins for remote control (apps/desktop/src/remote.rs): short-lived
+// Cloudflare Realtime TURN credentials, minted with the TURN key kept in this Worker's secrets
+// TURN_KEY_ID and TURN_KEY_TOKEN. Nothing about the request is stored.
 
 /// The only keys a line may have: a session's first line, then its summaries and streams.
 const KEYS = new Set([
@@ -27,10 +31,47 @@ const MAX_BYTES = 256 * 1024;
 const MAX_LINES = 2000;
 
 const status = (code) => new Response(null, { status: code });
+// A login outlives the longest remote control session; the relay refuses it afterwards.
+const RELAY_TTL = 86400;
+
+// ponytail: anyone can ask for a login, so the free 1,000 GB a month is shared with whoever
+// finds this address; add a per-address rate limit if the usage page shows strangers.
+async function relayLogin(env) {
+	if (!env.TURN_KEY_ID || !env.TURN_KEY_TOKEN) {
+		return status(503);
+	}
+	const response = await fetch(
+		`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`,
+		{
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${env.TURN_KEY_TOKEN}`,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({ ttl: RELAY_TTL }),
+		},
+	);
+	if (!response.ok) {
+		return status(502);
+	}
+	const { iceServers } = await response.json();
+	const turn = [iceServers].flat().find((server) => server?.username && server?.credential);
+	if (!turn) {
+		return status(502);
+	}
+	return Response.json(
+		{ username: turn.username, credential: turn.credential },
+		{ headers: { 'Cache-Control': 'no-store' } },
+	);
+}
 
 export default {
 	async fetch(request, env) {
-		if (new URL(request.url).pathname !== '/v1/performance') {
+		const path = new URL(request.url).pathname;
+		if (path === '/v1/relay') {
+			return request.method === 'POST' ? relayLogin(env) : status(405);
+		}
+		if (path !== '/v1/performance') {
 			return status(404);
 		}
 		if (request.method !== 'POST') {
